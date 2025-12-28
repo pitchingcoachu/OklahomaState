@@ -1663,8 +1663,8 @@ js_sort <-
   paste0("}")
 
 # ---- Notes API config ----
-NOTES_API_URL   <- "https://script.google.com/macros/s/AKfycbwuftWhRZGV7f1lWFJnC5mBcxaXh7P7Xhlc7_Lvr5r6ZO_GYKbv6YxCp7B0AXsvCKY0/exec"
-NOTES_API_TOKEN <- "GCUbaseball"
+NOTES_API_URL   <- "https://script.google.com/macros/s/AKfycby8_RuLj5hKxi129ru32cpEojVimffD2msCSl-I9r9a1LfZe9Ht-yLPbiDHVatm48g/exec"
+NOTES_API_TOKEN <- "OSUbaseball"
 
 # small helper
 # Replace the old %or% with this scalar-safe version
@@ -4386,30 +4386,29 @@ catcher_map <- setNames(raw_catchers, catch_display)
 
 # ==== PITCHERS-ONLY WHITELIST ====
 ALLOWED_PITCHERS <- c(
-  "Lee, Aidan",
-  "Limas, Jacob",
-  "Higginbottom, Elijah",
-  "Cunnings, Cam",
-  "Moeller, Luke",
-  "Smith, Jace",
-  "Frey, Chase",
-  "Ahern, Garrett",
-  "McGuire, Tommy",
-  "Robb, Nicholas",
-  "Guerrero, JT",
-  "Gregory, Billy",
-  "Penzkover, Gunnar",
-  "Lewis, JT",
-  "Kiemele, Cody",
-  "Cohen, Andrew",
-  "Lyon, Andrew",
-  "Johns, Tanner",
-  "Toney, Brock",
-  "Sloan, Landon",
-  "Key, Chance",
-  "Orr, Dillon",
-  "Yates, Zach",
-  "New, Cody"
+  "Wentworth, TP",
+  "LeBlanc, Bryce",
+  "Lund, Ethan",
+  "Fyke, Kai",
+  "Rhodes, Stormy",
+  "Wech, Noah",
+  "Brown, Matthew",
+  "Phillips, Brennan",
+  "Blake, Drew",
+  "Glendinning, Lucas",
+  "Golden, Josiah",
+  "Kennedy, Jake",
+  "Barrett, Hudson",
+  "Zagar, Kyler",
+  "Albright, Gaige",
+  "Sramek, Caden",
+  "Jennings, Parker",
+  "Burns, Zane",
+  "Winslow, Drew",
+  "Pearcy, Kyle",
+  "Turner, Cael",
+  "Pesca, Mario",
+  "Watkins, Hunter"
 )
 
 # Mirror list for hitters (GCU hitters)
@@ -5384,7 +5383,7 @@ pitch_ui <- function(show_header = FALSE) {
         column(
           2,
           div(style = "text-align:right; margin-top:10px;",
-              tags$img(src = "GCUlogo.png", height = "80px"))
+              tags$img(src = "OSUlogo.png", height = "80px"))
         )
       )
     },
@@ -5397,7 +5396,7 @@ pitch_ui <- function(show_header = FALSE) {
         ),
         selectInput(
           "teamType", "Team:",
-          choices = c("All" = "All", "GCU" = "GCU", "Opponents" = "Opponents", "Campers" = "Campers"),
+          choices = c("All" = "All", "OSU" = "OSU", "Opponents" = "Opponents", "Campers" = "Campers"),
           selected = "All"
         ),
         uiOutput("pitcher_ui"),
@@ -5882,7 +5881,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
         column(
           2,
           div(style = "text-align:right; margin-top:10px;",
-              tags$img(src = "GCUlogo.png", height = "80px"))
+              tags$img(src = "OSUlogo.png", height = "80px"))
         )
       )
     },
@@ -5892,7 +5891,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
         selectInput(ns("oppPitcher"), "Select Pitcher:", choices = c("All" = "All", opponent_pitcher_map), selected = "All"),
         selectInput(
           ns("teamType"), "Team:",
-          choices = c("All" = "All", "GCU" = "GCU", "Opponents" = "Opponents", "Campers" = "Campers"),
+          choices = c("All" = "All", "OSU" = "OSU", "Opponents" = "Opponents", "Campers" = "Campers"),
           selected = "All"
         ),
         dateRangeInput(ns("dates"), "Date Range:",
@@ -6259,7 +6258,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         if (input$teamType == "Campers") {
           # Filter to only allowed campers (as batters)
           d <- dplyr::filter(d, Batter %in% ALLOWED_CAMPERS)
-        } else if (input$teamType == "GCU") {
+        } else if (input$teamType == "OSU") {
           # For GCU hitting: show all non-camper batters
           d <- dplyr::filter(d, !(Batter %in% ALLOWED_CAMPERS))
         } else if (input$teamType == "Opponents") {
@@ -8283,7 +8282,7 @@ mod_catch_ui <- function(id, show_header = FALSE) {
         column(
           2,
           div(style = "text-align:right; margin-top:10px;",
-              tags$img(src = "GCUlogo.png", height = "80px"))
+              tags$img(src = "OSUlogo.png", height = "80px"))
         )
       )
     },
@@ -8294,7 +8293,7 @@ mod_catch_ui <- function(id, show_header = FALSE) {
         selectInput(ns("catcher"), "Select Catcher:", choices = c("All" = "All", catcher_map), selected = "All"),
         selectInput(
           ns("teamType"), "Team:",
-          choices = c("All" = "All", "GCU" = "GCU", "Campers" = "Campers"),
+          choices = c("All" = "All", "OSU" = "OSU", "Campers" = "Campers"),
           selected = "All"
         ),
         dateRangeInput(ns("dates"), "Date Range:",
@@ -8528,7 +8527,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         if (input$teamType == "Campers") {
           # Filter to only allowed campers (as pitchers)
           df <- dplyr::filter(df, Pitcher %in% ALLOWED_CAMPERS)
-        } else if (input$teamType == "GCU") {
+        } else if (input$teamType == "OSU") {
           # Filter to GCU allowed pitchers
           df <- dplyr::filter(df, Pitcher %in% ALLOWED_PITCHERS)
         } else if (input$teamType == "Opponents") {
@@ -10566,14 +10565,14 @@ mod_leader_ui <- function(id, show_header = FALSE) {
         column(
           2,
           div(style = "text-align:right; margin-top:10px;",
-              tags$img(src = "GCUlogo.png", height = "80px"))
+              tags$img(src = "OSUlogo.png", height = "80px"))
         )
       )
     },
     sidebarLayout(
       sidebarPanel(
         selectInput(ns("domain"), "Leaderboard Domain:", choices = c("Pitching","Hitting","Catching"), selected = "Pitching"),
-        selectInput(ns("teamType"), "Team:", choices = c("All", "GCU", "Campers"), selected = "All"),
+        selectInput(ns("teamType"), "Team:", choices = c("All", "OSU", "Campers"), selected = "All"),
         
         # --- Common filters (apply to all domains) ---
         selectInput(ns("sessionType"), "Session Type:", choices = c("All","Bullpen","Live"), selected = "All"),
@@ -10749,7 +10748,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         } else {
           dplyr::filter(base, Pitcher %in% ALLOWED_CAMPERS)
         }
-      } else if (input$teamType == "GCU") {
+      } else if (input$teamType == "OSU") {
         if (identical(input$domain, "Hitting")) {
           dplyr::filter(base, Batter %in% ALLOWED_HITTERS)
         } else {
@@ -11618,13 +11617,13 @@ mod_comp_ui <- function(id, show_header = FALSE) {
           )
         ),
         column(2, div(style = "text-align:right; margin-top:10px;",
-                      tags$img(src = "GCUlogo.png", height = "80px")))
+                      tags$img(src = "OSUlogo.png", height = "80px")))
       )
     },
     sidebarLayout(
       sidebarPanel(
         selectInput(ns("domain"), "Player Type:", choices = c("Pitcher","Hitter","Catcher"), selected = "Pitcher"),
-        selectInput(ns("teamType"), "Team:", choices = c("All", "GCU", "Campers"), selected = "All"),
+        selectInput(ns("teamType"), "Team:", choices = c("All", "OSU", "Campers"), selected = "All"),
         width = 2
       ),
       mainPanel(
@@ -12168,7 +12167,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           "Catcher" = dplyr::filter(df, Catcher %in% ALLOWED_CAMPERS),
           df
         )
-      } else if (team_type == "GCU") {
+      } else if (team_type == "OSU") {
         # GCU team only
         df <- switch(
           dom,
@@ -13762,7 +13761,7 @@ correlations_ui <- function() {
              # Team selection
              div(class = "correlation-controls",
                  selectInput("corr_teamType", "Team:",
-                             choices = c("All", "GCU", "Campers"),
+                             choices = c("All", "OSU", "Campers"),
                              selected = "All")
              ),
              
@@ -16248,7 +16247,7 @@ player_plans_ui <- function() {
               ),
               column(2,
                      div(style = "text-align: right; padding-top: 30px;",
-                         tags$img(src = "GCUlogo.png", style = "height: 40px; max-width: 100%;")
+                         tags$img(src = "OSUlogo.png", style = "height: 40px; max-width: 100%;")
                      )
               )
             ),
@@ -16370,9 +16369,9 @@ credentials_path <- get_credentials_path()
 initial_credentials <- data.frame(
   user = c(
     "jgaynor@pitchingcoachu.com",
-    "banni17@yahoo.com",
-    "adam.racine@aol.com",
-    "Njcbaseball08@gmail.com"
+    "Blake.hawksworth@okstate.edu",
+    "Payton.stevens@okstate.edu",
+    "Trey.cobb@okstate.edu"
   ),
   password = c(
     "pcu2025",
@@ -16383,9 +16382,9 @@ initial_credentials <- data.frame(
   admin = c(TRUE, TRUE, FALSE, FALSE),
   email = c(
     "jgaynor@pitchingcoachu.com",
-    "banni17@yahoo.com",
-    "adam.racine@aol.com",
-    "Njcbaseball08@gmail.com"
+    "Blake.hawksworth@okstate.edu",
+    "Payton.stevens@okstate.edu",
+    "Trey.cobb@okstate.edu"
   ),
   stringsAsFactors = FALSE
 )
@@ -16443,7 +16442,7 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
   try(DBI::dbExecute(con, sprintf("UPDATE credentials SET admin = 1 WHERE LOWER(user) IN (%s)", admin_list)), silent = TRUE)
 }
 
-enforce_admin_flags(c("jgaynor@pitchingcoachu.com","banni17@yahoo.com"), sm_db_config, credentials_path)
+enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), sm_db_config, credentials_path)
 
 
 ui <- tagList(
@@ -16891,7 +16890,7 @@ ui <- tagList(
   
   navbarPage(
     title = tagList(
-      tags$img(src = "GCUlogo.png", class = "brand-logo", alt = "GCU"),
+      tags$img(src = "OSUlogo.png", class = "brand-logo", alt = "OSU"),
       tags$span("Dashboard", class = "brand-title"),
       tags$img(src = "PCUlogo.png", class = "pcu-right", alt = "PCU")
     ),
@@ -17813,7 +17812,7 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  admin_emails <- c("jgaynor@pitchingcoachu.com", "banni17@yahoo.com")
+  admin_emails <- c("jgaynor@pitchingcoachu.com")
   # helper to normalize email
   norm_email <- function(x) tolower(trimws(x))
   
@@ -18196,7 +18195,7 @@ server <- function(input, output, session) {
     ok <- tryCatch({
       notes_api_add(
         author_email = user_email(),
-        team         = "gcu",
+        team         = "osu",
         page_combo   = page_combo,
         pitcher      = pit,
         session_type = st,
@@ -18402,7 +18401,7 @@ server <- function(input, output, session) {
         raw_names_team
       )
       name_map_team <- setNames(raw_names_team, display_names_team)
-    } else if (input$teamType == "GCU") {
+    } else if (input$teamType == "osu") {
       # Filter to only GCU allowed pitchers (exclude campers)
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
       raw_names_team <- sort(unique(df_base$Pitcher))
@@ -18454,7 +18453,7 @@ server <- function(input, output, session) {
     # Apply team filtering
     if (input$teamType == "Campers") {
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_CAMPERS)
-    } else if (input$teamType == "GCU") {
+    } else if (input$teamType == "osu") {
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
     }
     # If "All" is selected, don't filter - show all data
@@ -23878,7 +23877,7 @@ server <- function(input, output, session) {
       # Filter by team selection
       if (team_type == "Campers") {
         players <- sort(intersect(ALLOWED_CAMPERS, unique(pitch_data_pitching$Pitcher)))
-      } else if (team_type == "GCU") {
+      } else if (team_type == "OSU") {
         players <- sort(intersect(ALLOWED_PITCHERS, unique(pitch_data_pitching$Pitcher)))
       } else {
         # "All" - show all players
@@ -23888,7 +23887,7 @@ server <- function(input, output, session) {
       # Filter by team selection
       if (team_type == "Campers") {
         players <- sort(intersect(ALLOWED_CAMPERS, unique(na.omit(as.character(pitch_data$Batter)))))
-      } else if (team_type == "GCU") {
+      } else if (team_type == "OSU") {
         players <- sort(intersect(ALLOWED_HITTERS, unique(na.omit(as.character(pitch_data$Batter)))))
       } else {
         # "All" - show all players
@@ -23898,7 +23897,7 @@ server <- function(input, output, session) {
       # Filter by team selection
       if (team_type == "Campers") {
         players <- sort(intersect(ALLOWED_CAMPERS, unique(na.omit(as.character(pitch_data$Catcher)))))
-      } else if (team_type == "GCU") {
+      } else if (team_type == "OSU") {
         players <- sort(intersect(ALLOWED_PITCHERS, unique(na.omit(as.character(pitch_data$Catcher)))))
       } else {
         # "All" - show all players
@@ -24073,7 +24072,7 @@ server <- function(input, output, session) {
       data_before_team <- nrow(data)
       data <- data %>% dplyr::filter(!!rlang::sym(player_col) %in% ALLOWED_CAMPERS)
       cat("Campers filter applied: ", data_before_team, "->", nrow(data), "\n")
-    } else if (team_type == "GCU") {
+    } else if (team_type == "OSU") {
       # GCU team
       data_before_team <- nrow(data)
       data <- data %>% dplyr::filter(!!rlang::sym(player_col) %in% ALLOWED_PITCHERS)
