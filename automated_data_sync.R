@@ -14,8 +14,8 @@ library(stringr)
 source("csv_filter_utils.R")
 # FTP credentials
 FTP_HOST <- "ftp.trackmanbaseball.com"
-FTP_USER <- "GrandCanyon"
-FTP_PASS <- "F42Y6LiLGS"
+FTP_USER <- "OklahomaST"
+FTP_PASS <- "5B%p@KjALC"
 
 # Local data directories
 LOCAL_DATA_DIR      <- "data/"
@@ -141,7 +141,7 @@ is_date_in_range <- function(file_path) {
   file_date <- as.Date(paste(date_match[2], date_match[3], date_match[4], sep = "-"))
   
   # Start date: August 1, 2025 (nothing before this)
-  start_date <- as.Date("2025-10-20")
+  start_date <- as.Date("2025-08-10")
   
   # Include all data from August 1, 2025 onwards (no future year restrictions)
   return(file_date >= start_date)
