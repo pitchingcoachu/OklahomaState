@@ -540,8 +540,26 @@ render_heatmap_stat <- function(df, stat) {
       0
     }
     
+    collapse_list_col <- function(x, default = NA) {
+      if (is.list(x)) {
+        vapply(x, function(y) {
+          if (length(y)) {
+            val <- y[[1]]
+            if (is.null(val)) default else val
+          } else default
+        }, default)
+      } else {
+        x
+      }
+    }
+    
     df_rv <- df %>%
       dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight)) %>%
+      dplyr::mutate(
+        PitchCall  = collapse_list_col(PitchCall, NA_character_),
+        PlayResult = collapse_list_col(PlayResult, NA_character_),
+        KorBB      = collapse_list_col(if ("KorBB" %in% names(.)) KorBB else NA, NA_character_)
+      ) %>%
       dplyr::mutate(RunValue = mapply(calculate_run_value, PitchCall, PlayResult, 
                                       if("KorBB" %in% names(.)) KorBB else NA))
     if (!nrow(df_rv)) return(ggplot() + theme_void())
