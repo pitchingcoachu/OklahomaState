@@ -16,6 +16,8 @@ source("csv_filter_utils.R")
 FTP_HOST <- "ftp.trackmanbaseball.com"
 FTP_USER <- "OklahomaST"
 FTP_PASS <- "5B%p@KjALC"
+# When passwords contain special characters like @ or %, don't embed them in the URL.
+FTP_USERPWD <- paste0(FTP_USER, ":", FTP_PASS)
 
 # Local data directories
 LOCAL_DATA_DIR      <- "data/"
@@ -29,9 +31,9 @@ dir.create(LOCAL_V3_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # Function to list files in FTP directory
 list_ftp_files <- function(ftp_path) {
-  url <- paste0("ftp://", FTP_USER, ":", FTP_PASS, "@", FTP_HOST, ftp_path)
+  url <- paste0("ftp://", FTP_HOST, ftp_path)
   tryCatch({
-    files <- getURL(url, ftp.use.epsv = FALSE, dirlistonly = TRUE)
+    files <- getURL(url, userpwd = FTP_USERPWD, ftp.use.epsv = FALSE, dirlistonly = TRUE)
     strsplit(files, "\n")[[1]]
   }, error = function(e) {
     cat("Error listing files in", ftp_path, ":", e$message, "\n")
@@ -52,12 +54,13 @@ download_csv <- function(remote_file, local_file) {
     return(FALSE)  # Return FALSE so we don't count it as newly downloaded
   }
   
-  url <- paste0("ftp://", FTP_USER, ":", FTP_PASS, "@", FTP_HOST, remote_file)
+  url <- paste0("ftp://", FTP_HOST, remote_file)
   
   tryCatch({
-    # Download file to temporary location
+    # Download file to temporary location using RCurl with proper credentials
     temp_file <- tempfile(fileext = ".csv")
-    download.file(url, temp_file, method = "curl", quiet = TRUE)
+    bin <- RCurl::getBinaryURL(url, userpwd = FTP_USERPWD, ftp.use.epsv = FALSE)
+    writeBin(bin, temp_file)
     
     # Read data to check if valid
     data <- read_csv(temp_file, show_col_types = FALSE)
