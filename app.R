@@ -4741,6 +4741,31 @@ compute_process_results <- function(df, mode = "All") {
   # Prefer SplitColumn if it exists (Split By mode), otherwise use TaggedPitchType
   pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
   
+  # Defensive: flatten any list-columns that occasionally appear from upstream joins
+  collapse_list_col <- function(x, default = NA) {
+    if (is.list(x)) {
+      vapply(x, function(y) {
+        if (length(y)) {
+          val <- y[[1]]
+          if (is.null(val)) default else val
+        } else default
+      }, default)
+    } else {
+      x
+    }
+  }
+  df <- df %>%
+    dplyr::mutate(
+      PitchCall      = collapse_list_col(PitchCall, NA_character_),
+      PlayResult     = collapse_list_col(PlayResult, NA_character_),
+      TaggedHitType  = collapse_list_col(TaggedHitType, NA_character_),
+      KorBB          = collapse_list_col(KorBB, NA_character_),
+      SessionType    = collapse_list_col(SessionType, NA_character_),
+      ExitSpeed      = collapse_list_col(ExitSpeed, NA_real_),
+      Angle          = collapse_list_col(Angle, NA_real_),
+      OutsOnPlay     = collapse_list_col(OutsOnPlay, NA_real_)
+    )
+  
   calc_run_value <- function(pitch_call, play_result, korbb = NA) {
     pitch_call  <- as.character(pitch_call)
     play_result <- as.character(play_result)
