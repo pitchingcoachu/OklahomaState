@@ -4772,6 +4772,10 @@ compute_process_results <- function(df, mode = "All") {
       x
     }
   }
+  # Ensure pitch grouping column is atomic
+  if (pitch_col %in% names(df)) {
+    df[[pitch_col]] <- collapse_list_col(df[[pitch_col]], NA_character_)
+  }
   df <- df %>%
     dplyr::mutate(
       PitchCall      = collapse_list_col(PitchCall, NA_character_),
@@ -4781,7 +4785,9 @@ compute_process_results <- function(df, mode = "All") {
       SessionType    = collapse_list_col(SessionType, NA_character_),
       ExitSpeed      = collapse_list_col(ExitSpeed, NA_real_),
       Angle          = collapse_list_col(Angle, NA_real_),
-      OutsOnPlay     = collapse_list_col(OutsOnPlay, NA_real_)
+      OutsOnPlay     = collapse_list_col(OutsOnPlay, NA_real_),
+      Balls          = collapse_list_col(Balls, NA_real_),
+      Strikes        = collapse_list_col(Strikes, NA_real_)
     )
   
   calc_run_value <- function(pitch_call, play_result, korbb = NA) {
