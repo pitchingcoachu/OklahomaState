@@ -4761,6 +4761,17 @@ compute_process_results <- function(df, mode = "All") {
   
   # Generic flattener: if a column is a list of length-1 elements, collapse to vector
   flatten_simple_lists <- function(dfx) {
+    # First pass: collapse any list-column by taking the first element (even if length > 1)
+    for (nm in names(dfx)) {
+      col <- dfx[[nm]]
+      if (is.list(col)) {
+        col <- vapply(col, function(x) {
+          if (length(x)) x[[1]] else NA_character_
+        }, character(1))
+        dfx[[nm]] <- col
+      }
+    }
+    # Second pass: coerce length-1 lists (if any remain) with heuristic numeric conversion
     for (nm in names(dfx)) {
       col <- dfx[[nm]]
       if (is.list(col) && length(col) && all(lengths(col) <= 1)) {
@@ -4804,11 +4815,11 @@ compute_process_results <- function(df, mode = "All") {
       TaggedHitType  = collapse_list_col(TaggedHitType, NA_character_),
       KorBB          = collapse_list_col(KorBB, NA_character_),
       SessionType    = collapse_list_col(SessionType, NA_character_),
-      ExitSpeed      = collapse_list_col(ExitSpeed, NA_real_),
-      Angle          = collapse_list_col(Angle, NA_real_),
-      OutsOnPlay     = collapse_list_col(OutsOnPlay, NA_real_),
-      Balls          = collapse_list_col(Balls, NA_real_),
-      Strikes        = collapse_list_col(Strikes, NA_real_)
+      ExitSpeed      = suppressWarnings(as.numeric(collapse_list_col(ExitSpeed, NA_real_))),
+      Angle          = suppressWarnings(as.numeric(collapse_list_col(Angle, NA_real_))),
+      OutsOnPlay     = suppressWarnings(as.numeric(collapse_list_col(OutsOnPlay, NA_real_))),
+      Balls          = suppressWarnings(as.numeric(collapse_list_col(Balls, NA_real_))),
+      Strikes        = suppressWarnings(as.numeric(collapse_list_col(Strikes, NA_real_)))
     )
   
   calc_run_value <- function(pitch_call, play_result, korbb = NA) {
