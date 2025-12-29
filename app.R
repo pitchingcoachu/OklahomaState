@@ -4759,6 +4759,27 @@ compute_process_results <- function(df, mode = "All") {
   # Prefer SplitColumn if it exists (Split By mode), otherwise use TaggedPitchType
   pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
   
+  # Generic flattener: if a column is a list of length-1 elements, collapse to vector
+  flatten_simple_lists <- function(dfx) {
+    for (nm in names(dfx)) {
+      col <- dfx[[nm]]
+      if (is.list(col) && length(col) && all(lengths(col) <= 1)) {
+        vals_chr <- vapply(col, function(x) {
+          if (length(x) && !is.null(x[[1]])) as.character(x[[1]]) else NA_character_
+        }, character(1))
+        vals_num <- suppressWarnings(as.numeric(vals_chr))
+        # If numeric conversion retains most non-NA values, keep numeric; else keep character
+        if (sum(!is.na(vals_num)) >= sum(!is.na(vals_chr)) * 0.8) {
+          dfx[[nm]] <- vals_num
+        } else {
+          dfx[[nm]] <- vals_chr
+        }
+      }
+    }
+    dfx
+  }
+  df <- flatten_simple_lists(df)
+  
   # Defensive: flatten any list-columns that occasionally appear from upstream joins
   collapse_list_col <- function(x, default = NA) {
     if (is.list(x)) {
