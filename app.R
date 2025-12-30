@@ -19943,6 +19943,26 @@ server <- function(input, output, session) {
         )
         term <- df[is_term, , drop = FALSE]
 
+        # EXTRA SAFETY: Re-flatten term after subsetting (in case subset creates list columns)
+        term <- as.data.frame(term, stringsAsFactors = FALSE)
+        for (nm in names(term)) {
+          if (is.list(term[[nm]])) {
+            message("summaryTablePage Results term: Found list column '", nm, "' after subset - flattening")
+            term[[nm]] <- vapply(term[[nm]], function(v) {
+              if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+            }, character(1))
+          }
+        }
+        # Force PlayResult and KorBB to character explicitly
+        term$PlayResult <- as.character(term$PlayResult)
+        term$KorBB <- as.character(term$KorBB)
+
+        # Verify no list columns before summarise
+        list_cols_in_term <- names(term)[vapply(term, is.list, logical(1))]
+        if (length(list_cols_in_term) > 0) {
+          message("WARNING: term still has list columns: ", paste(list_cols_in_term, collapse = ", "))
+        }
+
         # Per-split-type tallies (PA/AB/H/K/BB/HBP/Sac/HR)
         per_type <- term %>%
           dplyr::group_by(SplitColumn) %>%
