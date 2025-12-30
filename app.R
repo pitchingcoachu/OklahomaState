@@ -21239,14 +21239,47 @@ server <- function(input, output, session) {
     # ---------- RESULTS TABLE (fixes inflated BIP rates) ----------
     if (identical(mode, "Results")) {
       swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
-      
+
+      # CRITICAL: Force-flatten all columns before summarise operations
+      unlist_col <- function(x) {
+        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
+        else as.character(x)
+      }
+      df$PlayResult <- unlist_col(df$PlayResult)
+      df$KorBB <- unlist_col(df$KorBB)
+      df$PitchCall <- unlist_col(df$PitchCall)
+      df$TaggedHitType <- unlist_col(df$TaggedHitType)
+      df$SessionType <- unlist_col(df$SessionType)
+      df$SplitColumn <- unlist_col(df$SplitColumn)
+
+      # Final safety: flatten any remaining list columns
+      for (nm in names(df)) {
+        if (is.list(df[[nm]])) {
+          df[[nm]] <- vapply(df[[nm]], function(v) {
+            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+          }, character(1))
+        }
+      }
+
       # Terminal rows = completed PA
       is_term <- (
         (!is.na(df$PlayResult) & df$PlayResult != "Undefined") |
           (!is.na(df$KorBB) & df$KorBB %in% c("Strikeout","Walk"))
       )
       term <- df[is_term, , drop = FALSE]
-      
+
+      # Extra safety: re-flatten term after subset
+      term <- as.data.frame(term, stringsAsFactors = FALSE)
+      for (nm in names(term)) {
+        if (is.list(term[[nm]])) {
+          term[[nm]] <- vapply(term[[nm]], function(v) {
+            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+          }, character(1))
+        }
+      }
+      term$PlayResult <- as.character(term$PlayResult)
+      term$KorBB <- as.character(term$KorBB)
+
       # Per-split-type tallies (PA/AB/H/K/BB/HBP/Sac/HR)
       per_type <- term %>%
         dplyr::group_by(SplitColumn) %>%
@@ -21272,7 +21305,7 @@ server <- function(input, output, session) {
           OBP = safe_div(H + BBct + HBP, PA),
           OPS = SLG + OBP
         )
-      
+
       # Pitch totals for Usage/Swing%/Whiff%
       pitch_totals <- df %>%
         dplyr::group_by(SplitColumn) %>%
