@@ -19830,14 +19830,38 @@ server <- function(input, output, session) {
       # ---------- RESULTS TABLE (use Hitting-style PA/AB math) ----------
       if (identical(mode, "Results")) {
         swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
-        
+
+        # CRITICAL: Force-flatten all columns that will be used in sum() operations
+        # This prevents "invalid 'type' (list) of argument" errors
+        unlist_col <- function(x) {
+          if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
+          else as.character(x)
+        }
+        unlist_num <- function(x) {
+          if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
+          else suppressWarnings(as.numeric(x))
+        }
+        df$PlayResult <- unlist_col(df$PlayResult)
+        df$KorBB <- unlist_col(df$KorBB)
+        df$PitchCall <- unlist_col(df$PitchCall)
+        df$TaggedHitType <- unlist_col(df$TaggedHitType)
+        df$SessionType <- unlist_col(df$SessionType)
+        df$SplitColumn <- unlist_col(df$SplitColumn)
+        df$PlateLocSide <- unlist_num(df$PlateLocSide)
+        df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
+        df$ExitSpeed <- unlist_num(df$ExitSpeed)
+        df$Angle <- unlist_num(df$Angle)
+        df$Balls <- unlist_num(df$Balls)
+        df$Strikes <- unlist_num(df$Strikes)
+        if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
+
         # Completed PA rows
         is_term <- (
           (!is.na(df$PlayResult) & df$PlayResult != "Undefined") |
             (!is.na(df$KorBB) & df$KorBB %in% c("Strikeout","Walk"))
         )
         term <- df[is_term, , drop = FALSE]
-        
+
         # Per-split-type tallies (PA/AB/H/K/BB/HBP/Sac/HR)
         per_type <- term %>%
           dplyr::group_by(SplitColumn) %>%
@@ -20608,6 +20632,36 @@ server <- function(input, output, session) {
       }
       
       # ---------- NON-Results modes (your original build) ----------
+      # CRITICAL: Force-flatten all columns before summarise operations
+      unlist_col <- function(x) {
+        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
+        else as.character(x)
+      }
+      unlist_num <- function(x) {
+        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
+        else suppressWarnings(as.numeric(x))
+      }
+      df$PlayResult <- unlist_col(df$PlayResult)
+      df$KorBB <- unlist_col(df$KorBB)
+      df$PitchCall <- unlist_col(df$PitchCall)
+      df$TaggedHitType <- unlist_col(df$TaggedHitType)
+      df$SessionType <- unlist_col(df$SessionType)
+      df$SplitColumn <- unlist_col(df$SplitColumn)
+      df$PlateLocSide <- unlist_num(df$PlateLocSide)
+      df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
+      df$ExitSpeed <- unlist_num(df$ExitSpeed)
+      df$Angle <- unlist_num(df$Angle)
+      df$Balls <- unlist_num(df$Balls)
+      df$Strikes <- unlist_num(df$Strikes)
+      df$RelSpeed <- unlist_num(df$RelSpeed)
+      df$InducedVertBreak <- unlist_num(df$InducedVertBreak)
+      df$HorzBreak <- unlist_num(df$HorzBreak)
+      df$SpinRate <- unlist_num(df$SpinRate)
+      df$RelHeight <- unlist_num(df$RelHeight)
+      df$RelSide <- unlist_num(df$RelSide)
+      df$Extension <- unlist_num(df$Extension)
+      if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
+
       # QP+ per split type (scalar)
       qp_by_type <- df %>%
         dplyr::group_by(SplitColumn) %>%
@@ -20619,7 +20673,7 @@ server <- function(input, output, session) {
           },
           .groups = "drop"
         )
-      
+
       # Base per-split-type summary
       summ <- safe_make_summary(df, group_col = "SplitColumn")
       summ <- dplyr::mutate(summ,
@@ -21844,6 +21898,36 @@ server <- function(input, output, session) {
     }
     
     # ---------- NON-Results modes (your original build) ----------
+    # CRITICAL: Force-flatten all columns before summarise operations
+    unlist_col <- function(x) {
+      if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
+      else as.character(x)
+    }
+    unlist_num <- function(x) {
+      if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
+      else suppressWarnings(as.numeric(x))
+    }
+    df$PlayResult <- unlist_col(df$PlayResult)
+    df$KorBB <- unlist_col(df$KorBB)
+    df$PitchCall <- unlist_col(df$PitchCall)
+    df$TaggedHitType <- unlist_col(df$TaggedHitType)
+    df$SessionType <- unlist_col(df$SessionType)
+    df$SplitColumn <- unlist_col(df$SplitColumn)
+    df$PlateLocSide <- unlist_num(df$PlateLocSide)
+    df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
+    df$ExitSpeed <- unlist_num(df$ExitSpeed)
+    df$Angle <- unlist_num(df$Angle)
+    df$Balls <- unlist_num(df$Balls)
+    df$Strikes <- unlist_num(df$Strikes)
+    df$RelSpeed <- unlist_num(df$RelSpeed)
+    df$InducedVertBreak <- unlist_num(df$InducedVertBreak)
+    df$HorzBreak <- unlist_num(df$HorzBreak)
+    df$SpinRate <- unlist_num(df$SpinRate)
+    df$RelHeight <- unlist_num(df$RelHeight)
+    df$RelSide <- unlist_num(df$RelSide)
+    df$Extension <- unlist_num(df$Extension)
+    if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
+
     # QP+ per pitch type (scalar)
     qp_by_type <- df %>%
       dplyr::group_by(SplitColumn) %>%
@@ -21855,7 +21939,7 @@ server <- function(input, output, session) {
         },
         .groups = "drop"
       )
-    
+
     # Base per-pitch-type summary
     summ <- safe_make_summary(df, group_col = "SplitColumn")
     summ <- dplyr::mutate(summ,
