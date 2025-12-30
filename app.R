@@ -1599,12 +1599,22 @@ load_pitch_modifications_db <- function(pitch_data, verbose = TRUE) {
         }
       }
       
+      # NUCLEAR OPTION: Force all list columns to atomic before returning
+      temp_data <- as.data.frame(temp_data, stringsAsFactors = FALSE)
+      for (nm in names(temp_data)) {
+        if (is.list(temp_data[[nm]])) {
+          temp_data[[nm]] <- vapply(temp_data[[nm]], function(v) {
+            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+          }, character(1))
+        }
+      }
+
       return(list(
         data = temp_data,
         applied_count = modifications_applied,
         total_modifications = nrow(mods)
       ))
-      
+
     }, finally = {
       dbDisconnect(con)
     })
@@ -4412,6 +4422,18 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
 
 
 pitch_data <- purrr::map_dfr(all_csvs, read_one)
+
+# NUCLEAR OPTION: Force all list columns to atomic immediately after loading
+# purrr::map_dfr can create list columns when combining data frames with different types
+pitch_data <- as.data.frame(pitch_data, stringsAsFactors = FALSE)
+for (nm in names(pitch_data)) {
+  if (is.list(pitch_data[[nm]])) {
+    message("pitch_data load: Found list column '", nm, "' - flattening")
+    pitch_data[[nm]] <- vapply(pitch_data[[nm]], function(v) {
+      if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+    }, character(1))
+  }
+}
 
 # Ensure required columns exist since downstream code expects them
 # ------ add to need_cols ------
@@ -18882,10 +18904,21 @@ server <- function(input, output, session) {
     
     # Flatten any nested columns that may have slipped in from edits/imports
     df2 <- flatten_metrics_df(df2)
-    
+
+    # NUCLEAR OPTION: Convert to plain data.frame and force ALL columns to atomic types
+    # This prevents any list columns from surviving
+    df2 <- as.data.frame(df2, stringsAsFactors = FALSE)
+    for (nm in names(df2)) {
+      if (is.list(df2[[nm]])) {
+        df2[[nm]] <- vapply(df2[[nm]], function(v) {
+          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+        }, character(1))
+      }
+    }
+
     # Pitch type after derive
     if (!("All" %in% pitch_types)) df2 <- dplyr::filter(df2, TaggedPitchType %in% pitch_types)
-    
+
     df2
   })
   
