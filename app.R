@@ -3875,32 +3875,52 @@ apply_after_count_filter <- function(df, selection) {
 # ---- Split By helper - adds a column for grouping based on split selection ----
 apply_split_by <- function(df, split_choice) {
   if (is.null(split_choice)) split_choice <- "Pitch Types"
-  
+
+  # Helper to safely convert column to character, handling list columns
+  safe_as_char <- function(x) {
+    if (is.list(x)) {
+      vapply(x, function(v) {
+        if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+      }, character(1))
+    } else {
+      as.character(x)
+    }
+  }
+
+  # Helper to safely convert column to numeric, handling list columns
+  safe_as_num <- function(x) {
+    if (is.list(x)) {
+      vapply(x, function(v) {
+        if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]]))
+      }, numeric(1))
+    } else {
+      suppressWarnings(as.numeric(x))
+    }
+  }
+
   df <- switch(
     split_choice,
-    
+
     "Pitch Types" = {
-      df %>% dplyr::mutate(SplitColumn = as.character(TaggedPitchType))
+      df %>% dplyr::mutate(SplitColumn = safe_as_char(TaggedPitchType))
     },
     
     "Batter Hand" = {
-      df %>% dplyr::mutate(SplitColumn = ifelse(
-        !is.na(BatterSide) & BatterSide != "", 
-        as.character(BatterSide), 
-        "Unknown"
-      ))
+      bside <- safe_as_char(df$BatterSide)
+      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(bside) & bside != "", bside, "Unknown"))
     },
-    
+
     "Pitcher Hand" = {
-      df %>% dplyr::mutate(SplitColumn = ifelse(
-        !is.na(PitcherThrows) & PitcherThrows != "", 
-        as.character(PitcherThrows), 
-        "Unknown"
-      ))
+      pthrows <- safe_as_char(df$PitcherThrows)
+      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(pthrows) & pthrows != "", pthrows, "Unknown"))
     },
-    
+
     "Count" = {
+      balls_num <- safe_as_num(df$Balls)
+      strikes_num <- safe_as_num(df$Strikes)
       df %>% dplyr::mutate(
+        Balls = balls_num,
+        Strikes = strikes_num,
         SplitColumn = ifelse(
           is.finite(Balls) & is.finite(Strikes),
           paste0(Balls, "-", Strikes),
@@ -3909,13 +3929,16 @@ apply_split_by <- function(df, split_choice) {
         CountState = count_state_vec(Balls, Strikes)
       )
     },
-    
+
     "After Count" = {
       # Compute previous count if not already present
       if (!all(c("PAofInning", "Inning", "Date") %in% names(df))) {
         df %>% dplyr::mutate(SplitColumn = "Unknown")
       } else {
+        balls_num <- safe_as_num(df$Balls)
+        strikes_num <- safe_as_num(df$Strikes)
         df %>%
+          dplyr::mutate(Balls = balls_num, Strikes = strikes_num) %>%
           dplyr::arrange(Date, Inning, PAofInning, PitchofPA) %>%
           dplyr::group_by(Date, Inning, PAofInning) %>%
           dplyr::mutate(
@@ -3930,53 +3953,56 @@ apply_split_by <- function(df, split_choice) {
           dplyr::ungroup()
       }
     },
-    
+
     "Velocity" = {
-      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
-        !is.finite(RelSpeed) ~ "Unknown",
-        RelSpeed < 70 ~ "<70",
-        RelSpeed >= 100 ~ ">99",
-        TRUE ~ paste0(floor(RelSpeed/2)*2, "-", floor(RelSpeed/2)*2 + 1)
-      ))
+      velo <- safe_as_num(df$RelSpeed)
+      df %>% dplyr::mutate(
+        RelSpeed = velo,
+        SplitColumn = dplyr::case_when(
+          !is.finite(RelSpeed) ~ "Unknown",
+          RelSpeed < 70 ~ "<70",
+          RelSpeed >= 100 ~ ">99",
+          TRUE ~ paste0(floor(RelSpeed/2)*2, "-", floor(RelSpeed/2)*2 + 1)
+        ))
     },
-    
+
     "IVB" = {
-      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
-        !is.finite(InducedVertBreak) ~ "Unknown",
-        InducedVertBreak < -22 ~ "<-22",
-        InducedVertBreak > 22 ~ ">22",
-        TRUE ~ paste0(floor(InducedVertBreak/2)*2, "-", floor(InducedVertBreak/2)*2 + 1)
-      ))
+      ivb <- safe_as_num(df$InducedVertBreak)
+      df %>% dplyr::mutate(
+        InducedVertBreak = ivb,
+        SplitColumn = dplyr::case_when(
+          !is.finite(InducedVertBreak) ~ "Unknown",
+          InducedVertBreak < -22 ~ "<-22",
+          InducedVertBreak > 22 ~ ">22",
+          TRUE ~ paste0(floor(InducedVertBreak/2)*2, "-", floor(InducedVertBreak/2)*2 + 1)
+        ))
     },
-    
+
     "HB" = {
-      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
-        !is.finite(HorzBreak) ~ "Unknown",
-        HorzBreak < -22 ~ "<-22",
-        HorzBreak > 22 ~ ">22",
-        TRUE ~ paste0(floor(HorzBreak/2)*2, "-", floor(HorzBreak/2)*2 + 1)
-      ))
+      hb <- safe_as_num(df$HorzBreak)
+      df %>% dplyr::mutate(
+        HorzBreak = hb,
+        SplitColumn = dplyr::case_when(
+          !is.finite(HorzBreak) ~ "Unknown",
+          HorzBreak < -22 ~ "<-22",
+          HorzBreak > 22 ~ ">22",
+          TRUE ~ paste0(floor(HorzBreak/2)*2, "-", floor(HorzBreak/2)*2 + 1)
+        ))
     },
-    
+
     "Batter" = {
-      df %>% dplyr::mutate(SplitColumn = ifelse(
-        !is.na(Batter) & nzchar(Batter), 
-        as.character(Batter), 
-        "Unknown"
-      ))
+      batter_chr <- safe_as_char(df$Batter)
+      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(batter_chr) & nzchar(batter_chr), batter_chr, "Unknown"))
     },
-    
+
     "Pitcher" = {
-      df %>% dplyr::mutate(SplitColumn = ifelse(
-        !is.na(Pitcher) & nzchar(Pitcher), 
-        as.character(Pitcher), 
-        "Unknown"
-      ))
+      pitcher_chr <- safe_as_char(df$Pitcher)
+      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(pitcher_chr) & nzchar(pitcher_chr), pitcher_chr, "Unknown"))
     },
-    
+
     # Default: Pitch Types
     {
-      df %>% dplyr::mutate(SplitColumn = as.character(TaggedPitchType))
+      df %>% dplyr::mutate(SplitColumn = safe_as_char(TaggedPitchType))
     }
   )
   attr(df, "split_choice") <- split_choice
@@ -4426,8 +4452,17 @@ message("Loaded ", nrow(pitch_data), " rows from ", length(all_csvs),
 
 # Read lookup table and keep Email in a separate column to avoid .x/.y
 lookup_table <- if (file.exists("lookup_table.csv")) {
-  read.csv("lookup_table.csv", stringsAsFactors = FALSE) %>%
-    dplyr::rename(Pitcher = PlayerName, Email_lookup = Email)
+  # Clean up potential BOM/sanitized column names before renaming
+  raw_lookup <- read.csv("lookup_table.csv", stringsAsFactors = FALSE, check.names = FALSE)
+  names(raw_lookup) <- names(raw_lookup) %>%
+    trimws() %>%
+    gsub("^ï\\.\\.|^X\\.\\.\\.", "", ., perl = TRUE)
+  if (!all(c("PlayerName", "Email") %in% names(raw_lookup))) {
+    message("lookup_table.csv is missing expected columns; skipping lookup merge")
+    data.frame(Pitcher = character(), Email_lookup = character(), stringsAsFactors = FALSE)
+  } else {
+    raw_lookup %>% dplyr::rename(Pitcher = PlayerName, Email_lookup = Email)
+  }
 } else {
   data.frame(Pitcher = character(), Email_lookup = character(), stringsAsFactors = FALSE)
 }
@@ -4755,6 +4790,7 @@ compute_usage_by_count <- function(df, original_df = NULL) {
 
 # ---- NEW: calculator for Process/Results metrics per pitch type (+ All) ----
 compute_process_results <- function(df, mode = "All") {
+  df <- flatten_metrics_df(df)
   # Determine which column to use for pitch type grouping
   # Prefer SplitColumn if it exists (Split By mode), otherwise use TaggedPitchType
   pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
@@ -5195,7 +5231,31 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       `Pitching+`   = numeric()
     ))
   }
-  
+
+  # Aggressively flatten all list columns before any summarise operations
+  flatten_all_lists <- function(dfx) {
+    for (nm in names(dfx)) {
+      col <- dfx[[nm]]
+      if (is.list(col)) {
+        dfx[[nm]] <- vapply(col, function(x) {
+          if (is.null(x) || length(x) == 0) NA_character_
+          else as.character(x[[1]])
+        }, character(1))
+      }
+    }
+    dfx
+  }
+  df <- flatten_all_lists(df)
+
+  # Ensure critical numeric columns are numeric
+  num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
+                "SpinRate", "SpinEfficiency", "RelHeight", "RelSide", "Extension",
+                "VertApprAngle", "HorzApprAngle", "PlateLocSide", "PlateLocHeight",
+                "ExitSpeed", "Angle", "Stuff+", "ReleaseTilt", "BreakTilt")
+  for (nc in intersect(num_cols, names(df))) {
+    df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
+  }
+
   usage_map    <- tryCatch(
     usage_by_type(df),
     error = function(e) {
@@ -6252,6 +6312,54 @@ safe_for_dt <- function(df) {
     else col
   })
   as.data.frame(out, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+# Flatten list columns (preferring numeric when possible) so downstream math
+# never sees list/NULL values (bullpen data occasionally carries nested cells)
+flatten_metrics_df <- function(df) {
+  if (!is.data.frame(df) || !nrow(df)) return(df)
+
+  flatten_col <- function(col) {
+    if (is.factor(col)) col <- as.character(col)
+    if (!is.list(col)) return(col)
+
+    # First pass: extract first element from each list item
+    vals <- lapply(col, function(x) {
+      if (is.null(x) || length(x) == 0) return(NA)
+      # Handle nested lists
+      val <- x[[1]]
+      if (is.list(val)) val <- val[[1]]
+      if (is.null(val) || length(val) == 0) return(NA)
+      val
+    })
+
+    vals_chr <- vapply(vals, function(v) {
+      if (is.null(v) || length(v) == 0 || (length(v) == 1 && is.na(v))) return(NA_character_)
+      as.character(v[1])
+    }, character(1))
+    vals_num <- suppressWarnings(as.numeric(vals_chr))
+
+    if (sum(!is.na(vals_num)) >= sum(!is.na(vals_chr)) * 0.6) {
+      vals_num
+    } else {
+      vals_chr
+    }
+  }
+
+  # Apply flattening to all columns
+  df[] <- lapply(df, flatten_col)
+
+  # Second pass: ensure no list columns remain
+  for (nm in names(df)) {
+    if (is.list(df[[nm]])) {
+      df[[nm]] <- vapply(df[[nm]], function(x) {
+        if (is.null(x) || length(x) == 0) NA_character_
+        else as.character(x[[1]])
+      }, character(1))
+    }
+  }
+
+  df
 }
 
 mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_range = NULL) {
@@ -18734,6 +18842,9 @@ server <- function(input, output, session) {
       force_pitch_levels() %>%
       dplyr::mutate(Result = factor(compute_result(PitchCall, PlayResult), levels = result_levels))
     
+    # Flatten any nested columns that may have slipped in from edits/imports
+    df2 <- flatten_metrics_df(df2)
+    
     # Pitch type after derive
     if (!("All" %in% pitch_types)) df2 <- dplyr::filter(df2, TaggedPitchType %in% pitch_types)
     
@@ -19590,6 +19701,22 @@ server <- function(input, output, session) {
   output$summaryTablePage <- DT::renderDataTable({
     tryCatch({
       df <- filtered_data()
+      df <- flatten_metrics_df(df)
+      char_cols <- intersect(
+        c("PlayResult","PitchCall","KorBB","TaggedHitType","SessionType","TaggedPitchType","SplitColumn"),
+        names(df)
+      )
+      num_cols <- intersect(
+        c("Balls","Strikes","ExitSpeed","Angle","InducedVertBreak","HorzBreak","RelSpeed"),
+        names(df)
+      )
+      if (length(char_cols) || length(num_cols)) {
+        df <- df %>%
+          dplyr::mutate(
+            dplyr::across(char_cols, ~ as.character(.)),
+            dplyr::across(num_cols,  ~ suppressWarnings(as.numeric(.)))
+          )
+      }
       if (!nrow(df)) {
         return(DT::datatable(
           data.frame(Message = "No data for selected filters"),
@@ -19600,7 +19727,30 @@ server <- function(input, output, session) {
       # Apply Split By transformation
       split_choice <- if (!is.null(input$summarySplitBy)) input$summarySplitBy else "Pitch Types"
       df <- apply_split_by(df, split_choice)
-      
+
+      # Re-flatten after split transformation to ensure no list columns remain
+      df <- flatten_metrics_df(df)
+
+      # Ensure critical columns used in summarise operations are not lists
+      for (col_nm in intersect(c("PlayResult", "PitchCall", "KorBB", "TaggedHitType",
+                                  "SessionType", "SplitColumn", "BatterSide", "Batter"), names(df))) {
+        if (is.list(df[[col_nm]])) {
+          df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
+            if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
+          }, character(1))
+        }
+      }
+      for (col_nm in intersect(c("Balls", "Strikes", "ExitSpeed", "Angle", "PlateLocSide",
+                                  "PlateLocHeight", "RelSpeed", "InducedVertBreak", "HorzBreak"), names(df))) {
+        if (is.list(df[[col_nm]])) {
+          df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
+            if (is.null(x) || length(x) == 0) NA_real_ else suppressWarnings(as.numeric(x[[1]]))
+          }, numeric(1))
+        } else {
+          df[[col_nm]] <- suppressWarnings(as.numeric(df[[col_nm]]))
+        }
+      }
+
       # Determine the column name based on split choice
       split_col_name <- switch(
         split_choice,
@@ -20834,11 +20984,37 @@ server <- function(input, output, session) {
         options = list(dom = 't'), rownames = FALSE
       ))
     }
-    
+
+    # Flatten list columns before processing
+    df <- flatten_metrics_df(df)
+
     # Apply Split By transformation
     split_choice <- if (!is.null(input$dpSplitBy)) input$dpSplitBy else "Pitch Types"
     df <- apply_split_by(df, split_choice)
-    
+
+    # Re-flatten after split transformation
+    df <- flatten_metrics_df(df)
+
+    # Ensure critical columns are not lists
+    for (col_nm in intersect(c("PlayResult", "PitchCall", "KorBB", "TaggedHitType",
+                                "SessionType", "SplitColumn", "BatterSide", "Batter"), names(df))) {
+      if (is.list(df[[col_nm]])) {
+        df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
+          if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
+        }, character(1))
+      }
+    }
+    for (col_nm in intersect(c("Balls", "Strikes", "ExitSpeed", "Angle", "PlateLocSide",
+                                "PlateLocHeight", "RelSpeed", "InducedVertBreak", "HorzBreak"), names(df))) {
+      if (is.list(df[[col_nm]])) {
+        df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
+          if (is.null(x) || length(x) == 0) NA_real_ else suppressWarnings(as.numeric(x[[1]]))
+        }, numeric(1))
+      } else {
+        df[[col_nm]] <- suppressWarnings(as.numeric(df[[col_nm]]))
+      }
+    }
+
     # Determine the column name based on split choice
     split_col_name <- switch(
       split_choice,
