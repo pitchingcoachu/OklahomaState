@@ -2098,15 +2098,21 @@ safe_compute_process_results <- function(df, mode = "All") {
 # Safe wrapper for make_summary with error handling (supports alternate grouping)
 safe_make_summary <- function(df, group_col = "TaggedPitchType") {
   tryCatch({
-    # CRITICAL: Force-flatten ALL list columns before calling make_summary
-    # This prevents "invalid 'type' (list) of argument" errors in sum()
+    # NUCLEAR OPTION: Force data.frame and aggressively unlist ALL columns
+    df <- as.data.frame(df, stringsAsFactors = FALSE)
     list_cols_found <- character(0)
     for (nm in names(df)) {
-      if (is.list(df[[nm]])) {
+      col <- df[[nm]]
+      # Check multiple ways a column can be a list
+      if (is.list(col) || inherits(col, "list") || !is.atomic(col)) {
         list_cols_found <- c(list_cols_found, nm)
-        df[[nm]] <- vapply(df[[nm]], function(v) {
-          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-        }, character(1))
+        df[[nm]] <- tryCatch({
+          vapply(col, function(x) {
+            if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
+          }, character(1))
+        }, error = function(e) {
+          as.character(unlist(col))
+        })
       }
     }
     if (length(list_cols_found) > 0) {
@@ -2120,12 +2126,11 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
     for (nc in intersect(num_cols, names(df))) {
       if (!is.numeric(df[[nc]])) df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
     }
-    # Double-check no list columns remain
-    remaining_lists <- names(df)[vapply(df, is.list, logical(1))]
-    if (length(remaining_lists) > 0) {
-      message("WARNING: List columns STILL remain after flattening: ", paste(remaining_lists, collapse=", "))
-      for (nm in remaining_lists) {
-        df[[nm]] <- as.character(unlist(lapply(df[[nm]], `[`, 1)))
+    # Double-check no list columns remain using is.atomic check
+    for (nm in names(df)) {
+      if (!is.atomic(df[[nm]])) {
+        message("WARNING: Non-atomic column STILL remains: ", nm, " - force unlisting")
+        df[[nm]] <- as.character(unlist(df[[nm]]))
       }
     }
     make_summary(df, group_col = group_col)
@@ -5292,20 +5297,24 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
     ))
   }
 
-  # Aggressively flatten all list columns before any summarise operations
-  flatten_all_lists <- function(dfx) {
-    for (nm in names(dfx)) {
-      col <- dfx[[nm]]
-      if (is.list(col)) {
-        dfx[[nm]] <- vapply(col, function(x) {
+  # NUCLEAR OPTION: Force data.frame and aggressively unlist ALL columns
+  df <- as.data.frame(df, stringsAsFactors = FALSE)
+  for (nm in names(df)) {
+    col <- df[[nm]]
+    # Check multiple ways a column can be a list
+    if (is.list(col) || inherits(col, "list") || !is.atomic(col)) {
+      # Force to character vector using unlist with recursive unlisting
+      df[[nm]] <- tryCatch({
+        vapply(col, function(x) {
           if (is.null(x) || length(x) == 0) NA_character_
           else as.character(x[[1]])
         }, character(1))
-      }
+      }, error = function(e) {
+        # Fallback: use unlist
+        as.character(unlist(col))
+      })
     }
-    dfx
   }
-  df <- flatten_all_lists(df)
 
   # Ensure critical numeric columns are numeric
   num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
@@ -6379,9 +6388,13 @@ safe_for_dt <- function(df) {
 flatten_metrics_df <- function(df) {
   if (!is.data.frame(df) || !nrow(df)) return(df)
 
+  # NUCLEAR OPTION: Force to plain data.frame first
+  df <- as.data.frame(df, stringsAsFactors = FALSE)
+
   flatten_col <- function(col) {
     if (is.factor(col)) col <- as.character(col)
-    if (!is.list(col)) return(col)
+    # Use is.atomic to catch all non-atomic types
+    if (is.atomic(col) && !is.list(col)) return(col)
 
     # First pass: extract first element from each list item
     vals <- lapply(col, function(x) {
@@ -6409,13 +6422,18 @@ flatten_metrics_df <- function(df) {
   # Apply flattening to all columns
   df[] <- lapply(df, flatten_col)
 
-  # Second pass: ensure no list columns remain
+  # Second pass: ensure no non-atomic columns remain
   for (nm in names(df)) {
-    if (is.list(df[[nm]])) {
-      df[[nm]] <- vapply(df[[nm]], function(x) {
-        if (is.null(x) || length(x) == 0) NA_character_
-        else as.character(x[[1]])
-      }, character(1))
+    col <- df[[nm]]
+    if (!is.atomic(col) || is.list(col)) {
+      df[[nm]] <- tryCatch({
+        vapply(col, function(x) {
+          if (is.null(x) || length(x) == 0) NA_character_
+          else as.character(x[[1]])
+        }, character(1))
+      }, error = function(e) {
+        as.character(unlist(col))
+      })
     }
   }
 
