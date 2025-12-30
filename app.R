@@ -2060,6 +2060,14 @@ sanitize_for_dt <- function(dfx) {
 # Safe wrapper for compute_process_results with error handling
 safe_compute_process_results <- function(df, mode = "All") {
   tryCatch({
+    # CRITICAL: Force-flatten ALL list columns before processing
+    for (nm in names(df)) {
+      if (is.list(df[[nm]])) {
+        df[[nm]] <- vapply(df[[nm]], function(v) {
+          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+        }, character(1))
+      }
+    }
     compute_process_results(df, mode)
   }, error = function(e) {
     message("Error in compute_process_results: ", conditionMessage(e))
@@ -2080,6 +2088,23 @@ safe_compute_process_results <- function(df, mode = "All") {
 # Safe wrapper for make_summary with error handling (supports alternate grouping)
 safe_make_summary <- function(df, group_col = "TaggedPitchType") {
   tryCatch({
+    # CRITICAL: Force-flatten ALL list columns before calling make_summary
+    # This prevents "invalid 'type' (list) of argument" errors in sum()
+    for (nm in names(df)) {
+      if (is.list(df[[nm]])) {
+        df[[nm]] <- vapply(df[[nm]], function(v) {
+          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+        }, character(1))
+      }
+    }
+    # Ensure critical numeric columns are numeric
+    num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
+                  "SpinRate", "SpinEfficiency", "RelHeight", "RelSide", "Extension",
+                  "VertApprAngle", "HorzApprAngle", "PlateLocSide", "PlateLocHeight",
+                  "ExitSpeed", "Angle", "Stuff+", "ReleaseTilt", "BreakTilt")
+    for (nc in intersect(num_cols, names(df))) {
+      if (!is.numeric(df[[nc]])) df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
+    }
     make_summary(df, group_col = group_col)
   }, error = function(e) {
     message("Error in make_summary (group_col = ", group_col, "): ", conditionMessage(e))
