@@ -2090,12 +2090,17 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
   tryCatch({
     # CRITICAL: Force-flatten ALL list columns before calling make_summary
     # This prevents "invalid 'type' (list) of argument" errors in sum()
+    list_cols_found <- character(0)
     for (nm in names(df)) {
       if (is.list(df[[nm]])) {
+        list_cols_found <- c(list_cols_found, nm)
         df[[nm]] <- vapply(df[[nm]], function(v) {
           if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
         }, character(1))
       }
+    }
+    if (length(list_cols_found) > 0) {
+      message("safe_make_summary: Flattened ", length(list_cols_found), " list columns: ", paste(head(list_cols_found, 5), collapse=", "))
     }
     # Ensure critical numeric columns are numeric
     num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
@@ -2104,6 +2109,14 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
                   "ExitSpeed", "Angle", "Stuff+", "ReleaseTilt", "BreakTilt")
     for (nc in intersect(num_cols, names(df))) {
       if (!is.numeric(df[[nc]])) df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
+    }
+    # Double-check no list columns remain
+    remaining_lists <- names(df)[vapply(df, is.list, logical(1))]
+    if (length(remaining_lists) > 0) {
+      message("WARNING: List columns STILL remain after flattening: ", paste(remaining_lists, collapse=", "))
+      for (nm in remaining_lists) {
+        df[[nm]] <- as.character(unlist(lapply(df[[nm]], `[`, 1)))
+      }
     }
     make_summary(df, group_col = group_col)
   }, error = function(e) {
@@ -19880,6 +19893,16 @@ server <- function(input, output, session) {
         df$Strikes <- unlist_num(df$Strikes)
         if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
 
+        # FINAL SAFETY: Force-flatten ANY remaining list columns in the entire dataframe
+        for (nm in names(df)) {
+          if (is.list(df[[nm]])) {
+            message("summaryTablePage Results: Found unexpected list column '", nm, "' - flattening")
+            df[[nm]] <- vapply(df[[nm]], function(v) {
+              if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+            }, character(1))
+          }
+        }
+
         # Completed PA rows
         is_term <- (
           (!is.na(df$PlayResult) & df$PlayResult != "Undefined") |
@@ -20686,6 +20709,16 @@ server <- function(input, output, session) {
       df$RelSide <- unlist_num(df$RelSide)
       df$Extension <- unlist_num(df$Extension)
       if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
+
+      # FINAL SAFETY: Force-flatten ANY remaining list columns
+      for (nm in names(df)) {
+        if (is.list(df[[nm]])) {
+          message("summaryTablePage NON-Results: Found unexpected list column '", nm, "' - flattening")
+          df[[nm]] <- vapply(df[[nm]], function(v) {
+            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+          }, character(1))
+        }
+      }
 
       # QP+ per split type (scalar)
       qp_by_type <- df %>%
@@ -21952,6 +21985,16 @@ server <- function(input, output, session) {
     df$RelSide <- unlist_num(df$RelSide)
     df$Extension <- unlist_num(df$Extension)
     if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
+
+    # FINAL SAFETY: Force-flatten ANY remaining list columns
+    for (nm in names(df)) {
+      if (is.list(df[[nm]])) {
+        message("summaryTable (DP): Found unexpected list column '", nm, "' - flattening")
+        df[[nm]] <- vapply(df[[nm]], function(v) {
+          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
+        }, character(1))
+      }
+    }
 
     # QP+ per pitch type (scalar)
     qp_by_type <- df %>%
