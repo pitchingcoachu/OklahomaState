@@ -4623,7 +4623,7 @@ ALLOWED_PITCHERS <- c(
 
 # Mirror list for hitters (GCU hitters)
 ALLOWED_HITTERS <- c(
-    "Wentworth, TP",
+  "Wentworth, TP",
   "LeBlanc, Bryce",
   "Lund, Ethan",
   "Fyke, Kai",
