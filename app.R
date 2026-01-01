@@ -139,8 +139,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     theme_void() + 
     theme(legend.position = "none",
           plot.title = element_text(face = "bold", hjust = 0.5),
-          plot.background = element_rect(fill = "white", color = NA),
-          panel.background = element_rect(fill = "white", color = NA)) +
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)) +
     labs(title = title)
   
   # If show_scale, add gradient bar on top
@@ -186,8 +186,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
         axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
         axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
         plot.margin = margin(5, 0, 10, 0),
-        plot.background = element_rect(fill = "white", color = NA),
-        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA),
+        panel.background = element_rect(fill = "transparent", color = NA),
         aspect.ratio = 0.15  # Make scale bar much narrower
       ) +
       labs(x = scale_label)
@@ -223,8 +223,8 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
     theme_void() + 
     theme(legend.position = "none",
           plot.title = element_text(face = "bold", hjust = 0.5),
-          plot.background = element_rect(fill = "white", color = NA),
-          panel.background = element_rect(fill = "white", color = NA)) +
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)) +
     labs(title = title)
   
   # If show_scale, add gradient bar on top
@@ -260,8 +260,8 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
         axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
         axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
         plot.margin = margin(5, 0, 10, 0),
-        plot.background = element_rect(fill = "white", color = NA),
-        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA),
+        panel.background = element_rect(fill = "transparent", color = NA),
         aspect.ratio = 0.15
       ) +
       labs(x = scale_label)
@@ -3729,12 +3729,22 @@ all_colors <- c(
   Splitter   = "turquoise",
   Knuckleball= "darkblue"
 )
+colors_for_mode <- function(dark_on = FALSE) {
+  cols <- all_colors
+  if (isTRUE(dark_on) && "Fastball" %in% names(cols)) cols["Fastball"] <- "#ffffff"
+  cols
+}
 force_pitch_levels <- function(df) df %>% mutate(
   TaggedPitchType = factor(TaggedPitchType, levels = names(all_colors))
 )
 
 # Session colors for Trend when "All" is selected
 session_cols <- c(Live = "red", Bullpen = "black")
+session_cols_for_mode <- function(dark_on = FALSE) {
+  cols <- session_cols
+  if (isTRUE(dark_on) && "Bullpen" %in% names(cols)) cols["Bullpen"] <- "#ffffff"
+  cols
+}
 
 # Filters
 # ---- Filters: Zone & In-Zone ----
@@ -4367,8 +4377,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     theme_void() + 
     theme(legend.position = "none",
           plot.title = element_text(face = "bold", hjust = 0.5),
-          plot.background = element_rect(fill = "white", color = NA),
-          panel.background = element_rect(fill = "white", color = NA)) +
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)) +
     labs(title = title)
   
   # If show_scale, add gradient bar on top
@@ -4414,8 +4424,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
         axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
         axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
         plot.margin = margin(5, 0, 10, 0),
-        plot.background = element_rect(fill = "white", color = NA),
-        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA),
+        panel.background = element_rect(fill = "transparent", color = NA),
         aspect.ratio = 0.15  # Make scale bar much narrower
       ) +
       labs(x = scale_label)
@@ -12751,13 +12761,18 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           aes(avg_HorzBreak, avg_InducedVertBreak, color = TaggedPitchType),
           size = 8
         ) +
-        geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+        geom_hline(yintercept = 0, color = "black") +
+        geom_vline(xintercept = 0, color = "black") +
         coord_cartesian(xlim = c(-25, 25), ylim = c(-25, 25)) +
         scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
         scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
         labs(x = "Horizontal Break (in)", y = "Induced Vertical Break (in)") +
         theme_minimal(base_size = 12) +
-        theme(legend.position = "none")
+        theme(
+          legend.position = "none",
+          panel.grid = element_blank(),
+          axis.ticks = element_blank()
+        )
       ggiraph::girafe(
         ggobj = p,
         options = list(
@@ -12792,9 +12807,10 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
         annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
         geom_vline(xintercept = 0, color = "black", size = 0.7) +
+        geom_hline(yintercept = 0, color = "black", size = 0.7) +
         geom_point(data = avg, aes(avg_RelSide, avg_RelHeight, color = TaggedPitchType), size = 4) +
         scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
-        theme_minimal() + axis_th + theme(legend.position = "none") +
+        theme_minimal() + axis_th + theme(legend.position = "none", panel.grid = element_blank(), axis.ticks = element_blank()) +
         labs(x = NULL, y = NULL)
     }
     output$cmpA_release <- renderPlot({ .release_plot(.filtered_panel("A")) })
@@ -12824,8 +12840,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
     .heat_plot <- function(df, stat) {
       render_heatmap_stat(df, stat)
     }
-    output$cmpA_heat <- renderPlot({ .heat_plot(.filtered_panel("A"), input$cmpA_hmStat) })
-    output$cmpB_heat <- renderPlot({ .heat_plot(.filtered_panel("B"), input$cmpB_hmStat) })
+    output$cmpA_heat <- renderPlot({ .heat_plot(.filtered_panel("A"), input$cmpA_hmStat) }, bg = "transparent")
+    output$cmpB_heat <- renderPlot({ .heat_plot(.filtered_panel("B"), input$cmpB_hmStat) }, bg = "transparent")
     
     .pitch_girafe <- function(df, sel_results) {
       if (!nrow(df)) return(NULL)
@@ -14346,51 +14362,54 @@ custom_reports_ui <- function(id) {
   ns <- NS(id)
   fluidPage(
     shinyjs::useShinyjs(),  # Enable shinyjs
-    # Floating show sidebar button (only visible when sidebar is hidden)
-    div(id = ns("show_sidebar_btn"), style = "display:none; position:fixed; top:10px; left:10px; z-index:2000;",
-        actionButton(ns("show_sidebar"), "Show Sidebar", class = "btn-primary btn-sm")
-    ),
-    fluidRow(
-      # Sidebar with toggle button
-      column(3, id = ns("sidebar_column"),
-             div(style = "position:relative;",
-                 actionButton(ns("toggle_sidebar"), "Hide Sidebar", 
-                              class = "btn-sm btn-secondary", 
-                              style = "position:absolute; right:5px; top:5px; z-index:1000;"),
-                 h4("Report Setup"),
-                 textInput(ns("report_title"), "Report Title", ""),
-                 selectInput(ns("report_type"), "Report Type:", choices = c("Pitching","Hitting"), selected = "Pitching"),
-                 selectInput(ns("report_scope"), "Scope:", choices = c("Single Player","Multi-Player"), selected = "Single Player"),
-                 # Single Player mode - show player selector
-                 conditionalPanel(
-                   sprintf("input['%s'] == 'Single Player'", ns("report_scope")),
-                   selectizeInput(ns("report_players"), "Players:", choices = NULL, multiple = TRUE)
-                 ),
-                 # Multi-Player mode - note about row assignments
-                 conditionalPanel(
-                   sprintf("input['%s'] == 'Multi-Player'", ns("report_scope")),
-                   div(style = "background-color:#f0f0f0; padding:10px; border-radius:5px; margin-bottom:10px;",
-                       tags$strong("Multi-Player Mode:"),
-                       tags$br(),
-                       "Each row = 1 player"
-                   ),
-                   # Player dropdowns for each possible row (only show up to current row count)
-                   uiOutput(ns("multi_player_selectors"))
-                 ),
-                 selectInput(ns("report_rows"), "Rows:", choices = 1:15, selected = 1),
-                 selectInput(ns("report_cols"), "Columns:", choices = 1:5, selected = 1),
-                 selectInput(ns("saved_report"), "Saved Reports:", choices = c(""), selected = ""),
-                 uiOutput(ns("report_global_toggle")),
-                 div(style = "display: flex; gap: 5px;",
-                     actionButton(ns("new_report"), "New Report", class = "btn-success btn-sm"),
-                     actionButton(ns("save_report"), "Save Report", class = "btn-primary btn-sm"),
-                     actionButton(ns("delete_report"), "Delete Report", class = "btn-danger btn-sm")
-                 )
-             )
+    div(
+      class = "creports-root",
+      # Floating show sidebar button (only visible when sidebar is hidden)
+      div(id = ns("show_sidebar_btn"), style = "display:none; position:fixed; top:10px; left:10px; z-index:2000;",
+          actionButton(ns("show_sidebar"), "Show Sidebar", class = "btn-primary btn-sm")
       ),
-      column(9, id = ns("main_column"),
-             uiOutput(ns("report_header")),
-             uiOutput(ns("report_canvas"))
+      fluidRow(
+        # Sidebar with toggle button
+        column(3, id = ns("sidebar_column"),
+               div(style = "position:relative;",
+                   actionButton(ns("toggle_sidebar"), "Hide Sidebar", 
+                                class = "btn-sm btn-secondary", 
+                                style = "position:absolute; right:5px; top:5px; z-index:1000;"),
+                   h4("Report Setup"),
+                   textInput(ns("report_title"), "Report Title", ""),
+                   selectInput(ns("report_type"), "Report Type:", choices = c("Pitching","Hitting"), selected = "Pitching"),
+                   selectInput(ns("report_scope"), "Scope:", choices = c("Single Player","Multi-Player"), selected = "Single Player"),
+                   # Single Player mode - show player selector
+                   conditionalPanel(
+                     sprintf("input['%s'] == 'Single Player'", ns("report_scope")),
+                     selectizeInput(ns("report_players"), "Players:", choices = NULL, multiple = TRUE)
+                   ),
+                   # Multi-Player mode - note about row assignments
+                   conditionalPanel(
+                     sprintf("input['%s'] == 'Multi-Player'", ns("report_scope")),
+                     div(style = "background-color:#f0f0f0; padding:10px; border-radius:5px; margin-bottom:10px;",
+                         tags$strong("Multi-Player Mode:"),
+                         tags$br(),
+                         "Each row = 1 player"
+                     ),
+                     # Player dropdowns for each possible row (only show up to current row count)
+                     uiOutput(ns("multi_player_selectors"))
+                   ),
+                   selectInput(ns("report_rows"), "Rows:", choices = 1:15, selected = 1),
+                   selectInput(ns("report_cols"), "Columns:", choices = 1:5, selected = 1),
+                   selectInput(ns("saved_report"), "Saved Reports:", choices = c(""), selected = ""),
+                   uiOutput(ns("report_global_toggle")),
+                   div(style = "display: flex; gap: 5px;",
+                       actionButton(ns("new_report"), "New Report", class = "btn-success btn-sm"),
+                       actionButton(ns("save_report"), "Save Report", class = "btn-primary btn-sm"),
+                       actionButton(ns("delete_report"), "Delete Report", class = "btn-danger btn-sm")
+                   )
+               )
+        ),
+        column(9, id = ns("main_column"),
+               uiOutput(ns("report_header")),
+               uiOutput(ns("report_canvas"))
+        )
       )
     )
   )
@@ -14952,7 +14971,7 @@ custom_reports_server <- function(id) {
           
           column(
             width = width, offset = offset,
-            div(style = "background-color:white; border:2px solid black; padding:15px; margin-bottom:15px;",
+            div(class = "creport-cell",
                 # Always create controls to preserve state, but hide them for rows 2+ in Multi-Player mode
                 # Title and show controls toggle
                 div(style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;",
@@ -16440,357 +16459,359 @@ player_plans_ui <- function() {
       "))
     ),
     
-    sidebarLayout(
-      sidebarPanel(
-        width = 3,
-        h4("Player Plans"),
-        selectInput("pp_player_select", "Select Player:",
-                    choices = NULL,
-                    selected = NULL),
-        
-        selectInput("pp_session_type", "Session Type:",
-                    choices = c("All", "Bullpen", "Live"),
-                    selected = "All"),
-        
-        dateRangeInput("pp_date_range", "Date Range:",
-                       start = Sys.Date() - 30,
-                       end = Sys.Date(),
-                       format = "mm/dd/yyyy"),
-        
-        hr(),
-        
-        # Goal 1
-        h5("Goal #1"),
-        selectInput("pp_goal1_type", "Goal Type:",
-                    choices = c("", "Stuff", "Execution"),
-                    selected = ""),
-        
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Stuff'",
-          selectInput("pp_goal1_stuff_category", "Category:",
-                      choices = c("", "Velocity", "Movement"),
-                      selected = "")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_stuff_category == 'Velocity'",
-          selectInput("pp_goal1_velocity_pitch", "Pitch Type:",
+    div(
+      class = "pp-root",
+      sidebarLayout(
+        sidebarPanel(
+          width = 3,
+          h4("Player Plans"),
+          selectInput("pp_player_select", "Select Player:",
                       choices = NULL,
                       selected = NULL),
-          selectInput("pp_goal1_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_stuff_category == 'Movement'",
-          selectInput("pp_goal1_movement_pitch", "Pitch Type:",
-                      choices = NULL,
-                      selected = NULL),
-          selectInput("pp_goal1_movement_type", "Movement Type:",
-                      choices = c("IVB", "HB"),
-                      selected = NULL,
-                      multiple = TRUE),
-          selectInput("pp_goal1_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Stuff'",
-          selectInput("pp_goal1_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_chart_view == 'Movement Plot'",
-          selectInput("pp_goal1_movement_display", "Movement Plot View:",
-                      choices = c("Averages Only", "Averages and Pitches",
-                                  "Target Shapes Only", "Target Shapes and Pitches"),
-                      selected = c("Averages and Pitches"),
-                      multiple = TRUE),
-          actionButton("pp_goal1_target_settings", "Target Shapes Settings",
-                       class = "btn-default btn-sm")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal1_type == 'Execution'",
-          selectInput("pp_goal1_execution_stat", "Stat:",
-                      choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                  "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
-                      selected = ""),
-          selectInput("pp_goal1_execution_pitch", "Pitch Type:",
-                      choices = c("All"),
-                      selected = "All",
-                      multiple = TRUE),
-          selectInput("pp_goal1_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
+          
+          selectInput("pp_session_type", "Session Type:",
+                      choices = c("All", "Bullpen", "Live"),
                       selected = "All"),
-          selectInput("pp_goal1_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Heatmap", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        
-        # Target section for Goal 1
-        conditionalPanel(
-          condition = "input.pp_goal1_type != ''",
+          
+          dateRangeInput("pp_date_range", "Date Range:",
+                         start = Sys.Date() - 30,
+                         end = Sys.Date(),
+                         format = "mm/dd/yyyy"),
+          
           hr(),
-          h6("Target:"),
-          fluidRow(
-            column(4,
-                   selectInput("pp_goal1_target_direction", NULL,
-                               choices = c("", ">", "<"),
-                               selected = "")
-            ),
-            column(8,
-                   textInput("pp_goal1_target_value", NULL,
-                             placeholder = "Enter target value",
-                             value = "")
+          
+          # Goal 1
+          h5("Goal #1"),
+          selectInput("pp_goal1_type", "Goal Type:",
+                      choices = c("", "Stuff", "Execution"),
+                      selected = ""),
+          
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Stuff'",
+            selectInput("pp_goal1_stuff_category", "Category:",
+                        choices = c("", "Velocity", "Movement"),
+                        selected = "")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_stuff_category == 'Velocity'",
+            selectInput("pp_goal1_velocity_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal1_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_stuff_category == 'Movement'",
+            selectInput("pp_goal1_movement_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal1_movement_type", "Movement Type:",
+                        choices = c("IVB", "HB"),
+                        selected = NULL,
+                        multiple = TRUE),
+            selectInput("pp_goal1_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Stuff'",
+            selectInput("pp_goal1_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Stuff' && input.pp_goal1_chart_view == 'Movement Plot'",
+            selectInput("pp_goal1_movement_display", "Movement Plot View:",
+                        choices = c("Averages Only", "Averages and Pitches",
+                                    "Target Shapes Only", "Target Shapes and Pitches"),
+                        selected = c("Averages and Pitches"),
+                        multiple = TRUE),
+            actionButton("pp_goal1_target_settings", "Target Shapes Settings",
+                         class = "btn-default btn-sm")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal1_type == 'Execution'",
+            selectInput("pp_goal1_execution_stat", "Stat:",
+                        choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
+                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                        selected = ""),
+            selectInput("pp_goal1_execution_pitch", "Pitch Type:",
+                        choices = c("All"),
+                        selected = "All",
+                        multiple = TRUE),
+            selectInput("pp_goal1_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All"),
+            selectInput("pp_goal1_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Heatmap", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          
+          # Target section for Goal 1
+          conditionalPanel(
+            condition = "input.pp_goal1_type != ''",
+            hr(),
+            h6("Target:"),
+            fluidRow(
+              column(4,
+                     selectInput("pp_goal1_target_direction", NULL,
+                                 choices = c("", ">", "<"),
+                                 selected = "")
+              ),
+              column(8,
+                     textInput("pp_goal1_target_value", NULL,
+                               placeholder = "Enter target value",
+                               value = "")
+              )
+            )
+          ),
+          
+          hr(),
+          
+          # Goal 2
+          h5("Goal #2"),
+          selectInput("pp_goal2_type", "Goal Type:",
+                      choices = c("", "Stuff", "Execution"),
+                      selected = ""),
+          
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Stuff'",
+            selectInput("pp_goal2_stuff_category", "Category:",
+                        choices = c("", "Velocity", "Movement"),
+                        selected = "")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_stuff_category == 'Velocity'",
+            selectInput("pp_goal2_velocity_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal2_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_stuff_category == 'Movement'",
+            selectInput("pp_goal2_movement_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal2_movement_type", "Movement Type:",
+                        choices = c("IVB", "HB"),
+                        selected = NULL,
+                        multiple = TRUE),
+            selectInput("pp_goal2_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Stuff'",
+            selectInput("pp_goal2_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_chart_view == 'Movement Plot'",
+            selectInput("pp_goal2_movement_display", "Movement Plot View:",
+                        choices = c("Averages Only", "Averages and Pitches",
+                                    "Target Shapes Only", "Target Shapes and Pitches"),
+                        selected = c("Averages and Pitches"),
+                        multiple = TRUE),
+            actionButton("pp_goal2_target_settings", "Target Shapes Settings",
+                         class = "btn-default btn-sm")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal2_type == 'Execution'",
+            selectInput("pp_goal2_execution_stat", "Stat:",
+                        choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
+                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                        selected = ""),
+            selectInput("pp_goal2_execution_pitch", "Pitch Type:",
+                        choices = c("All"),
+                        selected = "All",
+                        multiple = TRUE),
+            selectInput("pp_goal2_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All"),
+            selectInput("pp_goal2_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Heatmap", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          
+          # Target section for Goal 2
+          conditionalPanel(
+            condition = "input.pp_goal2_type != ''",
+            hr(),
+            h6("Target:"),
+            fluidRow(
+              column(4,
+                     selectInput("pp_goal2_target_direction", NULL,
+                                 choices = c("", ">", "<"),
+                                 selected = "")
+              ),
+              column(8,
+                     textInput("pp_goal2_target_value", NULL,
+                               placeholder = "Enter target value",
+                               value = "")
+              )
+            )
+          ),
+          
+          hr(),
+          
+          # Goal 3
+          h5("Goal #3"),
+          selectInput("pp_goal3_type", "Goal Type:",
+                      choices = c("", "Stuff", "Execution"),
+                      selected = ""),
+          
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Stuff'",
+            selectInput("pp_goal3_stuff_category", "Category:",
+                        choices = c("", "Velocity", "Movement"),
+                        selected = "")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_stuff_category == 'Velocity'",
+            selectInput("pp_goal3_velocity_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal3_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_stuff_category == 'Movement'",
+            selectInput("pp_goal3_movement_pitch", "Pitch Type:",
+                        choices = NULL,
+                        selected = NULL),
+            selectInput("pp_goal3_movement_type", "Movement Type:",
+                        choices = c("IVB", "HB"),
+                        selected = NULL,
+                        multiple = TRUE),
+            selectInput("pp_goal3_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Stuff'",
+            selectInput("pp_goal3_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_chart_view == 'Movement Plot'",
+            selectInput("pp_goal3_movement_display", "Movement Plot View:",
+                        choices = c("Averages Only", "Averages and Pitches",
+                                    "Target Shapes Only", "Target Shapes and Pitches"),
+                        selected = c("Averages and Pitches"),
+                        multiple = TRUE),
+            actionButton("pp_goal3_target_settings", "Target Shapes Settings",
+                         class = "btn-default btn-sm")
+          ),
+          
+          conditionalPanel(
+            condition = "input.pp_goal3_type == 'Execution'",
+            selectInput("pp_goal3_execution_stat", "Stat:",
+                        choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
+                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                        selected = ""),
+            selectInput("pp_goal3_execution_pitch", "Pitch Type:",
+                        choices = c("All"),
+                        selected = "All",
+                        multiple = TRUE),
+            selectInput("pp_goal3_batter_hand", "Batter Hand:",
+                        choices = c("All", "Left", "Right"),
+                        selected = "All"),
+            selectInput("pp_goal3_chart_view", "Chart View:",
+                        choices = c("Trend Chart", "Heatmap", "Pitch Map"),
+                        selected = "Trend Chart")
+          ),
+          
+          # Target section for Goal 3
+          conditionalPanel(
+            condition = "input.pp_goal3_type != ''",
+            hr(),
+            h6("Target:"),
+            fluidRow(
+              column(4,
+                     selectInput("pp_goal3_target_direction", NULL,
+                                 choices = c("", ">", "<"),
+                                 selected = "")
+              ),
+              column(8,
+                     textInput("pp_goal3_target_value", NULL,
+                               placeholder = "Enter target value",
+                               value = "")
+              )
             )
           )
         ),
         
-        hr(),
-        
-        # Goal 2
-        h5("Goal #2"),
-        selectInput("pp_goal2_type", "Goal Type:",
-                    choices = c("", "Stuff", "Execution"),
-                    selected = ""),
-        
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Stuff'",
-          selectInput("pp_goal2_stuff_category", "Category:",
-                      choices = c("", "Velocity", "Movement"),
-                      selected = "")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_stuff_category == 'Velocity'",
-          selectInput("pp_goal2_velocity_pitch", "Pitch Type:",
-                      choices = NULL,
-                      selected = NULL),
-          selectInput("pp_goal2_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_stuff_category == 'Movement'",
-          selectInput("pp_goal2_movement_pitch", "Pitch Type:",
-                      choices = NULL,
-                      selected = NULL),
-          selectInput("pp_goal2_movement_type", "Movement Type:",
-                      choices = c("IVB", "HB"),
-                      selected = NULL,
-                      multiple = TRUE),
-          selectInput("pp_goal2_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Stuff'",
-          selectInput("pp_goal2_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Stuff' && input.pp_goal2_chart_view == 'Movement Plot'",
-          selectInput("pp_goal2_movement_display", "Movement Plot View:",
-                      choices = c("Averages Only", "Averages and Pitches",
-                                  "Target Shapes Only", "Target Shapes and Pitches"),
-                      selected = c("Averages and Pitches"),
-                      multiple = TRUE),
-          actionButton("pp_goal2_target_settings", "Target Shapes Settings",
-                       class = "btn-default btn-sm")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal2_type == 'Execution'",
-          selectInput("pp_goal2_execution_stat", "Stat:",
-                      choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                  "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
-                      selected = ""),
-          selectInput("pp_goal2_execution_pitch", "Pitch Type:",
-                      choices = c("All"),
-                      selected = "All",
-                      multiple = TRUE),
-          selectInput("pp_goal2_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All"),
-          selectInput("pp_goal2_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Heatmap", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        
-        # Target section for Goal 2
-        conditionalPanel(
-          condition = "input.pp_goal2_type != ''",
-          hr(),
-          h6("Target:"),
-          fluidRow(
-            column(4,
-                   selectInput("pp_goal2_target_direction", NULL,
-                               choices = c("", ">", "<"),
-                               selected = "")
-            ),
-            column(8,
-                   textInput("pp_goal2_target_value", NULL,
-                             placeholder = "Enter target value",
-                             value = "")
-            )
-          )
-        ),
-        
-        hr(),
-        
-        # Goal 3
-        h5("Goal #3"),
-        selectInput("pp_goal3_type", "Goal Type:",
-                    choices = c("", "Stuff", "Execution"),
-                    selected = ""),
-        
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Stuff'",
-          selectInput("pp_goal3_stuff_category", "Category:",
-                      choices = c("", "Velocity", "Movement"),
-                      selected = "")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_stuff_category == 'Velocity'",
-          selectInput("pp_goal3_velocity_pitch", "Pitch Type:",
-                      choices = NULL,
-                      selected = NULL),
-          selectInput("pp_goal3_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_stuff_category == 'Movement'",
-          selectInput("pp_goal3_movement_pitch", "Pitch Type:",
-                      choices = NULL,
-                      selected = NULL),
-          selectInput("pp_goal3_movement_type", "Movement Type:",
-                      choices = c("IVB", "HB"),
-                      selected = NULL,
-                      multiple = TRUE),
-          selectInput("pp_goal3_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Stuff'",
-          selectInput("pp_goal3_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Movement Plot", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Stuff' && input.pp_goal3_chart_view == 'Movement Plot'",
-          selectInput("pp_goal3_movement_display", "Movement Plot View:",
-                      choices = c("Averages Only", "Averages and Pitches",
-                                  "Target Shapes Only", "Target Shapes and Pitches"),
-                      selected = c("Averages and Pitches"),
-                      multiple = TRUE),
-          actionButton("pp_goal3_target_settings", "Target Shapes Settings",
-                       class = "btn-default btn-sm")
-        ),
-        
-        conditionalPanel(
-          condition = "input.pp_goal3_type == 'Execution'",
-          selectInput("pp_goal3_execution_stat", "Stat:",
-                      choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                  "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
-                      selected = ""),
-          selectInput("pp_goal3_execution_pitch", "Pitch Type:",
-                      choices = c("All"),
-                      selected = "All",
-                      multiple = TRUE),
-          selectInput("pp_goal3_batter_hand", "Batter Hand:",
-                      choices = c("All", "Left", "Right"),
-                      selected = "All"),
-          selectInput("pp_goal3_chart_view", "Chart View:",
-                      choices = c("Trend Chart", "Heatmap", "Pitch Map"),
-                      selected = "Trend Chart")
-        ),
-        
-        # Target section for Goal 3
-        conditionalPanel(
-          condition = "input.pp_goal3_type != ''",
-          hr(),
-          h6("Target:"),
-          fluidRow(
-            column(4,
-                   selectInput("pp_goal3_target_direction", NULL,
-                               choices = c("", ">", "<"),
-                               selected = "")
-            ),
-            column(8,
-                   textInput("pp_goal3_target_value", NULL,
-                             placeholder = "Enter target value",
-                             value = "")
-            )
-          )
+        mainPanel(
+          width = 9,
+          div(id = "player-plans-content",
+              # PDF Download Button
+              # Content goes here
+              
+              # Header section with logos and title
+              fluidRow(
+                column(2,
+                       div(style = "text-align: left; padding-top: 20px;",
+                           tags$img(src = "PCUlogo.png", style = "height: 80px; max-width: 100%;")
+                       )
+                ),
+                column(8,
+                       div(style = "text-align: center; padding: 20px 0;",
+                           h2(strong("Player Development Plan"), style = "margin-bottom: 10px;"),
+                           h3(strong(textOutput("pp_player_name", inline = TRUE)), style = "margin-bottom: 5px;"),
+                           h5(em(textOutput("pp_date_range_display", inline = TRUE)), style = "margin: 0;")
+                       )
+                ),
+                column(2,
+                       div(style = "text-align: right; padding-top: 30px;",
+                           tags$img(src = "OSUlogo.png", style = "height: 40px; max-width: 100%;")
+                       )
+                )
+              ),
+              hr(),
+              uiOutput("pp_dynamic_goals"),
+              br(),
+              # View Completed Goals button
+              fluidRow(
+                column(12,
+                       div(style = "text-align: center; margin: 20px 0;",
+                           actionButton("pp_view_completed", "View Completed Goals", 
+                                        class = "btn-info", style = "margin-right: 10px;"),
+                           span(textOutput("pp_completed_count", inline = TRUE), 
+                                style = "font-size: 14px; color: #666;")
+                       )
+                )
+              ),
+              br(),
+              fluidRow(
+                column(12,
+                       div(style = "text-align: center;",
+                           h4(strong("Notes"))
+                       ),
+                       textAreaInput("pp_general_notes", label = NULL,
+                                     placeholder = "Enter general notes for this player plan...",
+                                     rows = 4, width = "100%")
+                )
+              )
+          ) # Close player-plans-content div
         )
       ),
       
-      mainPanel(
-        width = 9,
-        div(id = "player-plans-content",
-            # PDF Download Button
-            # Content goes here
-            
-            # Header section with logos and title
-            fluidRow(
-              column(2,
-                     div(style = "text-align: left; padding-top: 20px;",
-                         tags$img(src = "PCUlogo.png", style = "height: 80px; max-width: 100%;")
-                     )
-              ),
-              column(8,
-                     div(style = "text-align: center; padding: 20px 0;",
-                         h2(strong("Player Development Plan"), style = "margin-bottom: 10px;"),
-                         h3(strong(textOutput("pp_player_name", inline = TRUE)), style = "margin-bottom: 5px;"),
-                         h5(em(textOutput("pp_date_range_display", inline = TRUE)), style = "margin: 0;")
-                     )
-              ),
-              column(2,
-                     div(style = "text-align: right; padding-top: 30px;",
-                         tags$img(src = "OSUlogo.png", style = "height: 40px; max-width: 100%;")
-                     )
-              )
-            ),
-            hr(),
-            uiOutput("pp_dynamic_goals"),
-            br(),
-            # View Completed Goals button
-            fluidRow(
-              column(12,
-                     div(style = "text-align: center; margin: 20px 0;",
-                         actionButton("pp_view_completed", "View Completed Goals", 
-                                      class = "btn-info", style = "margin-right: 10px;"),
-                         span(textOutput("pp_completed_count", inline = TRUE), 
-                              style = "font-size: 14px; color: #666;")
-                     )
-              )
-            ),
-            br(),
-            fluidRow(
-              column(12,
-                     div(style = "text-align: center;",
-                         h4(strong("Notes"))
-                     ),
-                     textAreaInput("pp_general_notes", label = NULL,
-                                   placeholder = "Enter general notes for this player plan...",
-                                   rows = 4, width = "100%")
-              )
-            )
-        ) # Close player-plans-content div
-      )
-    ),
-    
-    # JavaScript for localStorage persistence
-    tags$script(HTML("
+      # JavaScript for localStorage persistence
+      tags$script(HTML("
       // Save player plans to localStorage
       Shiny.addCustomMessageHandler('savePlayerPlans', function(plans) {
         try {
@@ -16843,16 +16864,17 @@ player_plans_ui <- function() {
         }
       });
     ")),
-    
-    # Add custom CSS for the modal
-    tags$style(HTML("
-      .modal-dialog {
-        max-width: 800px;
-      }
-      .goal-completion-checkbox {
-        margin-top: 5px;
-      }
-    "))
+      
+      # Add custom CSS for the modal
+      tags$style(HTML("
+        .modal-dialog {
+          max-width: 800px;
+        }
+        .goal-completion-checkbox {
+          margin-top: 5px;
+        }
+      "))
+    )
   )
 }
 # ==================================
@@ -16957,6 +16979,20 @@ enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), sm_db_config, credentials_p
 ui <- tagList(
   # --- Custom navbar colors & styling ---
   tags$head(
+    tags$script(HTML("
+      document.addEventListener('DOMContentLoaded', function() {
+        var checkbox = document.querySelector('.dark-toggle input#dark_mode');
+        if (!checkbox) return;
+        var sync = function() {
+          var state = !!checkbox.checked;
+          if (window.Shiny && Shiny.setInputValue) {
+            Shiny.setInputValue('dark_mode', state, {priority: 'event'});
+          }
+        };
+        checkbox.addEventListener('change', sync);
+        sync();
+      });
+    ")),
     # Persist shinymanager token in localStorage so users stay logged in across visits
     tags$script(HTML("
       (function() {
@@ -17342,6 +17378,380 @@ ui <- tagList(
       ::-webkit-scrollbar-thumb:hover {
         background: linear-gradient(135deg, #ff8c1a 0%, #e35205 100%);
       }
+      
+      /* ===== Dark mode overrides ===== */
+      body.theme-dark {
+        background: linear-gradient(135deg, #0b0d12 0%, #111827 100%);
+        color: #e5e7eb;
+      }
+      body.theme-dark .navbar-inverse {
+        background: linear-gradient(135deg, #0f172a 0%, #0b0f19 50%, #0a0d14 100%);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      }
+      body.theme-dark .navbar-inverse .navbar-brand,
+      body.theme-dark .navbar-inverse .navbar-nav > li > a {
+        color: rgba(255,255,255,0.9) !important;
+      }
+      body.theme-dark .navbar-inverse .navbar-nav > li > a:hover,
+      body.theme-dark .navbar-inverse .navbar-nav > li > a:focus {
+        background: rgba(255,255,255,0.08);
+        color: #fff !important;
+      }
+      body.theme-dark .navbar-inverse .navbar-nav > .active > a,
+      body.theme-dark .navbar-inverse .navbar-nav > .active > a:hover,
+      body.theme-dark .navbar-inverse .navbar-nav > .active > a:focus {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
+        box-shadow: 0 4px 15px rgba(227,82,5,0.45);
+      }
+      body.theme-dark .well,
+      body.theme-dark .sidebar .well,
+      body.theme-dark .col-sm-3 .well,
+      body.theme-dark .col-sm-4 .well {
+        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%);
+        border-left: 4px solid #e35205;
+        color: #e5e7eb;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      }
+      body.theme-dark .form-control,
+      body.theme-dark .selectize-input {
+        background: #0f172a;
+        border-color: #1f2937;
+        color: #e5e7eb;
+      }
+      body.theme-dark .form-control:focus,
+      body.theme-dark .selectize-input.focus {
+        border-color: #e35205;
+        box-shadow: 0 0 0 3px rgba(227,82,5,0.25);
+      }
+      body.theme-dark .selectize-dropdown {
+        background: #0f172a;
+        border-color: #1f2937;
+      }
+      body.theme-dark .selectize-dropdown-content .option {
+        color: #e5e7eb;
+      }
+      body.theme-dark .selectize-dropdown-content .option:hover,
+      body.theme-dark .selectize-dropdown-content .option.active {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
+        color: #fff;
+      }
+      body.theme-dark .nav-tabs {
+        border-bottom-color: #1f2937;
+      }
+      body.theme-dark .nav-tabs > li > a {
+        color: #cbd5e1;
+        background: transparent;
+      }
+      body.theme-dark .nav-tabs > li > a:hover {
+        background: rgba(227,82,5,0.12);
+        color: #fff;
+      }
+      body.theme-dark .nav-tabs > li.active > a,
+      body.theme-dark .nav-tabs > li.active > a:hover,
+      body.theme-dark .nav-tabs > li.active > a:focus {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
+        color: #fff;
+        box-shadow: 0 -2px 10px rgba(227,82,5,0.4);
+      }
+      body.theme-dark .btn-default {
+        background: #0f172a;
+        color: #e5e7eb;
+        border: 2px solid #1f2937;
+      }
+      body.theme-dark .btn-default:hover {
+        background: #111827;
+        border-color: #e35205;
+        color: #fff;
+      }
+      body.theme-dark .dataTables_wrapper {
+        background: #0b1220;
+        color: #e5e7eb;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      }
+      body.theme-dark table.dataTable tbody tr:hover {
+        background: rgba(227,82,5,0.12);
+      }
+      body.theme-dark .panel {
+        background: #0f172a;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+        color: #e5e7eb;
+      }
+      body.theme-dark .panel-default > .panel-heading {
+        background: linear-gradient(135deg, #111827 0%, #0b1220 100%);
+        border: none;
+        color: #e5e7eb;
+      }
+      body.theme-dark .shiny-plot-output,
+      body.theme-dark .plotly,
+      body.theme-dark .html-widget {
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+        background: transparent !important;
+      }
+      body.theme-dark svg,
+      body.theme-dark canvas,
+      body.theme-dark .girafe_container svg {
+        background: transparent !important;
+      }
+      body.theme-dark .container-fluid {
+        color: #e5e7eb;
+      }
+      body.theme-dark .selectize-control.single .selectize-input:after {
+        border-color: #e5e7eb transparent transparent transparent;
+      }
+      body.theme-dark label,
+      body.theme-dark .control-label,
+      body.theme-dark .form-group,
+      body.theme-dark .form-group * {
+        color: #e5e7eb !important;
+      }
+      body.theme-dark table.dataTable tbody td,
+      body.theme-dark table.dataTable thead th {
+        color: #e5e7eb;
+        background: transparent;
+      }
+      body.theme-dark table.dataTable tbody tr {
+        background: transparent;
+      }
+      body.theme-dark svg text {
+        fill: #e5e7eb !important;
+      }
+      body.theme-dark svg line,
+      body.theme-dark svg path {
+        stroke: #e5e7eb !important;
+      }
+      body.theme-dark .selectize-input > input {
+        color: #e5e7eb !important;
+      }
+      body.theme-dark rect.panel.background,
+      body.theme-dark rect.plot.background,
+      body.theme-dark rect.background,
+      body.theme-dark g.panel.background rect,
+      body.theme-dark g.plot.background rect {
+        fill: transparent !important;
+        stroke: none !important;
+      }
+      body.theme-dark [fill='black'] { fill: #ffffff !important; }
+      body.theme-dark [stroke='black'] { stroke: #ffffff !important; }
+      body.theme-dark [fill='#000000'],
+      body.theme-dark [fill='#000'] { fill: #ffffff !important; }
+      body.theme-dark [stroke='#000000'],
+      body.theme-dark [stroke='#000'] { stroke: #ffffff !important; }
+      body.theme-dark svg rect[fill='white'],
+      body.theme-dark svg rect[fill='#FFFFFF'],
+      body.theme-dark svg rect[fill='#fff'] {
+        fill: transparent !important;
+        stroke: none !important;
+      }
+      body.theme-dark #summary_heatZonePlot,
+      body.theme-dark #summary_heatZonePlot canvas,
+      body.theme-dark #summary_heatZonePlot img,
+      body.theme-dark #summary_legend,
+      body.theme-dark #summary_legend canvas,
+      body.theme-dark #summary_legend img {
+        background: transparent !important;
+      }
+      body.theme-dark #heatmapsHeatPlot,
+      body.theme-dark #heatmapsHeatPlot canvas,
+      body.theme-dark #heatmapsHeatPlot img,
+      body.theme-dark #cmpA_heat,
+      body.theme-dark #cmpA_heat canvas,
+      body.theme-dark #cmpA_heat img,
+      body.theme-dark #cmpB_heat,
+      body.theme-dark #cmpB_heat canvas,
+      body.theme-dark #cmpB_heat img {
+        background: transparent !important;
+      }
+      /* Toggle switch styling */
+      .dark-toggle { display:flex; align-items:center; gap:10px; }
+      .dark-toggle .switch-label { display:flex; align-items:center; gap:10px; margin:0; cursor:pointer; }
+      .dark-toggle input#dark_mode { display:none; }
+      .dark-toggle .switch-track {
+        position: relative; width: 50px; height: 26px;
+        background: #4b5563; border-radius: 13px; transition: background 0.2s ease;
+        box-shadow: inset 0 0 4px rgba(0,0,0,0.35);
+      }
+      .dark-toggle .switch-thumb {
+        position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+        background: #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        transition: transform 0.2s ease;
+      }
+      .dark-toggle input#dark_mode:checked + .switch-track { background: #e35205; }
+      .dark-toggle input#dark_mode:checked + .switch-track .switch-thumb { transform: translateX(24px); }
+      .dark-toggle .switch-text { font-weight:600; color:#e5e7eb; }
+      
+      /* Dropdowns (selectize + native) – scoped to dark mode; orange highlight for selected item */
+      body.theme-dark .selectize-input,
+      body.theme-dark .selectize-control.single .selectize-input,
+      body.theme-dark select.form-control {
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        border: 1px solid #1f2937 !important;
+        box-shadow: none !important;
+      }
+      body.theme-dark .selectize-input input { color: #e5e7eb !important; }
+      body.theme-dark .selectize-input > .item {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%) !important;
+        color: #fff !important;
+        border-radius: 6px;
+        padding: 2px 6px;
+      }
+      body.theme-dark .selectize-dropdown {
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        border-color: #1f2937 !important;
+      }
+      body.theme-dark .selectize-dropdown .option { color: #e5e7eb !important; }
+      body.theme-dark .selectize-dropdown .option:hover,
+      body.theme-dark .selectize-dropdown .option.active {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%) !important;
+        color: #fff !important;
+      }
+      
+      /* Custom Reports cell container */
+      .creport-cell {
+        background: #ffffff;
+        border: 2px solid #000;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 6px;
+      }
+      body.theme-dark .creport-cell {
+        background: rgba(15,23,42,0.9) !important;
+        border: 1px solid #1f2937 !important;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+        color: #e5e7eb;
+      }
+      body.theme-dark .creport-cell h4,
+      body.theme-dark .creport-cell h5,
+      body.theme-dark .creport-cell label,
+      body.theme-dark .creport-cell input,
+      body.theme-dark .creport-cell select,
+      body.theme-dark .creport-cell .form-control {
+        color: #e5e7eb !important;
+        background-color: #0f172a !important;
+        border-color: #1f2937 !important;
+      }
+      
+      /* Player Plans container dark mode */
+      .pp-root, .creports-root { background: transparent !important; }
+      .pp-root .container-fluid,
+      .creports-root .container-fluid {
+        background: transparent !important;
+      }
+      /* Dark-mode forcing for Custom Reports layout */
+      body.theme-dark .creports-root .panel,
+      body.theme-dark .creports-root .well,
+      body.theme-dark .creports-root .form-group,
+      body.theme-dark .creports-root .tab-content,
+      body.theme-dark .creports-root .tab-pane,
+      body.theme-dark .creports-root .row,
+      body.theme-dark .creports-root .col-sm-3,
+      body.theme-dark .creports-root .col-sm-9 {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      body.theme-dark .creports-root .form-control {
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        border: 1px solid #1f2937 !important;
+      }
+      body.theme-dark .creports-root .girafe_container svg,
+      body.theme-dark .creports-root canvas {
+        background: transparent !important;
+      }
+      
+      /* Player Plans container dark mode */
+      body.theme-dark .pp-root {
+        background: transparent !important;
+      }
+      body.theme-dark .pp-root .goal-container {
+        background: rgba(15,23,42,0.85) !important;
+        border: 1px solid #1f2937 !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+        color: #e5e7eb;
+      }
+      body.theme-dark .pp-root .goal-description {
+        background: rgba(17,24,39,0.9) !important;
+        border-color: #1f2937 !important;
+        color: #e5e7eb !important;
+      }
+      body.theme-dark .pp-root .panel,
+      body.theme-dark .pp-root .well {
+        background: rgba(15,23,42,0.9) !important;
+        color: #e5e7eb !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+      }
+      body.theme-dark .pp-root .girafe_container svg,
+      body.theme-dark .pp-root canvas {
+        background: transparent !important;
+      }
+      
+      /* Legend readability in dark mode */
+      body.theme-dark g.legend text,
+      body.theme-dark [aria-label='legend'] text {
+        fill: #ffffff !important;
+      }
+      body.theme-dark g.legend rect,
+      body.theme-dark [aria-label='legend'] rect {
+        fill: transparent !important;
+        stroke: transparent !important;
+      }
+      
+      /* Custom Reports: remove stray white backgrounds */
+      body.theme-dark #creports-sidebar_column,
+      body.theme-dark #creports-main_column {
+        background: transparent !important;
+      }
+      body.theme-dark #creports-sidebar_column .well,
+      body.theme-dark #creports-main_column .well {
+        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%) !important;
+        border-left: 4px solid #e35205 !important;
+        color: #e5e7eb !important;
+      }
+      body.theme-dark #creports-main_column .panel,
+      body.theme-dark #creports-sidebar_column .panel {
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+      }
+      body.theme-dark #creports-main_column,
+      body.theme-dark #creports-sidebar_column,
+      body.theme-dark #creports-main_column .tab-content,
+      body.theme-dark #creports-main_column .tab-pane {
+        background: transparent !important;
+      }
+      body.theme-dark .tab-content,
+      body.theme-dark .tab-pane,
+      body.theme-dark .container-fluid,
+      body.theme-dark .creports-root .container-fluid {
+        background: transparent !important;
+      }
+      body.theme-dark .creports-root {
+        background: transparent !important;
+      }
+      body.theme-dark .creports-root .well,
+      body.theme-dark .creports-root .panel,
+      body.theme-dark .creports-root .form-group,
+      body.theme-dark .creports-root .row,
+      body.theme-dark .creports-root .col-sm-3,
+      body.theme-dark .creports-root .col-sm-9 {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      
+      /* Player Plan charts: drop white backgrounds in dark mode */
+      body.theme-dark #pp_goal1_plot,
+      body.theme-dark #pp_goal2_plot,
+      body.theme-dark #pp_goal3_plot {
+        background: transparent !important;
+      }
+      body.theme-dark #pp_goal1_plot svg,
+      body.theme-dark #pp_goal2_plot svg,
+      body.theme-dark #pp_goal3_plot svg {
+        background: transparent !important;
+      }
     "))
   ),
   
@@ -17387,6 +17797,21 @@ ui <- tagList(
       outline: none;
     }
   ")),
+  
+  # --- Floating dark mode toggle (top-left, all pages) ---
+  absolutePanel(
+    style = "background:rgba(0,0,0,0.4); border-radius:12px; padding:8px 12px; color:#fff; z-index:2000;",
+    tags$div(
+      class = "dark-toggle",
+      tags$label(
+        class = "switch-label",
+        tags$input(id = "dark_mode", type = "checkbox"),
+        tags$span(class = "switch-track", tags$span(class = "switch-thumb")),
+        tags$span(class = "switch-text", "Dark mode")
+      )
+    ),
+    top = 80, left = 12, width = 170, fixed = TRUE, draggable = FALSE
+  ),
   
   # --- Floating "Add Note" button (top-right, all pages) ---
   absolutePanel(
@@ -17933,6 +18358,15 @@ server <- function(input, output, session) {
     custom_tables()
     update_custom_table_choices(session)
   })
+  
+  # Theme toggle (light/dark) matches PCU behavior
+  observeEvent(input$dark_mode, {
+    if (isTRUE(input$dark_mode)) {
+      shinyjs::addClass(selector = "body", class = "theme-dark")
+    } else {
+      shinyjs::removeClass(selector = "body", class = "theme-dark")
+    }
+  }, ignoreInit = TRUE)
   
   # Helper to resolve table mode (supports saved custom tables)
   resolve_table_mode <- function(mode_in, custom_cols_in) {
@@ -19163,6 +19597,8 @@ server <- function(input, output, session) {
   
   trend_girafe_plot <- function(dat, title, ylab, digits = 1) {
     if (!nrow(dat)) return(NULL)
+    dark_on <- isTRUE(input$dark_mode)
+    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     
     date_levels <- unique(fmt_date(dat$Date))
     dat <- dplyr::mutate(dat, Date_f = factor(fmt_date(Date), levels = date_levels))
@@ -19191,7 +19627,11 @@ server <- function(input, output, session) {
         theme_minimal() + axis_theme +
         theme(plot.title = element_text(face = "bold"),
               axis.text.x = element_text(angle = 45, hjust = 1),
-              legend.position = "bottom")
+              legend.position = "bottom",
+              panel.grid.major = element_line(color = grid_col),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent", color = NA),
+              plot.background  = element_rect(fill = "transparent", color = NA))
     } else {
       p <- ggplot(dat, aes(Date_f, value, group = 1,
                            tooltip = tooltip, data_id = data_id_val)) +
@@ -19201,7 +19641,11 @@ server <- function(input, output, session) {
         theme_minimal() + axis_theme +
         theme(plot.title = element_text(face = "bold"),
               axis.text.x = element_text(angle = 45, hjust = 1),
-              legend.position = "none")
+              legend.position = "none",
+              panel.grid.major = element_line(color = grid_col),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent", color = NA),
+              plot.background  = element_rect(fill = "transparent", color = NA))
     }
     
     ggiraph::girafe(
@@ -19543,6 +19987,7 @@ server <- function(input, output, session) {
       geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
       geom_vline(xintercept = 0, color = "black", size = 0.7) +
+      geom_hline(yintercept = 0, color = "black", size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -19570,7 +20015,9 @@ server <- function(input, output, session) {
       theme(
         legend.position = "none",
         axis.text.x = element_text(size = 15, face = "bold"),
-        axis.text.y = element_text(size = 15, face = "bold")
+        axis.text.y = element_text(size = 15, face = "bold"),
+        panel.grid = element_blank(),
+        axis.ticks = element_blank()
       )
     
     ggiraph::girafe(
@@ -19761,7 +20208,9 @@ server <- function(input, output, session) {
         axis.text.x     = element_text(size = 15, face = "bold"),
         axis.text.y     = element_text(size = 15, face = "bold"),
         axis.title.x    = element_blank(),              # <-- ensure blank
-        axis.title.y    = element_blank()               # <-- ensure blank
+        axis.title.y    = element_blank(),              # <-- ensure blank
+        panel.grid      = element_blank(),
+        axis.ticks      = element_blank()
       )
     
     ggiraph::girafe(
@@ -19862,19 +20311,21 @@ server <- function(input, output, session) {
     if (identical(stat, "Exit Velocity")) stat <- "EV"
     
     render_heatmap_stat(df, stat)
-  })
+  }, bg = "transparent")
   
   
   output$summary_legend <- renderPlot({
     types<-ordered_types(); if(!length(types)) return()
+    dark_on <- isTRUE(input$dark_mode)
+    cols <- colors_for_mode(dark_on)
     leg_df<-data.frame(TaggedPitchType=factor(types,levels=types),x=1,y=1)
     ggplot(leg_df,aes(x,y,color=TaggedPitchType))+geom_point(size=0,alpha=0)+
-      scale_color_manual(values=all_colors[types],limits=types,name=NULL)+
+      scale_color_manual(values=cols[types],limits=types,name=NULL)+
       guides(color=guide_legend(nrow=1,byrow=TRUE,override.aes=list(size=4,alpha=1)))+
       theme_void()+
       theme(
         legend.position=c(0.5, 0.5),
-        legend.text=element_text(size=12,face="bold"),
+        legend.text=element_text(size=12,face="bold", color = if (dark_on) "#ffffff" else "black"),
         legend.justification=c(0.5, 0.5),
         legend.direction="horizontal",
         plot.margin = margin(2, 10, 2, 10),
@@ -19890,13 +20341,14 @@ server <- function(input, output, session) {
     # Individual hit types (Single, Double, etc.) are filter options only, not plot symbols
     res_levels <- c("Called Strike", "Ball", "Foul", "Whiff", "In Play (Out)", "In Play (Hit)", "Error")
     leg_df <- data.frame(Result = factor(res_levels, levels = res_levels), x = 1, y = 1)
+    dark_on <- isTRUE(input$dark_mode)
     ggplot(leg_df, aes(x, y, shape = Result)) +
       geom_point(size = 0, alpha = 0, show.legend = TRUE) +
       scale_shape_manual(values = shape_map, limits = res_levels, name = NULL) +
       theme_void() +
       theme(
         legend.position = c(0.5, 0.5),
-        legend.text = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 12, face = "bold", color = if (dark_on) "#ffffff" else "black"),
         legend.justification = c(0.5, 0.5),
         legend.direction = "horizontal",
         plot.margin = margin(10, 10, 10, 10),
@@ -19906,7 +20358,7 @@ server <- function(input, output, session) {
       ) +
       guides(shape = guide_legend(
         nrow = 1, byrow = TRUE,
-        override.aes = list(size = 4, alpha = 1, color = "black", fill = NA)
+        override.aes = list(size = 4, alpha = 1, color = if (dark_on) "#ffffff" else "black", fill = NA)
       ))
   }, bg = "transparent")
   
@@ -22823,6 +23275,7 @@ server <- function(input, output, session) {
       geom_polygon(data = mound_df, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
       geom_vline(xintercept = 0, color = "black", size = 0.7) +
+      geom_hline(yintercept = 0, color = "black", size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -22845,7 +23298,8 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-      theme_minimal() + axis_theme + labs(x = NULL, y = NULL)
+      theme_minimal() + axis_theme + labs(x = NULL, y = NULL) +
+      theme(panel.grid = element_blank(), axis.ticks = element_blank())
     
     # --- (B) Extension vs Height averages
     re_w <- 7; re_h <- 0.83
@@ -22877,6 +23331,7 @@ server <- function(input, output, session) {
       geom_polygon(data = ext_bg, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = 0, xmax = 0.2, ymin = re_h - 0.05, ymax = re_h + 0.05, fill = "white") +
       geom_vline(xintercept = 0, color = "black", size = 0.7) +
+      geom_hline(yintercept = 0, color = "black", size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -22900,7 +23355,8 @@ server <- function(input, output, session) {
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme + labs(x = NULL, y = NULL)
+      theme_minimal() + axis_theme + labs(x = NULL, y = NULL) +
+      theme(panel.grid = element_blank(), axis.ticks = element_blank())
     
     # --- stack + single legend at bottom; enlarge legend text a bit
     p <- (p1 / p2) + patchwork::plot_layout(guides = "collect")
@@ -23074,7 +23530,12 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
       theme_minimal() + axis_theme +
-      theme(legend.position = "bottom", legend.text = element_text(size = 14))
+      theme(
+        legend.position = "bottom",
+        legend.text = element_text(size = 14),
+        panel.grid = element_blank(),
+        axis.ticks = element_blank()
+      )
     
     ggiraph::girafe(
       ggobj = p,
@@ -23536,6 +23997,8 @@ server <- function(input, output, session) {
   output$velocityPlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     
     df2 <- df %>% dplyr::arrange(Date, dplyr::row_number()) %>% dplyr::mutate(
       PitchCount = dplyr::row_number(),
@@ -23567,14 +24030,19 @@ server <- function(input, output, session) {
       geom_hline(
         data = avg_velo,
         aes(yintercept = avg_velo, color = TaggedPitchType),
-        linewidth = 0.7, inherit.aes = FALSE
+        linewidth = 0.9, inherit.aes = FALSE, show.legend = FALSE
       ) +
       scale_x_continuous(limits = c(0, x_max), breaks = seq(0, x_max, 5)) +
       scale_y_continuous(limits = c(y_min, y_max), breaks = seq(y_min, y_max, 5)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
       theme_minimal() + axis_theme +
-      theme(legend.position = "bottom", legend.text = element_text(size = 14)) +
+      theme(
+        legend.position = "bottom",
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_line(color = grid_col),
+        panel.grid.minor = element_blank()
+      ) +
       labs(title = "Velocity Chart (Game/Inning)", x = "Pitch Count", y = "Velocity (MPH)")
     
     # NEW: dashed vertical lines at inning boundaries (Live only)
@@ -23616,6 +24084,8 @@ server <- function(input, output, session) {
   output$velocityByGamePlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     
     ivb_nm <- .pick_col(df, IVB_CANDIDATES)
     hb_nm  <- .pick_col(df, HB_CANDIDATES)
@@ -23675,7 +24145,9 @@ server <- function(input, output, session) {
       theme(
         legend.position = "bottom",
         legend.text = element_text(size = 14),
-        axis.text.x = element_text(angle = 45, hjust = 1)
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_line(color = grid_col),
+        panel.grid.minor = element_blank()
       ) +
       labs(title = "Average Velocity by Game",
            x = "Game Date", y = "Velocity (MPH)")
@@ -23702,6 +24174,8 @@ server <- function(input, output, session) {
   output$velocityInningPlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     if (!("SessionType" %in% names(df)) || !"Inning" %in% names(df)) return(NULL)
     
     df_live <- df %>% dplyr::filter(SessionType == "Live", !is.na(RelSpeed), !is.na(Inning))
@@ -23771,7 +24245,12 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
       theme_minimal() + axis_theme +
-      theme(legend.position = "bottom", legend.text = element_text(size = 14)) +
+      theme(
+        legend.position = "bottom",
+        legend.text = element_text(size = 14),
+        panel.grid.major = element_line(color = grid_col),
+        panel.grid.minor = element_blank()
+      ) +
       labs(title = "Average Velocity by Inning ",
            x = "Inning of Appearance", y = "Velocity (MPH)")
     
@@ -24032,7 +24511,7 @@ server <- function(input, output, session) {
     
     stat <- input$hmStat
     render_heatmap_stat(df, stat)
-  })
+  }, bg = "transparent")
   
   # ---------- PITCH (point chart; respects Pitch Results filter) ----------
   output$heatmapsPitchPlot <- ggiraph::renderGirafe({
@@ -27083,6 +27562,8 @@ server <- function(input, output, session) {
   # Helper function to create plots
   create_pp_goal_plot <- function(goal_num) {
     df <- filter_goal_data(goal_num)
+    dark_on <- isTRUE(input$dark_mode)
+    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     if (is.null(df)) {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
@@ -27219,7 +27700,11 @@ server <- function(input, output, session) {
       theme(
         plot.title = element_text(hjust = 0.5, face = "bold"),
         axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom"
+        legend.position = "bottom",
+        panel.background = element_rect(fill = "transparent", color = NA),
+        plot.background  = element_rect(fill = "transparent", color = NA),
+        panel.grid.major = element_line(color = grid_col),
+        panel.grid.minor = element_blank()
       )
     
     return(p)
@@ -27300,21 +27785,24 @@ server <- function(input, output, session) {
   output$pp_goal1_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(1)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
+                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
   output$pp_goal2_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(2)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
+                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
   output$pp_goal3_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(3)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
+                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
