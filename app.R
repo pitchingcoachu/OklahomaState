@@ -16956,8 +16956,12 @@ get_auth_db_config <- function() {
 sm_db_config <- get_auth_db_config()
 auth_passphrase <- "cbu_baseball_2024_secure_passphrase"
 use_external_auth <- {
-  flag <- tolower(Sys.getenv("USE_EXTERNAL_AUTH", "false"))
-  isTRUE(flag %in% c("1", "true", "yes", "on"))
+  flag <- tolower(Sys.getenv("USE_EXTERNAL_AUTH", ""))
+  if (nzchar(flag)) {
+    isTRUE(flag %in% c("1", "true", "yes", "on"))
+  } else {
+    !is.null(sm_db_config)  # auto-enable if config file/vars exist
+  }
 }
 
 get_credentials_path <- function() {
@@ -16993,9 +16997,8 @@ initial_credentials <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Initialize credentials database (external if enabled + supported, else SQLite)
-has_check_db <- isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))
-use_ext_db <- use_external_auth && has_check_db && !is.null(sm_db_config)
+# Initialize credentials database (external if enabled, else SQLite)
+use_ext_db <- use_external_auth && !is.null(sm_db_config)
 
 if (use_ext_db) {
   try(create_db(
@@ -17070,6 +17073,20 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
 }
 
 enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_ext_db) sm_db_config else NULL, credentials_path)
+
+# Helper to fetch credentials table from external DB (Postgres/MariaDB)
+load_external_credentials <- function(db_cfg) {
+  if (is.null(db_cfg)) return(NULL)
+  args <- db_cfg
+  drv <- args$drv
+  args$drv <- NULL
+  con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
+  if (inherits(con, "try-error") || is.null(con)) return(NULL)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  tbl <- try(DBI::dbReadTable(con, "credentials"), silent = TRUE)
+  if (inherits(tbl, "try-error") || is.null(tbl) || !nrow(tbl)) return(NULL)
+  tbl
+}
 
 
 ui <- tagList(
@@ -18432,9 +18449,10 @@ ui <- secure_app(ui,
 # Server logic
 server <- function(input, output, session) {
   
-  check_creds <- if (use_ext_db) {
-    shinymanager::check_credentials_db(
-      db_config = sm_db_config,
+  external_creds <- if (use_ext_db) load_external_credentials(sm_db_config) else NULL
+  check_creds <- if (use_ext_db && !is.null(external_creds)) {
+    check_credentials(
+      external_creds,
       passphrase = auth_passphrase
     )
   } else {
