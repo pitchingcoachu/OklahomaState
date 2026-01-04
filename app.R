@@ -18426,10 +18426,17 @@ ui <- secure_app(ui,
 server <- function(input, output, session) {
   
   check_creds <- if (!is.null(sm_db_config)) {
-    check_credentials(
-      db = sm_db_config,
-      passphrase = auth_passphrase
-    )
+    if (isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))) {
+      shinymanager::check_credentials_db(
+        db_config = sm_db_config,
+        passphrase = auth_passphrase
+      )
+    } else {
+      check_credentials(
+        db = credentials_path,
+        passphrase = auth_passphrase
+      )
+    }
   } else {
     check_credentials(
       credentials_path,
