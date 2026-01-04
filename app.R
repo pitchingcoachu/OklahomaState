@@ -16890,6 +16890,8 @@ get_auth_db_config <- function() {
   driver <- Sys.getenv("AUTH_DB_DRIVER", "")
   port   <- Sys.getenv("AUTH_DB_PORT", "")
   ssl_ca <- Sys.getenv("AUTH_DB_SSL_CA", "")
+  sslmode <- Sys.getenv("AUTH_DB_SSLMODE", "")
+  channel_binding <- Sys.getenv("AUTH_DB_CHANNEL_BINDING", "")
   
   # Fallback: read a config file checked into the app bundle (json or yaml)
   if (!nzchar(host) || !nzchar(db) || !nzchar(user) || !nzchar(pass)) {
@@ -16919,6 +16921,8 @@ get_auth_db_config <- function() {
       driver <- cfg_file$driver %||% driver
       port   <- cfg_file$port   %||% port
       ssl_ca <- cfg_file$ssl_ca %||% ssl_ca
+      sslmode <- cfg_file$sslmode %||% cfg_file$ssl_mode %||% ""
+      channel_binding <- cfg_file$channel_binding %||% ""
     }
   }
   
@@ -16944,6 +16948,8 @@ get_auth_db_config <- function() {
     port = port
   )
   if (nzchar(ssl_ca)) cfg$ssl.ca <- ssl_ca
+  if (nzchar(sslmode)) cfg$sslmode <- sslmode
+  if (nzchar(channel_binding)) cfg$channel_binding <- channel_binding
   cfg
 }
 
