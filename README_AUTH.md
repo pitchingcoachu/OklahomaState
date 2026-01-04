@@ -82,15 +82,30 @@ MAIL_PASSWORD=your-password
 MAIL_FROM=noreply@yourdomain.com
 ```
 
-#### Option 3: On shinyapps.io
-1. Go to your app on shinyapps.io
-2. Click **Settings** → **Vars** tab
-3. Add environment variables:
-   - `MAIL_SERVER`
-   - `MAIL_PORT`
-   - `MAIL_USERNAME`
-   - `MAIL_PASSWORD`
-   - `MAIL_FROM`
+#### Option 3: On shinyapps.io (no env vars needed)
+Drop a config file in the app directory before deploying:
+
+- `auth_db_config.yml` (or `.json`) for persistent auth DB (keeps logins alive across restarts)
+  ```yaml
+  driver: postgres   # or mariadb
+  host: YOUR_HOST
+  port: 5432         # 3306 for MariaDB
+  dbname: YOUR_DB
+  user: YOUR_USER
+  password: YOUR_PASSWORD
+  ssl_ca: /path/to/ca.pem   # optional
+  ```
+
+- `email_config.yml` (optional) for password reset emails
+  ```yaml
+  MAIL_SERVER: smtp.yourserver.com
+  MAIL_PORT: 587
+  MAIL_USERNAME: your-username
+  MAIL_PASSWORD: your-password
+  MAIL_FROM: noreply@yourdomain.com
+  ```
+
+These files are read automatically at startup (no shinyapps.io Vars needed). They will be included in the deployed bundle—only include them if you’re okay with the credentials being part of the app package.
 
 ### Test Email Configuration
 ```r

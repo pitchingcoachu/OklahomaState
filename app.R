@@ -16882,10 +16882,73 @@ player_plans_ui <- function() {
 # ==================================
 
 get_auth_db_config <- function() {
-  NULL  # Using SQLite for shinymanager auth to maintain compatibility
+  # Prefer env vars (shinyapps UI, .Renviron, etc)
+  host <- Sys.getenv("AUTH_DB_HOST", "")
+  db   <- Sys.getenv("AUTH_DB_NAME", "")
+  user <- Sys.getenv("AUTH_DB_USER", "")
+  pass <- Sys.getenv("AUTH_DB_PASSWORD", "")
+  driver <- Sys.getenv("AUTH_DB_DRIVER", "")
+  port   <- Sys.getenv("AUTH_DB_PORT", "")
+  ssl_ca <- Sys.getenv("AUTH_DB_SSL_CA", "")
+  
+  # Fallback: read a config file checked into the app bundle (json or yaml)
+  if (!nzchar(host) || !nzchar(db) || !nzchar(user) || !nzchar(pass)) {
+    read_auth_file_config <- function(path) {
+      if (!file.exists(path)) return(NULL)
+      ext <- tools::file_ext(path)
+      cfg <- tryCatch(
+        {
+          if (tolower(ext) == "json") {
+            if (!requireNamespace("jsonlite", quietly = TRUE)) return(NULL)
+            jsonlite::fromJSON(path)
+          } else {
+            if (!requireNamespace("yaml", quietly = TRUE)) return(NULL)
+            yaml::read_yaml(path)
+          }
+        },
+        error = function(...) NULL
+      )
+      cfg
+    }
+    cfg_file <- read_auth_file_config("auth_db_config.yml") %||% read_auth_file_config("auth_db_config.json")
+    if (!is.null(cfg_file)) {
+      host   <- cfg_file$host   %||% host
+      db     <- cfg_file$dbname %||% cfg_file$name %||% db
+      user   <- cfg_file$user   %||% user
+      pass   <- cfg_file$password %||% cfg_file$pass %||% pass
+      driver <- cfg_file$driver %||% driver
+      port   <- cfg_file$port   %||% port
+      ssl_ca <- cfg_file$ssl_ca %||% ssl_ca
+    }
+  }
+  
+  if (!nzchar(host) || !nzchar(db) || !nzchar(user) || !nzchar(pass)) return(NULL)
+  
+  driver <- tolower(if (nzchar(driver)) driver else "mariadb")
+  port   <- as.integer(if (nzchar(port)) port else if (identical(driver, "postgres")) "5432" else "3306")
+  
+  if (identical(driver, "postgres")) {
+    if (!requireNamespace("RPostgres", quietly = TRUE)) return(NULL)
+    drv <- RPostgres::Postgres()
+  } else {
+    if (!requireNamespace("RMariaDB", quietly = TRUE)) return(NULL)
+    drv <- RMariaDB::MariaDB()
+  }
+  
+  cfg <- list(
+    drv = drv,
+    dbname = db,
+    host = host,
+    user = user,
+    password = pass,
+    port = port
+  )
+  if (nzchar(ssl_ca)) cfg$ssl.ca <- ssl_ca
+  cfg
 }
 
 sm_db_config <- get_auth_db_config()
+auth_passphrase <- "cbu_baseball_2024_secure_passphrase"
 
 get_credentials_path <- function() {
   p <- Sys.getenv("CREDENTIALS_SQLITE_PATH", unset = "credentials.sqlite")
@@ -16922,12 +16985,16 @@ initial_credentials <- data.frame(
 
 # Initialize credentials database (MySQL if configured, else SQLite)
 if (!is.null(sm_db_config)) {
-  # MySQL path disabled for now
+  try(create_db(
+    credentials_data = initial_credentials,
+    passphrase = auth_passphrase,
+    db_config = sm_db_config
+  ), silent = TRUE)
 } else if (!file.exists(credentials_path)) {
   create_db(
     credentials_data = initial_credentials,
     sqlite_path = credentials_path,
-    passphrase = "cbu_baseball_2024_secure_passphrase"  # Keep this secret!
+    passphrase = auth_passphrase  # Keep this secret!
   )
   
   message("✓ Credentials database created: credentials.sqlite")
@@ -16936,11 +17003,19 @@ if (!is.null(sm_db_config)) {
 }
 
 # Ensure seed users exist (idempotent)
-ensure_seed_users <- function(seed_df, db_cfg, sqlite_path) {
+ensure_seed_users <- function(seed_df, db_cfg, sqlite_path, passphrase) {
   for (i in seq_len(nrow(seed_df))) {
     u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- isTRUE(seed_df$admin[i]); em <- seed_df$email[i]
     exists <- FALSE
-    con <- if (file.exists(sqlite_path)) try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE) else NULL
+    con <- NULL
+    if (!is.null(db_cfg)) {
+      args <- db_cfg
+      drv <- args$drv
+      args$drv <- NULL
+      con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
+    } else if (file.exists(sqlite_path)) {
+      con <- try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE)
+    }
     if (!inherits(con, "try-error") && !is.null(con)) {
       on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
       tbl <- try(DBI::dbReadTable(con, "credentials"), silent = TRUE)
@@ -16954,18 +17029,26 @@ ensure_seed_users <- function(seed_df, db_cfg, sqlite_path) {
         password = pwd,
         admin = adm,
         comment = em,
-        db = sqlite_path,
-        passphrase = "cbu_baseball_2024_secure_passphrase"
+        db = if (!is.null(db_cfg)) db_cfg else sqlite_path,
+        passphrase = passphrase
       ), silent = TRUE)
     }
   }
 }
 
-ensure_seed_users(initial_credentials, sm_db_config, credentials_path)
+ensure_seed_users(initial_credentials, sm_db_config, credentials_path, auth_passphrase)
 
 # Enforce admin flags: only these users stay admins
 enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
-  con <- if (file.exists(sqlite_path)) try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE) else NULL
+  con <- NULL
+  if (!is.null(db_cfg)) {
+    args <- db_cfg
+    drv <- args$drv
+    args$drv <- NULL
+    con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
+  } else if (file.exists(sqlite_path)) {
+    con <- try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE)
+  }
   if (inherits(con, "try-error") || is.null(con)) return()
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   admin_list <- paste(sprintf("'%s'", tolower(admin_users)), collapse = ",")
@@ -18336,12 +18419,21 @@ ui <- secure_app(ui,
 # Server logic
 server <- function(input, output, session) {
   
+  check_creds <- if (!is.null(sm_db_config)) {
+    check_credentials(
+      db = sm_db_config,
+      passphrase = auth_passphrase
+    )
+  } else {
+    check_credentials(
+      credentials_path,
+      passphrase = auth_passphrase
+    )
+  }
+  
   # Initialize authentication
   res_auth <- secure_server(
-    check_credentials = check_credentials(
-      credentials_path,
-      passphrase = "cbu_baseball_2024_secure_passphrase"
-    ),
+    check_credentials = check_creds,
     timeout = 0,       # never auto-logout from inactivity
     keep_token = TRUE  # keep token in query string so we can persist it client-side
   )
