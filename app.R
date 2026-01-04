@@ -18425,18 +18425,14 @@ ui <- secure_app(ui,
 # Server logic
 server <- function(input, output, session) {
   
-  check_creds <- if (!is.null(sm_db_config)) {
-    if (isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))) {
-      shinymanager::check_credentials_db(
-        db_config = sm_db_config,
-        passphrase = auth_passphrase
-      )
-    } else {
-      check_credentials(
-        db = credentials_path,
-        passphrase = auth_passphrase
-      )
-    }
+  has_check_db <- isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))
+  use_external_db <- !is.null(sm_db_config) && has_check_db
+  
+  check_creds <- if (use_external_db) {
+    shinymanager::check_credentials_db(
+      db_config = sm_db_config,
+      passphrase = auth_passphrase
+    )
   } else {
     check_credentials(
       credentials_path,
