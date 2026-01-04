@@ -16955,6 +16955,10 @@ get_auth_db_config <- function() {
 
 sm_db_config <- get_auth_db_config()
 auth_passphrase <- "cbu_baseball_2024_secure_passphrase"
+use_external_auth <- {
+  flag <- tolower(Sys.getenv("USE_EXTERNAL_AUTH", "false"))
+  isTRUE(flag %in% c("1", "true", "yes", "on"))
+}
 
 get_credentials_path <- function() {
   p <- Sys.getenv("CREDENTIALS_SQLITE_PATH", unset = "credentials.sqlite")
@@ -16989,8 +16993,11 @@ initial_credentials <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Initialize credentials database (MySQL if configured, else SQLite)
-if (!is.null(sm_db_config)) {
+# Initialize credentials database (external if enabled + supported, else SQLite)
+has_check_db <- isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))
+use_ext_db <- use_external_auth && has_check_db && !is.null(sm_db_config)
+
+if (use_ext_db) {
   try(create_db(
     credentials_data = initial_credentials,
     passphrase = auth_passphrase,
@@ -17042,7 +17049,7 @@ ensure_seed_users <- function(seed_df, db_cfg, sqlite_path, passphrase) {
   }
 }
 
-ensure_seed_users(initial_credentials, sm_db_config, credentials_path, auth_passphrase)
+ensure_seed_users(initial_credentials, if (use_ext_db) sm_db_config else NULL, credentials_path, auth_passphrase)
 
 # Enforce admin flags: only these users stay admins
 enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
@@ -17062,7 +17069,7 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
   try(DBI::dbExecute(con, sprintf("UPDATE credentials SET admin = 1 WHERE LOWER(user) IN (%s)", admin_list)), silent = TRUE)
 }
 
-enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), sm_db_config, credentials_path)
+enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_ext_db) sm_db_config else NULL, credentials_path)
 
 
 ui <- tagList(
@@ -18425,10 +18432,7 @@ ui <- secure_app(ui,
 # Server logic
 server <- function(input, output, session) {
   
-  has_check_db <- isTRUE(exists("check_credentials_db", where = asNamespace("shinymanager"), inherits = FALSE))
-  use_external_db <- !is.null(sm_db_config) && has_check_db
-  
-  check_creds <- if (use_external_db) {
+  check_creds <- if (use_ext_db) {
     shinymanager::check_credentials_db(
       db_config = sm_db_config,
       passphrase = auth_passphrase
