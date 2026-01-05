@@ -16953,6 +16953,11 @@ get_auth_db_config <- function() {
   cfg
 }
 
+use_custom_auth <- {
+  flag <- tolower(Sys.getenv("USE_CUSTOM_AUTH", "true"))
+  isTRUE(flag %in% c("1", "true", "yes", "on"))
+}
+
 sm_db_config <- get_auth_db_config()
 auth_passphrase <- "cbu_baseball_2024_secure_passphrase"
 use_external_auth <- {
@@ -17000,7 +17005,7 @@ initial_credentials <- data.frame(
 # Initialize credentials database (external if enabled, else SQLite)
 use_ext_db <- use_external_auth && !is.null(sm_db_config)
 
-if (use_ext_db) {
+if (use_custom_auth && use_ext_db) {
   try(create_db(
     credentials_data = initial_credentials,
     passphrase = auth_passphrase,
@@ -17052,7 +17057,7 @@ ensure_seed_users <- function(seed_df, db_cfg, sqlite_path, passphrase) {
   }
 }
 
-ensure_seed_users(initial_credentials, if (use_ext_db) sm_db_config else NULL, credentials_path, auth_passphrase)
+ensure_seed_users(initial_credentials, if (use_custom_auth && use_ext_db) sm_db_config else NULL, credentials_path, auth_passphrase)
 
 # Enforce admin flags: only these users stay admins
 enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
@@ -17072,7 +17077,7 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
   try(DBI::dbExecute(con, sprintf("UPDATE credentials SET admin = 1 WHERE LOWER(user) IN (%s)", admin_list)), silent = TRUE)
 }
 
-enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_ext_db) sm_db_config else NULL, credentials_path)
+enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_custom_auth && use_ext_db) sm_db_config else NULL, credentials_path)
 
 # --- External auth helpers (direct DBI, no shinymanager helper needed) ---
 hash_pwd <- function(pwd) digest::digest(pwd, algo = "sha256")
@@ -18011,7 +18016,7 @@ ui <- tagList(
 )
 
 # Wrap UI with beautiful custom authentication
-ui <- secure_app(ui,
+ui_custom <- secure_app(ui,
                  enable_admin = FALSE,  # Hide shinymanager admin panel
                  enable_reset_password = TRUE,  # Enable "Forgot Password" functionality
                  
@@ -18495,28 +18500,40 @@ ui <- secure_app(ui,
                  )
 )
 
+ui <- if (use_custom_auth) ui_custom else ui
+
 
 # Server logic
 server <- function(input, output, session) {
   
-  if (use_ext_db) {
-    ok <- ensure_external_auth_table(sm_db_config, initial_credentials)
-    check_creds <- if (ok) make_external_check(sm_db_config) else check_credentials(credentials_path, passphrase = auth_passphrase)
+  if (use_custom_auth) {
+    if (use_ext_db) {
+      ok <- ensure_external_auth_table(sm_db_config, initial_credentials)
+      check_creds <- if (ok) make_external_check(sm_db_config) else check_credentials(credentials_path, passphrase = auth_passphrase)
+    } else {
+      check_creds <- check_credentials(credentials_path, passphrase = auth_passphrase)
+    }
+    
+    # Initialize authentication
+    res_auth <- secure_server(
+      check_credentials = check_creds,
+      timeout = 0,       # never auto-logout from inactivity
+      keep_token = TRUE  # keep token in query string so we can persist it client-side
+    )
+    
+    # Get current authenticated user info
+    auth_user <- reactive({
+      reactiveValuesToList(res_auth)
+    })
+    
   } else {
-    check_creds <- check_credentials(credentials_path, passphrase = auth_passphrase)
+    # Bypass custom login: rely on shinyapps.io auth (session$user) or treat as public
+    res_auth <- NULL
+    auth_user <- reactive({
+      u <- session$user %||% "public"
+      list(user = u, email = u, admin = FALSE, result = TRUE)
+    })
   }
-  
-  # Initialize authentication
-  res_auth <- secure_server(
-    check_credentials = check_creds,
-    timeout = 0,       # never auto-logout from inactivity
-    keep_token = TRUE  # keep token in query string so we can persist it client-side
-  )
-  
-  # Get current authenticated user info
-  auth_user <- reactive({
-    reactiveValuesToList(res_auth)
-  })
   
   # Initialize database on startup
   init_modifications_db()
