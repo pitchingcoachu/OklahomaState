@@ -17074,18 +17074,56 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
 
 enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_ext_db) sm_db_config else NULL, credentials_path)
 
-# Helper to fetch credentials table from external DB (Postgres/MariaDB)
-load_external_credentials <- function(db_cfg) {
-  if (is.null(db_cfg)) return(NULL)
+# --- External auth helpers (direct DBI, no shinymanager helper needed) ---
+ensure_external_auth_table <- function(db_cfg, seed_df) {
   args <- db_cfg
   drv <- args$drv
   args$drv <- NULL
   con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
-  if (inherits(con, "try-error") || is.null(con)) return(NULL)
+  if (inherits(con, "try-error") || is.null(con)) return(FALSE)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-  tbl <- try(DBI::dbReadTable(con, "credentials"), silent = TRUE)
-  if (inherits(tbl, "try-error") || is.null(tbl) || !nrow(tbl)) return(NULL)
-  tbl
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS auth_users (
+      user TEXT PRIMARY KEY,
+      password TEXT NOT NULL,
+      admin INTEGER DEFAULT 0,
+      email TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  ")
+  for (i in seq_len(nrow(seed_df))) {
+    u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- as.integer(isTRUE(seed_df$admin[i])); em <- seed_df$email[i]
+    existing <- try(DBI::dbGetQuery(con, "SELECT user FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1", params = list(u)), silent = TRUE)
+    if (inherits(existing, "try-error") || is.null(existing) || !nrow(existing)) {
+      hashed <- try(sodium::password_store(pwd), silent = TRUE)
+      if (!inherits(hashed, "try-error")) {
+        try(DBI::dbExecute(con,
+                           "INSERT INTO auth_users (user, password, admin, email) VALUES ($1,$2,$3,$4)",
+                           params = list(u, hashed, adm, em)), silent = TRUE)
+      }
+    }
+  }
+  TRUE
+}
+
+make_external_check <- function(db_cfg) {
+  function(user, password) {
+    args <- db_cfg
+    drv <- args$drv
+    args$drv <- NULL
+    con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
+    if (inherits(con, "try-error") || is.null(con)) return(list(result = FALSE, message = "DB connect failed"))
+    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+    row <- try(DBI::dbGetQuery(con,
+                               "SELECT user, password, admin FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1",
+                               params = list(user)), silent = TRUE)
+    if (inherits(row, "try-error") || is.null(row) || !nrow(row)) return(list(result = FALSE))
+    ok <- FALSE
+    hash <- row$password[[1]]
+    ok <- try(isTRUE(sodium::password_verify(hash, password)), silent = TRUE)
+    if (!isTRUE(ok)) return(list(result = FALSE))
+    list(user = row$user[[1]], admin = isTRUE(row$admin[[1]]), expire = NA, result = TRUE)
+  }
 }
 
 
@@ -18449,17 +18487,11 @@ ui <- secure_app(ui,
 # Server logic
 server <- function(input, output, session) {
   
-  external_creds <- if (use_ext_db) load_external_credentials(sm_db_config) else NULL
-  check_creds <- if (use_ext_db && !is.null(external_creds)) {
-    check_credentials(
-      external_creds,
-      passphrase = auth_passphrase
-    )
+  if (use_ext_db) {
+    ok <- ensure_external_auth_table(sm_db_config, initial_credentials)
+    check_creds <- if (ok) make_external_check(sm_db_config) else check_credentials(credentials_path, passphrase = auth_passphrase)
   } else {
-    check_credentials(
-      credentials_path,
-      passphrase = auth_passphrase
-    )
+    check_creds <- check_credentials(credentials_path, passphrase = auth_passphrase)
   }
   
   # Initialize authentication
