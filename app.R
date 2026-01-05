@@ -16954,7 +16954,7 @@ get_auth_db_config <- function() {
 }
 
 use_custom_auth <- {
-  flag <- tolower(Sys.getenv("USE_CUSTOM_AUTH", "true"))
+  flag <- tolower(Sys.getenv("USE_CUSTOM_AUTH", "false"))
   isTRUE(flag %in% c("1", "true", "yes", "on"))
 }
 
