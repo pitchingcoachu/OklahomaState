@@ -10019,17 +10019,18 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if ("PitchSession" %in% names(df)) {
         df <- df %>% dplyr::filter(is.na(PitchSession) | PitchSession != "Warmup")
       }
-      # Apply per-user visibility rules (mirror leaderboard)
-      admin_val <- tryCatch({
-        exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
-      }, error = function(...) FALSE)
-      if (!admin_val && "Email" %in% names(df)) {
-        norm_email_local <- function(x) tolower(trimws(x))
-        ue <- tryCatch({
-          if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
-        }, error = function(...) NA_character_)
-        if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
-      }
+      # Apply per-user visibility rules - REMOVED: All users can now see all data
+      # Only admin status controls access to admin features, not data visibility
+      # admin_val <- tryCatch({
+      #   exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
+      # }, error = function(...) FALSE)
+      # if (!admin_val && "Email" %in% names(df)) {
+      #   norm_email_local <- function(x) tolower(trimws(x))
+      #   ue <- tryCatch({
+      #     if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
+      #   }, error = function(...) NA_character_)
+      #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
+      # }
       
       # Date range (use Date column coerced to Date)
       dcol <- as_date_any(df$Date)
@@ -11303,17 +11304,18 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       if (nnz(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
       if (nnz(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
       
-      # Respect per-user visibility (mirror pitching suite) when available in this module
-      admin_val <- tryCatch({
-        exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
-      }, error = function(...) FALSE)
-      if (!admin_val && "Email" %in% names(df)) {
-        norm_email_local <- function(x) tolower(trimws(x))
-        ue <- tryCatch({
-          if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
-        }, error = function(...) NA_character_)
-        if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
-      }
+      # Respect per-user visibility - REMOVED: All users can now see all data
+      # Only admin status controls access to admin features, not data visibility
+      # admin_val <- tryCatch({
+      #   exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
+      # }, error = function(...) FALSE)
+      # if (!admin_val && "Email" %in% names(df)) {
+      #   norm_email_local <- function(x) tolower(trimws(x))
+      #   ue <- tryCatch({
+      #     if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
+      #   }, error = function(...) NA_character_)
+      #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
+      # }
       
       compute_stuff_simple(df, base_type = "Fastball", level = "College") %>%
         force_pitch_levels()
@@ -12627,16 +12629,17 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       df <- if (identical(dom, "Pitcher") && exists("pitch_data_pitching")) pitch_data_pitching else pitch_data
       if (!nrow(df)) return(df[0, , drop = FALSE])
       
-      # privacy scoping
-      if (exists("user_email") && is.function(user_email) &&
-          exists("is_admin")   && is.function(is_admin)   &&
-          !is_admin()) {
-        ne <- function(x) tolower(trimws(x))
-        ue <- user_email()
-        if (!is.na(ue) && "Email" %in% names(df)) {
-          df <- dplyr::filter(df, ne(Email) == ne(ue))
-        }
-      }
+      # privacy scoping - REMOVED: All users can now see all data
+      # Only admin status controls access to admin features, not data visibility
+      # if (exists("user_email") && is.function(user_email) &&
+      #     exists("is_admin")   && is.function(is_admin)   &&
+      #     !is_admin()) {
+      #   ne <- function(x) tolower(trimws(x))
+      #   ue <- user_email()
+      #   if (!is.na(ue) && "Email" %in% names(df)) {
+      #     df <- dplyr::filter(df, ne(Email) == ne(ue))
+      #   }
+      # }
       if (!nrow(df)) return(df)
       
       if (!("SessionType_std" %in% names(df))) {
@@ -16984,20 +16987,23 @@ initial_credentials <- data.frame(
     "jgaynor@pitchingcoachu.com",
     "Blake.hawksworth@okstate.edu",
     "Payton.stevens@okstate.edu",
-    "Trey.cobb@okstate.edu"
+    "Trey.cobb@okstate.edu",
+    "jared.s.gaynor@gmail.com"
   ),
   password = c(
     "pcu2025",
     "pcu2025",
     "pcu2025",
+    "pcu2025",
     "pcu2025"
   ),
-  admin = c(TRUE, TRUE, FALSE, FALSE),
+  admin = c(TRUE, FALSE, FALSE, FALSE, FALSE),
   email = c(
     "jgaynor@pitchingcoachu.com",
     "Blake.hawksworth@okstate.edu",
     "Payton.stevens@okstate.edu",
-    "Trey.cobb@okstate.edu"
+    "Trey.cobb@okstate.edu",
+    "jared.s.gaynor@gmail.com"
   ),
   stringsAsFactors = FALSE
 )
@@ -19555,25 +19561,34 @@ server <- function(input, output, session) {
       name_map_team <- setNames(raw_names_team, display_names_team)
     }
     
-    sel_raw <- unique(df_base$Pitcher[norm_email(df_base$Email) == norm_email(user_email())]) %>% na.omit()
+    # Allow all users to see all pitchers (removed email-based filtering)
+    # sel_raw <- unique(df_base$Pitcher[norm_email(df_base$Email) == norm_email(user_email())]) %>% na.omit()
     
-    if (is_admin()) {
-      selectInput(
-        "pitcher", "Select Pitcher:",
-        choices  = c("All" = "All", name_map_team),
-        selected = "All"
-      )
-    } else if (length(sel_raw) > 0) {
-      disp <- if (input$teamType == "Campers") {
-        display_names_team[raw_names_team %in% sel_raw]
-      } else {
-        display_names_p[raw_names_p %in% sel_raw]
-      }
-      map2 <- setNames(sel_raw, disp)
-      selectInput("pitcher", "Select Pitcher:", choices = map2, selected = sel_raw[1])
-    } else {
-      selectInput("pitcher", "Select Pitcher:", choices = "No data", selected = "No data")
-    }
+    # All users now see all pitchers
+    selectInput(
+      "pitcher", "Select Pitcher:",
+      choices  = c("All" = "All", name_map_team),
+      selected = "All"
+    )
+    
+    # OLD CODE - removed to allow all users to see all data:
+    # if (is_admin()) {
+    #   selectInput(
+    #     "pitcher", "Select Pitcher:",
+    #     choices  = c("All" = "All", name_map_team),
+    #     selected = "All"
+    #   )
+    # } else if (length(sel_raw) > 0) {
+    #   disp <- if (input$teamType == "Campers") {
+    #     display_names_team[raw_names_team %in% sel_raw]
+    #   } else {
+    #     display_names_p[raw_names_p %in% sel_raw]
+    #   }
+    #   map2 <- setNames(sel_raw, disp)
+    #   selectInput("pitcher", "Select Pitcher:", choices = map2, selected = sel_raw[1])
+    # } else {
+    #   selectInput("pitcher", "Select Pitcher:", choices = "No data", selected = "No data")
+    # }
   })
   
   
@@ -19678,11 +19693,12 @@ server <- function(input, output, session) {
     if (nnz(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
     if (nnz(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
     
-    # Per-user visibility
-    if (!is_admin()) {
-      ue <- user_email()
-      if (!is.na(ue)) df <- dplyr::filter(df, norm_email(Email) == norm_email(ue))
-    }
+    # Per-user visibility - REMOVED: All users can now see all data
+    # Only admin status controls access to admin features, not data visibility
+    # if (!is_admin()) {
+    #   ue <- user_email()
+    #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email(Email) == norm_email(ue))
+    # }
     
     if (!nrow(df)) return(df[0, , drop = FALSE])
     
@@ -19758,10 +19774,12 @@ server <- function(input, output, session) {
     if (!is.na(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
     if (!is.na(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
     
-    if (!is_admin()) {
-      ue <- user_email()
-      if (!is.na(ue)) df <- dplyr::filter(df, Email == ue)
-    }
+    # Per-user visibility - REMOVED: All users can now see all data
+    # Only admin status controls access to admin features, not data visibility
+    # if (!is_admin()) {
+    #   ue <- user_email()
+    #   if (!is.na(ue)) df <- dplyr::filter(df, Email == ue)
+    # }
     
     
     df2 <- compute_stuff_simple(df, input$stuffBase, input$stuffLevel) %>%
@@ -26493,14 +26511,15 @@ server <- function(input, output, session) {
     # Use the whitelist-filtered pitch_data_pitching for consistency with other modules
     players <- sort(unique(pitch_data_pitching$Pitcher))
     
-    # Filter by admin/user permissions
-    if (!is_admin()) {
-      ue <- user_email()
-      if (!is.na(ue)) {
-        visible_players <- unique(pitch_data_pitching$Pitcher[norm_email(pitch_data_pitching$Email) == norm_email(ue)])
-        players <- intersect(players, visible_players)
-      }
-    }
+    # Filter by admin/user permissions - REMOVED: All users can now see all players
+    # Only admin status controls access to admin features, not data visibility
+    # if (!is_admin()) {
+    #   ue <- user_email()
+    #   if (!is.na(ue)) {
+    #     visible_players <- unique(pitch_data_pitching$Pitcher[norm_email(pitch_data_pitching$Email) == norm_email(ue)])
+    #     players <- intersect(players, visible_players)
+    #   }
+    # }
     
     updateSelectInput(session, "pp_player_select",
                       choices = players,
