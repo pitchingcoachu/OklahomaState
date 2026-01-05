@@ -84,7 +84,6 @@ app_packages <- c(
   "RSQLite",
   "RMariaDB",
   "RPostgres",
-  "sodium",
   "digest"
 )
 

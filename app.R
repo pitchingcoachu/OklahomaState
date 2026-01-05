@@ -17075,6 +17075,8 @@ enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
 enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_ext_db) sm_db_config else NULL, credentials_path)
 
 # --- External auth helpers (direct DBI, no shinymanager helper needed) ---
+hash_pwd <- function(pwd) digest::digest(pwd, algo = "sha256")
+
 ensure_external_auth_table <- function(db_cfg, seed_df) {
   args <- db_cfg
   drv <- args$drv
@@ -17091,16 +17093,27 @@ ensure_external_auth_table <- function(db_cfg, seed_df) {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   ")
+  tbl <- try(DBI::dbGetQuery(con, "SELECT password FROM auth_users LIMIT 1"), silent = TRUE)
+  if (!inherits(tbl, "try-error") && nrow(tbl) && grepl("^argon2", tbl$password[[1]]) && !requireNamespace("sodium", quietly = TRUE)) {
+    try(DBI::dbExecute(con, "DROP TABLE auth_users"), silent = TRUE)
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS auth_users (
+        user TEXT PRIMARY KEY,
+        password TEXT NOT NULL,
+        admin INTEGER DEFAULT 0,
+        email TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    ")
+  }
   for (i in seq_len(nrow(seed_df))) {
     u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- as.integer(isTRUE(seed_df$admin[i])); em <- seed_df$email[i]
     existing <- try(DBI::dbGetQuery(con, "SELECT user FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1", params = list(u)), silent = TRUE)
     if (inherits(existing, "try-error") || is.null(existing) || !nrow(existing)) {
-      hashed <- try(sodium::password_store(pwd), silent = TRUE)
-      if (!inherits(hashed, "try-error")) {
-        try(DBI::dbExecute(con,
-                           "INSERT INTO auth_users (user, password, admin, email) VALUES ($1,$2,$3,$4)",
-                           params = list(u, hashed, adm, em)), silent = TRUE)
-      }
+      hashed <- hash_pwd(pwd)
+      try(DBI::dbExecute(con,
+                         "INSERT INTO auth_users (user, password, admin, email) VALUES ($1,$2,$3,$4)",
+                         params = list(u, hashed, adm, em)), silent = TRUE)
     }
   }
   TRUE
@@ -17118,10 +17131,9 @@ make_external_check <- function(db_cfg) {
                                "SELECT user, password, admin FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1",
                                params = list(user)), silent = TRUE)
     if (inherits(row, "try-error") || is.null(row) || !nrow(row)) return(list(result = FALSE))
-    ok <- FALSE
-    hash <- row$password[[1]]
-    ok <- try(isTRUE(sodium::password_verify(hash, password)), silent = TRUE)
-    if (!isTRUE(ok)) return(list(result = FALSE))
+    stored <- row$password[[1]]
+    hashed <- hash_pwd(password)
+    if (!identical(stored, hashed) && !identical(stored, password)) return(list(result = FALSE))
     list(user = row$user[[1]], admin = isTRUE(row$admin[[1]]), expire = NA, result = TRUE)
   }
 }

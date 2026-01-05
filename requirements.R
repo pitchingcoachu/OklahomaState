@@ -43,8 +43,7 @@ required_packages <- c(
   "DBI",
   "RSQLite",
   "RMariaDB",
-  "RPostgres",
-  "sodium"
+  "RPostgres"
 )
 
 
