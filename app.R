@@ -17086,7 +17086,7 @@ ensure_external_auth_table <- function(db_cfg, seed_df) {
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS auth_users (
-      user TEXT PRIMARY KEY,
+      username TEXT PRIMARY KEY,
       password TEXT NOT NULL,
       admin INTEGER DEFAULT 0,
       email TEXT,
@@ -17098,7 +17098,7 @@ ensure_external_auth_table <- function(db_cfg, seed_df) {
     try(DBI::dbExecute(con, "DROP TABLE auth_users"), silent = TRUE)
     DBI::dbExecute(con, "
       CREATE TABLE IF NOT EXISTS auth_users (
-        user TEXT PRIMARY KEY,
+        username TEXT PRIMARY KEY,
         password TEXT NOT NULL,
         admin INTEGER DEFAULT 0,
         email TEXT,
@@ -17108,11 +17108,11 @@ ensure_external_auth_table <- function(db_cfg, seed_df) {
   }
   for (i in seq_len(nrow(seed_df))) {
     u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- as.integer(isTRUE(seed_df$admin[i])); em <- seed_df$email[i]
-    existing <- try(DBI::dbGetQuery(con, "SELECT user FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1", params = list(u)), silent = TRUE)
+    existing <- try(DBI::dbGetQuery(con, "SELECT username FROM auth_users WHERE LOWER(username)=LOWER($1) LIMIT 1", params = list(u)), silent = TRUE)
     if (inherits(existing, "try-error") || is.null(existing) || !nrow(existing)) {
       hashed <- hash_pwd(pwd)
       try(DBI::dbExecute(con,
-                         "INSERT INTO auth_users (user, password, admin, email) VALUES ($1,$2,$3,$4)",
+                         "INSERT INTO auth_users (username, password, admin, email) VALUES ($1,$2,$3,$4)",
                          params = list(u, hashed, adm, em)), silent = TRUE)
     }
   }
@@ -17128,13 +17128,13 @@ make_external_check <- function(db_cfg) {
     if (inherits(con, "try-error") || is.null(con)) return(list(result = FALSE, message = "DB connect failed"))
     on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
     row <- try(DBI::dbGetQuery(con,
-                               "SELECT user, password, admin FROM auth_users WHERE LOWER(user)=LOWER($1) LIMIT 1",
+                               "SELECT username, password, admin FROM auth_users WHERE LOWER(username)=LOWER($1) LIMIT 1",
                                params = list(user)), silent = TRUE)
     if (inherits(row, "try-error") || is.null(row) || !nrow(row)) return(list(result = FALSE))
     stored <- row$password[[1]]
     hashed <- hash_pwd(password)
     if (!identical(stored, hashed) && !identical(stored, password)) return(list(result = FALSE))
-    list(user = row$user[[1]], admin = isTRUE(row$admin[[1]]), expire = NA, result = TRUE)
+    list(user = row$username[[1]], admin = isTRUE(row$admin[[1]]), expire = NA, result = TRUE)
   }
 }
 
