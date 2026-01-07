@@ -11628,6 +11628,12 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
               FIP = NA_real_, WHIP = NA_real_, `RV/100` = NA_real_
             )
           }
+          # normalize GB%/Barrel% to character to avoid type clashes across players
+          for (nm in c("GB%","Barrel%")) {
+            if (nm %in% names(extras_all)) {
+              extras_all[[nm]] <- as.character(extras_all[[nm]])
+            }
+          }
           out_row <- dplyr::bind_cols(
             tibble::tibble(Player = as.character(dfi[[player_col]][1])),
             base_row,
