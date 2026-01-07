@@ -4493,10 +4493,11 @@ need_cols <- c(
   "InducedVertBreak","HorzBreak","RelSpeed","ReleaseTilt","BreakTilt",
   "SpinEfficiency","SpinRate","RelHeight","RelSide","Extension",
   "VertApprAngle","HorzApprAngle","PlateLocSide","PlateLocHeight",
-  "PitchCall","KorBB","Balls","Strikes","SessionType",
+  "PitchCall","KorBB","Balls","Strikes","SessionType","PlayID",
   "ExitSpeed","Angle","BatterSide",
   "PlayResult","TaggedHitType","OutsOnPlay",
-  "Batter", "Catcher"   # ← add this
+  "Batter", "Catcher",
+  "VideoClip","VideoClip2","VideoClip3"
 )
 
 
@@ -4549,6 +4550,83 @@ pitch_data <- pitch_data %>%
   ) %>%
   dplyr::filter(!is.na(TaggedPitchType) & tolower(TaggedPitchType) != "undefined") %>%
   force_pitch_levels()
+
+# ---- Attach Cloudinary video URLs when available ----
+video_map_path <- file.path(data_parent, "video_map.csv")
+manual_map_path <- file.path(data_parent, "video_map_manual.csv")
+if (!"VideoClip"  %in% names(pitch_data)) pitch_data$VideoClip  <- NA_character_
+if (!"VideoClip2" %in% names(pitch_data)) pitch_data$VideoClip2 <- NA_character_
+if (!"VideoClip3" %in% names(pitch_data)) pitch_data$VideoClip3 <- NA_character_
+
+# Combine EdgeR and manual/iPhone video maps
+video_maps <- list()
+if (file.exists(video_map_path)) {
+  edger_raw <- suppressMessages(readr::read_csv(video_map_path, show_col_types = FALSE))
+  if (nrow(edger_raw) > 0) {
+    video_maps[["edger"]] <- edger_raw
+    message("📹 Loaded ", nrow(edger_raw), " EdgeR videos")
+  }
+}
+if (file.exists(manual_map_path)) {
+  manual_raw <- suppressMessages(readr::read_csv(manual_map_path, show_col_types = FALSE))
+  if (nrow(manual_raw) > 0) {
+    video_maps[["manual"]] <- manual_raw
+    message("📱 Loaded ", nrow(manual_raw), " iPhone videos")
+  }
+}
+
+if (length(video_maps) > 0) {
+  vm_raw <- dplyr::bind_rows(video_maps) %>% dplyr::distinct()
+  message("🎬 Combined total: ", nrow(vm_raw), " videos available")
+  if (nrow(vm_raw)) {
+    vm_wide <- vm_raw %>%
+      dplyr::mutate(
+        play_id = tolower(as.character(play_id)),
+        camera_slot = dplyr::case_when(
+          camera_slot %in% c("VideoClip","VideoClip2","VideoClip3") ~ camera_slot,
+          TRUE ~ NA_character_
+        ),
+        uploaded_at = suppressWarnings(lubridate::ymd_hms(uploaded_at, quiet = TRUE, tz = "UTC"))
+      ) %>%
+      dplyr::filter(
+        nzchar(play_id),
+        !is.na(camera_slot),
+        nzchar(cloudinary_url)
+      ) %>%
+      dplyr::arrange(play_id, camera_slot, dplyr::desc(uploaded_at)) %>%
+      dplyr::group_by(play_id, camera_slot) %>%
+      dplyr::slice_head(n = 1) %>%
+      dplyr::ungroup() %>%
+      tidyr::pivot_wider(
+        id_cols = play_id,
+        names_from = camera_slot,
+        values_from = cloudinary_url
+      )
+    
+    if (nrow(vm_wide)) {
+      pitch_data <- pitch_data %>%
+        dplyr::mutate(.play_lower = tolower(as.character(PlayID))) %>%
+        dplyr::left_join(vm_wide, by = c(".play_lower" = "play_id"), suffix = c("", ".vm")) %>%
+        { 
+          vm_cols <- paste0(c("VideoClip","VideoClip2","VideoClip3"), ".vm")
+          for (vm_col in vm_cols) {
+            if (!vm_col %in% names(.)) .[[vm_col]] <- NA_character_
+          }
+          .
+        } %>%
+        dplyr::mutate(
+          VideoClip  = dplyr::coalesce(.data[["VideoClip.vm"]],  VideoClip),
+          VideoClip2 = dplyr::coalesce(.data[["VideoClip2.vm"]], VideoClip2),
+          VideoClip3 = dplyr::coalesce(.data[["VideoClip3.vm"]], VideoClip3)
+        ) %>%
+        dplyr::select(-dplyr::ends_with(".vm"), -.play_lower)
+      matched_videos <- sum(nzchar(pitch_data$VideoClip %||% ""))
+      message("✅ Attached videos for ", matched_videos, " pitches from combined maps")
+    } else {
+      message("⚠️  Video maps loaded but no rows matched PlayID in pitch data.")
+    }
+  }
+}
 
 pitch_data <- ensure_pitch_keys(pitch_data)
 
@@ -5751,6 +5829,11 @@ pitch_ui <- function(show_header = FALSE) {
           selected = "All", multiple = TRUE
         ),
         selectInput(
+          "withVideo", "With Video:",
+          choices = c("All", "Yes", "No"),
+          selected = "All"
+        ),
+        selectInput(
           "zoneLoc", "Zone Location:",
           choices = c("All",
                       "Upper Half","Bottom Half","Left Half","Right Half",
@@ -5999,6 +6082,13 @@ pitch_ui <- function(show_header = FALSE) {
                           selected = c("Averages and Pitches"),
                           multiple = TRUE,
                           width = "50%"),
+              radioButtons(
+                "pitch_click_action",
+                label = "When a pitch is clicked:",
+                choices = c("Play video" = "video", "Edit pitch" = "edit"),
+                selected = "video",
+                inline = TRUE
+              ),
               actionButton("targetShapesSettings", "Target Shapes Settings", 
                            style = "margin-top:-10px;")
             ),
@@ -13965,6 +14055,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         
         # Column already renamed above, no need to rename again
         visible_set <- names(df_raw)
+        table_cache <- df_raw
         return(datatable_with_colvis(
           df_raw,
           lock            = split_col_name,
@@ -17113,11 +17204,14 @@ admin_emails <- c(
 
 # Coach emails - these users can see ALL data but don't have admin features
 coach_emails <- c(
-  "jgaynor@pitchingcoachu.com",
   "Blake.hawksworth@okstate.edu",
   "Payton.stevens@okstate.edu",
   "Trey.cobb@okstate.edu",
-  "jared.s.gaynor@gmail.com"
+  "jared.s.gaynor@gmail.com",
+  "Victor.Romero@okstate.edu",
+  "J.Holliday@okstate.edu",
+  "Mark.Ginther@okstate.edu",
+  "hub.roberts@okstate.edu"
 )
 
 # Players are identified by their email being in the lookup_table.csv Email column
@@ -18357,6 +18451,127 @@ server <- function(input, output, session) {
       options = list(dom = 't'), rownames = FALSE
     )
   }
+
+  # ---- Video helpers --------------------------------------------------------
+  safe_selected <- function(x) {
+    if (is.null(x) || length(x) == 0) return(NA_integer_)
+    x_last <- x[[length(x)]]
+    s <- as.character(x_last %||% "")
+    parts <- strsplit(s, ",", fixed = TRUE)[[1]]
+    s_last <- trimws(parts[length(parts)])
+    suppressWarnings(as.integer(s_last))
+  }
+
+  video_url_for <- function(clip) {
+    clip_chr <- trimws(as.character(clip %||% ""))
+    if (!nzchar(clip_chr)) return("")
+    if (grepl("^https?://", clip_chr)) return(clip_chr)
+    ""
+  }
+
+  collect_video_urls <- function(row) {
+    clips <- c(
+      Edger  = row$VideoClip  %||% "",
+      Behind = row$VideoClip2 %||% "",
+      Side   = row$VideoClip3 %||% ""
+    )
+    clips <- clips[nzchar(clips)]
+    if (!length(clips)) return(list())
+    urls <- lapply(names(clips), function(nm) video_url_for(clips[[nm]]))
+    names(urls) <- names(clips)
+    urls[vapply(urls, nzchar, logical(1))]
+  }
+
+  show_pitch_video_modal <- function(row, label = NULL, start_index = 1) {
+    rows_df <- tryCatch(as.data.frame(row, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(rows_df) || !nrow(rows_df)) {
+      showModal(modalDialog("No video available for this selection.", easyClose = TRUE, footer = NULL))
+      return(invisible(FALSE))
+    }
+    urls <- collect_video_urls(rows_df[1, , drop = FALSE])
+    if (!length(urls)) {
+      showModal(modalDialog("No video available for this selection.", easyClose = TRUE, footer = NULL))
+      return(invisible(FALSE))
+    }
+    nm <- tryCatch(rows_df$Pitcher[1], error = function(e) "")
+    pt <- tryCatch(rows_df$TaggedPitchType[1], error = function(e) "")
+    velo <- suppressWarnings(as.numeric(rows_df$RelSpeed[1]))
+    dt <- tryCatch(as.Date(rows_df$Date[1]), error = function(e) NA)
+    title <- paste(
+      c(
+        if (is.finite(start_index)) paste0("#", start_index),
+        if (inherits(dt, "Date") && !is.na(dt)) format(dt, "%b %d, %Y"),
+        nm %||% "", pt %||% "",
+        if (is.finite(velo)) sprintf("%.1f mph", velo) else NULL,
+        label %||% NULL
+      )[nzchar(c(
+        if (is.finite(start_index)) paste0("#", start_index) else "",
+        if (inherits(dt, "Date") && !is.na(dt)) format(dt, "%b %d, %Y") else "",
+        nm %||% "", pt %||% "",
+        if (is.finite(velo)) sprintf("%.1f mph", velo) else "",
+        label %||% ""
+      ))],
+      collapse = " • "
+    )
+    primary_name <- names(urls)[1]
+    primary_url  <- urls[[1]]
+    other <- if (length(urls) > 1) urls[-1] else list()
+    modal_body <- tagList(
+      if (nzchar(title)) tags$h4(title),
+      tags$video(
+        src = primary_url, controls = NA, autoplay = NA,
+        style = "width:100%; max-height:70vh; background:#000;"
+      ),
+      if (length(other)) {
+        tags$div(
+          style = "margin-top:8px;",
+          strong("Other angles:"),
+          tags$ul(
+            lapply(seq_along(other), function(i) {
+              nm <- names(other)[i]
+              tags$li(tags$a(href = other[[i]], target = "_blank", rel = "noopener noreferrer",
+                             paste0(nm, " (opens in new tab)")))
+            })
+          )
+        )
+      }
+    )
+    showModal(modalDialog(modal_body, easyClose = TRUE, footer = NULL, size = "l"))
+    invisible(TRUE)
+  }
+
+  open_clip_from_df_and_index <- function(df, idx_raw, label = NULL) {
+    idx <- safe_selected(idx_raw)
+    n <- nrow(df)
+    if (!is.finite(idx) || is.na(idx) || n < 1L || idx < 1L || idx > n) return(invisible(FALSE))
+    row <- df[idx, , drop = FALSE]
+    show_pitch_video_modal(row, label = label, start_index = idx)
+    invisible(TRUE)
+  }
+
+  handle_table_video_click <- function(info, cache, table_label = NULL) {
+    if (is.null(info) || is.null(info$row) || is.null(info$col)) return()
+    if (is.null(cache) || !nrow(cache)) return()
+    col_name <- names(cache)[info$col]
+    if (!identical(col_name, "#")) return()
+    if (info$row < 1 || info$row > nrow(cache)) return()
+    row <- cache[info$row, , drop = FALSE]
+    # Enrich with pitch-level video if PlayID is available
+    if (!any(nzchar(c(row$VideoClip %||% "", row$VideoClip2 %||% "", row$VideoClip3 %||% "")))) {
+      play_id <- tryCatch(tolower(as.character(row$PlayID[1])), error = function(e) "")
+      if (nzchar(play_id) && exists("pitch_data")) {
+        match_row <- tryCatch({
+          pitch_data %>%
+            dplyr::mutate(.play_lower = tolower(as.character(PlayID))) %>%
+            dplyr::filter(.play_lower == play_id) %>%
+            dplyr::select(-.play_lower) %>%
+            dplyr::slice_head(n = 1)
+        }, error = function(e) NULL)
+        if (!is.null(match_row) && nrow(match_row)) row <- match_row
+      }
+    }
+    show_pitch_video_modal(row, label = table_label, start_index = info$row)
+  }
   
   # Target Shapes Data Storage - load or create CSV
   target_shapes_file <- "target_shapes.csv"
@@ -19416,6 +19631,19 @@ server <- function(input, output, session) {
     df <- apply_after_count_filter(df, input$afterCountFilter)
     df <- apply_pitch_results_filter(df, input$pitchResults)
     
+    # With Video filter
+    if (!is.null(input$withVideo) && input$withVideo != "All") {
+      vid1 <- nzchar(ifelse(is.na(df$VideoClip),  "", df$VideoClip))
+      vid2 <- nzchar(ifelse(is.na(df$VideoClip2), "", df$VideoClip2))
+      vid3 <- nzchar(ifelse(is.na(df$VideoClip3), "", df$VideoClip3))
+      has_video <- vid1 | vid2 | vid3
+      if (identical(input$withVideo, "Yes")) {
+        df <- dplyr::filter(df, has_video)
+      } else if (identical(input$withVideo, "No")) {
+        df <- dplyr::filter(df, !has_video)
+      }
+    }
+    
     # Numeric ranges
     if (nnz(input$veloMin)) df <- dplyr::filter(df, RelSpeed         >= input$veloMin)
     if (nnz(input$veloMax)) df <- dplyr::filter(df, RelSpeed         <= input$veloMax)
@@ -19490,6 +19718,19 @@ server <- function(input, output, session) {
     if (!is.na(input$ivbMax))  df <- dplyr::filter(df, InducedVertBreak <= input$ivbMax)
     if (!is.na(input$hbMin))   df <- dplyr::filter(df, HorzBreak >= input$hbMin)
     if (!is.na(input$hbMax))   df <- dplyr::filter(df, HorzBreak <= input$hbMax)
+    
+    # With Video filter (leaderboard)
+    if (!is.null(input$withVideo) && input$withVideo != "All") {
+      vid1 <- nzchar(ifelse(is.na(df$VideoClip),  "", df$VideoClip))
+      vid2 <- nzchar(ifelse(is.na(df$VideoClip2), "", df$VideoClip2))
+      vid3 <- nzchar(ifelse(is.na(df$VideoClip3), "", df$VideoClip3))
+      has_video <- vid1 | vid2 | vid3
+      if (identical(input$withVideo, "Yes")) {
+        df <- dplyr::filter(df, has_video)
+      } else if (identical(input$withVideo, "No")) {
+        df <- dplyr::filter(df, !has_video)
+      }
+    }
     
     df <- df %>% dplyr::arrange(Date) %>% dplyr::mutate(PitchNumber = dplyr::row_number())
     if (!is.na(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
@@ -20327,6 +20568,10 @@ server <- function(input, output, session) {
   output$summaryTablePage <- DT::renderDataTable({
     tryCatch({
       df <- filtered_data()
+      table_cache <- NULL
+      on.exit({
+        session$userData$table_cache_summaryTablePage <- table_cache
+      }, add = TRUE)
       if (!nrow(df)) {
         return(DT::datatable(
           data.frame(Message = "No data for selected filters"),
@@ -20837,6 +21082,7 @@ server <- function(input, output, session) {
             }
           )
         }
+        table_cache <- df_dt
         return(build_summary_dt(
           df_dt,
           lock            = split_col_name,
@@ -21182,6 +21428,7 @@ server <- function(input, output, session) {
         # Bind rows
         df_out <- dplyr::bind_rows(batted_ball_data, all_row)
         
+        table_cache <- df_out
         return(DT::datatable(
           df_out,
           options = list(
@@ -21448,6 +21695,7 @@ server <- function(input, output, session) {
           }
         )
       }
+      table_cache <- df_table
       build_summary_dt(
         df_table,
         lock            = split_col_name,
@@ -21541,6 +21789,10 @@ server <- function(input, output, session) {
   # -----------------------------
   output$summaryTable <- DT::renderDataTable({
     df <- filtered_data()
+    table_cache <- NULL
+    on.exit({
+      session$userData$table_cache_summaryTable <- table_cache
+    }, add = TRUE)
     if (!nrow(df)) {
       return(DT::datatable(
         data.frame(Message = "No data for selected filters"),
@@ -22066,6 +22318,7 @@ server <- function(input, output, session) {
         df_dt <- df_dt[, c(order_cols, extras), drop = FALSE]
       }
       
+      table_cache <- df_dt
       return(datatable_with_colvis(
         df_dt,
         lock            = split_col_name,
@@ -22171,6 +22424,7 @@ server <- function(input, output, session) {
       df_raw <- dplyr::bind_rows(raw_per_type, all_row)
       
       visible_set <- names(df_raw)
+      table_cache <- df_raw
       return(datatable_with_colvis(
         df_raw,
         lock            = split_col_name,
@@ -22413,6 +22667,7 @@ server <- function(input, output, session) {
       df_out <- dplyr::bind_rows(batted_ball_data, all_row)
       
       visible_set <- names(df_out)
+      table_cache <- df_out
       return(datatable_with_colvis(
         df_out,
         lock            = split_col_name,
@@ -22635,6 +22890,7 @@ server <- function(input, output, session) {
       )
     }
     
+    table_cache <- df_table
     build_summary_dt(
       df_table,
       lock            = split_col_name,
@@ -22644,6 +22900,22 @@ server <- function(input, output, session) {
       enable_colors   = isTRUE(input$dpTableColors)
     )
   })
+
+  # Click-to-video support on Summary/DP tables (# column)
+  observeEvent(input$summaryTablePage_cell_clicked, {
+    handle_table_video_click(
+      input$summaryTablePage_cell_clicked,
+      session$userData$table_cache_summaryTablePage,
+      table_label = "Summary Table"
+    )
+  }, ignoreNULL = TRUE)
+  observeEvent(input$summaryTable_cell_clicked, {
+    handle_table_video_click(
+      input$summaryTable_cell_clicked,
+      session$userData$table_cache_summaryTable,
+      table_label = "Data & Performance"
+    )
+  }, ignoreNULL = TRUE)
   
   # ================================
   # Pitching → AB Report (no tables)
@@ -23300,6 +23572,13 @@ server <- function(input, output, session) {
   
   # Event handlers for movement plot pitch type editing
   observeEvent(input$movementPlot_selected, {
+    # Default behavior: play video(s) for the clicked pitch
+    if (!identical(input$pitch_click_action, "edit")) {
+      df <- filtered_data(); req(nrow(df) > 0)
+      open_clip_from_df_and_index(df, input$movementPlot_selected, label = "Movement Plot")
+      return()
+    }
+    
     req(input$movementPlot_selected)
     selected_ids <- as.numeric(input$movementPlot_selected)
     df <- filtered_data()
@@ -23519,6 +23798,12 @@ server <- function(input, output, session) {
   
   # Event handler for summary movement plot
   observeEvent(input$summary_movementPlot_selected, {
+    if (!identical(input$pitch_click_action, "edit")) {
+      df <- filtered_data(); req(nrow(df) > 0)
+      open_clip_from_df_and_index(df, input$summary_movementPlot_selected, label = "Movement Plot (Summary)")
+      return()
+    }
+    
     req(input$summary_movementPlot_selected)
     selected_ids <- as.numeric(input$summary_movementPlot_selected)
     df <- filtered_data()
