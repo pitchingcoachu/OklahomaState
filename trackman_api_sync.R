@@ -394,6 +394,11 @@ main <- function() {
   if (!nzchar(tm_env)) tm_env <- "practice"
   tm_env <- match.arg(tm_env, c("practice","game"))
 
+  # Cap date window to 10 days to avoid TrackMan range errors
+  if (as.numeric(difftime(dates$to, dates$from, units = "days")) > 9) {
+    dates$from <- dates$to - 9
+  }
+
   message(glue(">> Syncing TrackMan {tm_env} sessions from {dates$from} to {dates$to}"))
   token <- request_trackman_token(tm_client_id, tm_client_secret)
 
