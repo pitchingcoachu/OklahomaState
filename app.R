@@ -19861,8 +19861,8 @@ server <- function(input, output, session) {
     y_max <- max(6, suppressWarnings(max(df$RelHeight, na.rm = TRUE) + 0.2))
     
     p <- ggplot() +
-      geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
-      annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
+      geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan", alpha = 0.5) +
+      annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = alpha("white", 0.6)) +
       geom_vline(xintercept = 0, color = line_col, size = 0.7) +
       geom_hline(yintercept = 0, color = line_col, size = 0.7) +
       # Individual pitches layer
@@ -19887,7 +19887,7 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-      theme_minimal() + axis_theme + grid_theme(dark_on) +
+      theme_minimal() + axis_theme + grid_theme(dark_on) + transparent_bg_theme +
       labs(x = NULL, y = NULL) +
       theme(
         legend.position = "none",
@@ -23065,6 +23065,7 @@ server <- function(input, output, session) {
       legend.position = "bottom",
       legend.text = element_text(size = 14, color = axis_col)
     )
+    p <- p & transparent_bg_theme  # keep patchwork canvas transparent to match other pages
     
     girafe_transparent(
       ggobj = p,
