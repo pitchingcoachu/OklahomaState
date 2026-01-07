@@ -2244,7 +2244,7 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
         "Live"    = c("InZone%","Strike%","FPS%","E+A%","QP+","Ctrl+","Pitching+","K%","BB%","Whiff%"),
         "Results" = c("Whiff%","K%","BB%","CSW%","GB%","Barrel%","EV"),
         "Bullpen" = c("InZone%","Comp%","Ctrl+","Stuff+"),
-        "Banny"   = c("Strike%","QP%","InZone%","Comp%","Stuff+","QP+","Pitching+","RV/100"),
+        "Banny"   = c("Strike%","QP%","InZone%","Comp%","Stuff+","QP+","Pitching+"),
         character(0)
       )
       available_cols <- intersect(color_cols, names(df))
@@ -2483,7 +2483,7 @@ get_color_scale <- function(value, column_name, pitch_type) {
   avg  <- thresholds$avg
   great <- thresholds$great
   
-  reverse_scale <- column_name %in% c("EV","Barrel%","BB%")
+  reverse_scale <- column_name %in% c("EV","Barrel%","BB%","RV/100")
   if (reverse_scale) {
     if (value >= poor) return(list(bg = "#0066CC", text = "white"))
     if (value >= (poor + avg)/2) return(list(bg = "#66B2FF", text = "black"))
