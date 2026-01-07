@@ -2716,13 +2716,14 @@ fill_all_qp_pct <- function(df_table, src_df) {
   }
   
   missing_qp <- which(is.na(df_table$`QP%`) | df_table$`QP%` == "")
-  if (!any(idx) && length(missing_qp) == 1) {
+  idx_any <- isTRUE(any(idx))
+  if (!idx_any && length(missing_qp) == 1) {
     idx[missing_qp] <- TRUE
   }
-  if (!any(idx) && length(missing_qp) > 1) {
+  if (!idx_any && length(missing_qp) > 1) {
     idx[missing_qp] <- TRUE
   }
-  if (!any(idx)) return(df_table)
+  if (!isTRUE(any(idx))) return(df_table)
   
   qp_val <- safe_pct(
     sum((compute_qp_points(src_df) * 200) >= 100, na.rm = TRUE),
@@ -11602,7 +11603,15 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           coerce_extras_types <- function(df_ex) {
             if (!"IP" %in% names(df_ex)) df_ex$IP <- NA_character_
             df_ex$IP <- as.character(df_ex$IP)
-            num_cols <- intersect(c("BABIP","GB%","Barrel%","AVG","SLG","xWOBA","xISO","FIP","WHIP","RV/100"), names(df_ex))
+            pct_cols <- intersect(c("GB%","Barrel%"), names(df_ex))
+            if (length(pct_cols)) {
+              df_ex[pct_cols] <- lapply(df_ex[pct_cols], function(z) {
+                z_chr <- as.character(z)
+                z_chr[z_chr == ""] <- NA_character_
+                z_chr
+              })
+            }
+            num_cols <- intersect(c("BABIP","AVG","SLG","xWOBA","xISO","FIP","WHIP","RV/100"), names(df_ex))
             for (nm in num_cols) df_ex[[nm]] <- suppressWarnings(as.numeric(df_ex[[nm]]))
             df_ex
           }
