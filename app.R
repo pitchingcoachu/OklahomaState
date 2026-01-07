@@ -17117,7 +17117,11 @@ coach_emails <- c(
   "Blake.hawksworth@okstate.edu",
   "Payton.stevens@okstate.edu",
   "Trey.cobb@okstate.edu",
-  "jared.s.gaynor@gmail.com"
+  "jared.s.gaynor@gmail.com",
+  "Victor.Romero@okstate.edu",
+  "J.Holliday@okstate.edu",
+  "Mark.Ginther@okstate.edu",
+  "hub.roberts@okstate.edu"
 )
 
 # Players are identified by their email being in the lookup_table.csv Email column
