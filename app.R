@@ -11666,7 +11666,22 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
               out_tbl
             }
           )
-          out_tbl <- fill_all_qp_pct(out_tbl, df)
+          out_tbl <- tryCatch(
+            fill_all_qp_pct(out_tbl, df),
+            error = function(e) {
+              message("leaderboard fill_all_qp_pct error: ", conditionMessage(e))
+              out_tbl
+            }
+          )
+        }
+        if (identical(mode, "Stuff")) {
+          out_tbl <- tryCatch(
+            enforce_stuff_order(out_tbl),
+            error = function(e) {
+              message("leaderboard enforce_stuff_order error: ", conditionMessage(e))
+              out_tbl
+            }
+          )
         }
         
         visible_set <- visible_set_for_lb(mode, custom)
