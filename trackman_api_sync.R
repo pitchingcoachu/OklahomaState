@@ -391,6 +391,8 @@ main <- function() {
   preset <- ensure_env("CLOUDINARY_UPLOAD_PRESET")
   folder <- Sys.getenv("CLOUDINARY_FOLDER", unset = "trackman")
   tm_env <- tolower(Sys.getenv("TM_ENV", unset = "practice"))
+  if (!nzchar(tm_env)) tm_env <- "practice"
+  tm_env <- match.arg(tm_env, c("practice","game"))
 
   message(glue(">> Syncing TrackMan {tm_env} sessions from {dates$from} to {dates$to}"))
   token <- request_trackman_token(tm_client_id, tm_client_secret)
