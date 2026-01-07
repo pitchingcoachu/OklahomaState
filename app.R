@@ -4643,7 +4643,8 @@ ALLOWED_PITCHERS <- c(
   "Schambow, Quinn",
   "Kennedy, Ty",
   "Francisco, Brady",
-  "Pomeroy, Deacon"
+  "Pomeroy, Deacon",
+  "Kennedy, Jacob"
 )
 
 # Mirror list for hitters (GCU hitters)
