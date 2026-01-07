@@ -11659,7 +11659,13 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         }
         
         if (identical(mode, "Process")) {
-          out_tbl <- enforce_process_order(out_tbl)
+          out_tbl <- tryCatch(
+            enforce_process_order(out_tbl),
+            error = function(e) {
+              message("leaderboard enforce_process_order error: ", conditionMessage(e))
+              out_tbl
+            }
+          )
           out_tbl <- fill_all_qp_pct(out_tbl, df)
         }
         
