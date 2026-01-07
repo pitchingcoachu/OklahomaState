@@ -11599,6 +11599,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         original_data <- if (identical(mode, "Usage")) filtered_lb_before_pitch_type() else NULL
         
         rows <- lapply(by_player, function(dfi) {
+          # Flatten any list-cols that break downstream summaries
+          dfi <- dfi %>% dplyr::mutate(dplyr::across(where(is.list), ~unlist(.x)))
           base_row <- build_all_row(dfi)
           coerce_extras_types <- function(df_ex) {
             if (!"IP" %in% names(df_ex)) df_ex$IP <- NA_character_
