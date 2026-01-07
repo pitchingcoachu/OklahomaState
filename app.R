@@ -21,6 +21,20 @@ library(shinymanager)  # for custom authentication with cool login page
 # raise upload size if needed (50 MB here)
 options(shiny.maxRequestSize = 50 * 1024^2)
 
+# Set default plotting background to transparent
+options(shiny.plot.res = 96)
+# Force transparent backgrounds for all plot devices
+if (capabilities("cairo")) {
+  options(bitmapType = "cairo")
+}
+
+# Wrapper to force transparent girafe backgrounds everywhere
+girafe_transparent <- function(..., bg = "transparent") {
+  args <- list(...)
+  if (!"bg" %in% names(args)) args$bg <- bg
+  do.call(ggiraph::girafe, args)
+}
+
 # Optional team scoping: blank = no filter
 if (!exists("TEAM_CODE", inherits = TRUE)) TEAM_CODE <- ""
 
@@ -102,6 +116,13 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
                       show_scale = FALSE, scale_label = NULL, scale_limits = NULL,
                       scale_breaks = NULL, scale_labels = NULL) {
   if (!nrow(grid)) return(ggplot() + theme_void())
+  dark_on <- FALSE
+  try({
+    dom <- shiny::getDefaultReactiveDomain()
+    if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
+  }, silent = TRUE)
+  line_col <- if (dark_on) "#ffffff" else "black"
+  bg_transparent <- element_rect(fill = "transparent", color = NA)
   
   home <- data.frame(
     x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
@@ -128,9 +149,9 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
         geom_contour_filled(aes(fill = after_stat(level)), breaks = breaks, show.legend = FALSE)
     } +
     scale_fill_manual(values = pal_fun(n_bins), guide = "none") +
-    geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+    geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = "black", inherit.aes = FALSE) +
+              fill = NA, color = line_col, inherit.aes = FALSE) +
     { if (!is.null(peak_df))
       geom_point(data = peak_df, aes(x = px, y = py), inherit.aes = FALSE,
                  size = 3.8, shape = 21, fill = "red", color = "black", stroke = 0.5)
@@ -139,8 +160,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     theme_void() + 
     theme(legend.position = "none",
           plot.title = element_text(face = "bold", hjust = 0.5),
-          plot.background = element_rect(fill = "transparent", color = NA),
-          panel.background = element_rect(fill = "transparent", color = NA)) +
+          plot.background = bg_transparent,
+          panel.background = bg_transparent) +
     labs(title = title)
   
   # If show_scale, add gradient bar on top
@@ -540,26 +561,8 @@ render_heatmap_stat <- function(df, stat) {
       0
     }
     
-    collapse_list_col <- function(x, default = NA) {
-      if (is.list(x)) {
-        vapply(x, function(y) {
-          if (length(y)) {
-            val <- y[[1]]
-            if (is.null(val)) default else val
-          } else default
-        }, default)
-      } else {
-        x
-      }
-    }
-    
     df_rv <- df %>%
       dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight)) %>%
-      dplyr::mutate(
-        PitchCall  = collapse_list_col(PitchCall, NA_character_),
-        PlayResult = collapse_list_col(PlayResult, NA_character_),
-        KorBB      = collapse_list_col(if ("KorBB" %in% names(.)) KorBB else NA, NA_character_)
-      ) %>%
       dplyr::mutate(RunValue = mapply(calculate_run_value, PitchCall, PlayResult, 
                                       if("KorBB" %in% names(.)) KorBB else NA))
     if (!nrow(df_rv)) return(ggplot() + theme_void())
@@ -737,7 +740,7 @@ library(RSQLite)  # for SQLite database
 
 # Configure Cloudinary (recommended simple host for images/videos)
 # Create a free account, make an *unsigned upload preset*, then set these:
-# 1) Prefer environment variables in production (shinyapps.io Settings → Environment Variables)
+# 1) Prefer environment variables in production (shinpps.io Settings → Environment Variables)
 # 2) Fall back to your local defaults for dev
 CLOUDINARY_CLOUD_NAME    <- Sys.getenv("CLOUDINARY_CLOUD_NAME", unset = "")
 CLOUDINARY_UPLOAD_PRESET <- Sys.getenv("CLOUDINARY_UPLOAD_PRESET", unset = "")
@@ -1333,13 +1336,25 @@ save_pitch_modifications_db <- function(selected_pitches, new_type, new_pitcher 
   }
   on.exit(dbDisconnect(con), add = TRUE)
   selected_pitches <- ensure_pitch_keys(selected_pitches)
-  if (is.null(new_pitcher) || !nzchar(new_pitcher)) {
-    new_pitcher_vec <- as.character(selected_pitches$Pitcher)
-  } else {
+  # Drop any aggregate/summary rows that lack a concrete pitch key
+  selected_pitches <- selected_pitches[!is.na(selected_pitches$PitchKey) & nzchar(as.character(selected_pitches$PitchKey)), , drop = FALSE]
+  if (!nrow(selected_pitches)) {
+    return(list(success = FALSE, error = "No valid pitch rows selected (missing pitch key)."))
+  }
+  # Normalize pitcher fields to avoid NULL/NA inserts
+  pitcher_vec <- as.character(selected_pitches$Pitcher)
+  pitcher_vec[is.na(pitcher_vec) | pitcher_vec %in% c("NA","NaN","")] <- "Unknown"
+  if (!is.null(new_pitcher) && nzchar(new_pitcher)) {
+    # Fill any missing pitcher with the override and use override for new_pitcher column
+    pitcher_vec[!nzchar(pitcher_vec) | is.na(pitcher_vec)] <- new_pitcher
     new_pitcher_vec <- rep(new_pitcher, nrow(selected_pitches))
+  } else {
+    # No override provided; still ensure we don't insert blanks
+    pitcher_vec[!nzchar(pitcher_vec) | is.na(pitcher_vec) | pitcher_vec %in% c("NA","NaN")] <- "Unknown"
+    new_pitcher_vec <- pitcher_vec
   }
   new_mods <- data.frame(
-    pitcher = selected_pitches$Pitcher,
+    pitcher = pitcher_vec,
     date = as.character(selected_pitches$Date),
     rel_speed = suppressWarnings(as.numeric(selected_pitches$RelSpeed)),
     horz_break = suppressWarnings(as.numeric(selected_pitches$HorzBreak)),
@@ -1351,10 +1366,20 @@ save_pitch_modifications_db <- function(selected_pitches, new_type, new_pitcher 
     pitch_key = as.character(selected_pitches$PitchKey),
     stringsAsFactors = FALSE
   )
+  # Sanitize required NOT NULL fields
+  new_mods$date[is.na(new_mods$date) | new_mods$date %in% c("", "NA", "NaN")] <- NA
+  new_mods$pitcher[is.na(new_mods$pitcher) | new_mods$pitcher %in% c("", "NA", "NaN")] <- "Unknown"
+  new_mods$new_pitcher[is.na(new_mods$new_pitcher) | new_mods$new_pitcher %in% c("", "NA", "NaN")] <- new_mods$pitcher[is.na(new_mods$new_pitcher) | new_mods$new_pitcher %in% c("", "NA", "NaN")]
   new_mods$pitch_key[is.na(new_mods$pitch_key)] <- ""
-  new_mods <- new_mods[nzchar(new_mods$pitch_key), , drop = FALSE]
+  # Keep only rows with required fields: pitch_key, pitcher, date
+  new_mods <- new_mods[
+    nzchar(new_mods$pitch_key) &
+      nzchar(new_mods$pitcher) &
+      !is.na(new_mods$date),
+    , drop = FALSE
+  ]
   if (!nrow(new_mods)) {
-    return(list(success = FALSE, error = "No pitch identifiers available for the selected rows."))
+    return(list(success = FALSE, error = "No valid pitch rows available (missing key/pitcher/date)."))
   }
   res <- tryCatch({
     dbExecute(con, "BEGIN IMMEDIATE")
@@ -1599,16 +1624,6 @@ load_pitch_modifications_db <- function(pitch_data, verbose = TRUE) {
         }
       }
       
-      # NUCLEAR OPTION: Force all list columns to atomic before returning
-      temp_data <- as.data.frame(temp_data, stringsAsFactors = FALSE)
-      for (nm in names(temp_data)) {
-        if (is.list(temp_data[[nm]])) {
-          temp_data[[nm]] <- vapply(temp_data[[nm]], function(v) {
-            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-          }, character(1))
-        }
-      }
-      
       return(list(
         data = temp_data,
         applied_count = modifications_applied,
@@ -1729,12 +1744,14 @@ heat_pal_freq <- function(n = HEAT_BINS) colorRampPalette(
 heat_pal_red  <- function(n = HEAT_BINS) colorRampPalette(c("white","pink","red"))(n)
 
 
-# simple JS to strip non-numeric chars (like "%") when sorting
+# JS sorter: strip HTML, then try numeric (handles %, commas); fallback to lowercase text
 js_sort <- 
   "function(data, type, row, meta) {\n" %>% 
   paste0("  if (type === 'sort') {\n") %>%
-  paste0("    var num = parseFloat(data.toString().replace(/[^0-9.-]/g, ''));\n") %>%
-  paste0("    return isNaN(num) ? -Infinity : num;\n") %>%
+  paste0("    var text = String(data || '').replace(/<[^>]*>/g, '');\n") %>%
+  paste0("    var num = parseFloat(text.replace(/[^0-9.+\\-eE]/g, ''));\n") %>%
+  paste0("    if (!isNaN(num)) return num;\n") %>%
+  paste0("    return text.toLowerCase();\n") %>%
   paste0("  }\n") %>%
   paste0("  return data;\n") %>%
   paste0("}")
@@ -2070,14 +2087,6 @@ sanitize_for_dt <- function(dfx) {
 # Safe wrapper for compute_process_results with error handling
 safe_compute_process_results <- function(df, mode = "All") {
   tryCatch({
-    # CRITICAL: Force-flatten ALL list columns before processing
-    for (nm in names(df)) {
-      if (is.list(df[[nm]])) {
-        df[[nm]] <- vapply(df[[nm]], function(v) {
-          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-        }, character(1))
-      }
-    }
     compute_process_results(df, mode)
   }, error = function(e) {
     message("Error in compute_process_results: ", conditionMessage(e))
@@ -2098,41 +2107,6 @@ safe_compute_process_results <- function(df, mode = "All") {
 # Safe wrapper for make_summary with error handling (supports alternate grouping)
 safe_make_summary <- function(df, group_col = "TaggedPitchType") {
   tryCatch({
-    # NUCLEAR OPTION: Force data.frame and aggressively unlist ALL columns
-    df <- as.data.frame(df, stringsAsFactors = FALSE)
-    list_cols_found <- character(0)
-    for (nm in names(df)) {
-      col <- df[[nm]]
-      # Check multiple ways a column can be a list
-      if (is.list(col) || inherits(col, "list") || !is.atomic(col)) {
-        list_cols_found <- c(list_cols_found, nm)
-        df[[nm]] <- tryCatch({
-          vapply(col, function(x) {
-            if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
-          }, character(1))
-        }, error = function(e) {
-          as.character(unlist(col))
-        })
-      }
-    }
-    if (length(list_cols_found) > 0) {
-      message("safe_make_summary: Flattened ", length(list_cols_found), " list columns: ", paste(head(list_cols_found, 5), collapse=", "))
-    }
-    # Ensure critical numeric columns are numeric
-    num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
-                  "SpinRate", "SpinEfficiency", "RelHeight", "RelSide", "Extension",
-                  "VertApprAngle", "HorzApprAngle", "PlateLocSide", "PlateLocHeight",
-                  "ExitSpeed", "Angle", "Stuff+", "ReleaseTilt", "BreakTilt")
-    for (nc in intersect(num_cols, names(df))) {
-      if (!is.numeric(df[[nc]])) df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
-    }
-    # Double-check no list columns remain using is.atomic check
-    for (nm in names(df)) {
-      if (!is.atomic(df[[nm]])) {
-        message("WARNING: Non-atomic column STILL remains: ", nm, " - force unlisting")
-        df[[nm]] <- as.character(unlist(df[[nm]]))
-      }
-    }
     make_summary(df, group_col = group_col)
   }, error = function(e) {
     message("Error in make_summary (group_col = ", group_col, "): ", conditionMessage(e))
@@ -2165,6 +2139,7 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
       StrikePercent = character(0),
       SwingPercent = character(0),
       WhiffPercent = character(0),
+      QPPercent = character(0),
       EV = numeric(0),
       LA = numeric(0),
       `Stuff+` = numeric(0),
@@ -2199,15 +2174,16 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     all_idx0   <- seq_len(ncol(df)) - 1
     colvis_idx <- setdiff(all_idx0, idx_lock)
     
-    defs <- list(list(className = "dt-center", targets = "_all"))
-    idx_pct <- which(grepl("%$", names(df)) | names(df) %in% c("SpinEff")) - 1
-    if (length(idx_pct)) {
-      defs <- c(defs, list(list(targets = idx_pct, render = DT::JS(js_sort))))
-    }
+    defs <- list(
+      list(className = "dt-center", targets = "_all"),
+      list(targets = "_all", render = DT::JS(js_sort))
+    )
     hide_idx <- which(!(names(df) %in% default_visible)) - 1
     if (length(hide_idx)) {
       defs <- c(defs, list(list(visible = FALSE, targets = hide_idx)))
     }
+    # Force two-state sorting (asc/desc) on all columns to avoid inconsistent tri-state toggles
+    defs <- c(defs, list(list(targets = "_all", orderSequence = c("asc", "desc"))))
     
     build_dt <- function(data) {
       data <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
@@ -2240,7 +2216,7 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     dt <- build_dt(df)
     
-    color_modes <- c("Process","Live","Results","Bullpen")
+    color_modes <- c("Process","Live","Results","Bullpen","Banny")
     if (identical(mode, "Usage")) {
       color_modes <- setdiff(color_modes, "Usage")
     }
@@ -2264,11 +2240,11 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     if (enable_color_mode) {
       color_cols <- switch(
         mode,
-        "Process" = c("InZone%","Comp%","Strike%","Swing%","FPS%","E+A%","Ctrl+","QP+","Pitching+"),
+        "Process" = c("InZone%","Comp%","Strike%","Swing%","FPS%","E+A%","QP%","Ctrl+","QP+","Pitching+"),
         "Live"    = c("InZone%","Strike%","FPS%","E+A%","QP+","Ctrl+","Pitching+","K%","BB%","Whiff%"),
         "Results" = c("Whiff%","K%","BB%","CSW%","GB%","Barrel%","EV"),
         "Bullpen" = c("InZone%","Comp%","Ctrl+","Stuff+"),
-        "Banny"   = c("Strike%","InZone%","Comp%","Stuff+","QP+","Pitching+"),
+        "Banny"   = c("Strike%","QP%","InZone%","Comp%","Stuff+","QP+","Pitching+"),
         character(0)
       )
       available_cols <- intersect(color_cols, names(df))
@@ -2343,13 +2319,13 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
 
 # Default column sets for the table-mode toggle
 stuff_cols        <- c("Pitch","#","Velo","Max","IVB","HB","rTilt","bTilt","SpinEff","Spin","Height","Side","Ext","VAA","HAA","Stuff+")
-process_cols      <- c("Pitch","#","BF","RV/100","InZone%","Comp%","Strike%","Swing%","FPS%","E+A%","Ctrl+","QP+","Pitching+")
+process_cols      <- c("Pitch","#","BF","RV/100","InZone%","Comp%","Strike%","Swing%","FPS%","E+A%","QP%","Ctrl+","QP+","Pitching+")
 results_cols      <- c("Pitch","#","BF","K%","BB%","GB%","Barrel%","Whiff%","CSW%","EV","LA")
 results_cols_live <- c("Pitch","#","BF","K%","BB%","GB%","Whiff%","CSW%","EV","LA","Pitching+")
 bullpen_cols      <- c("Pitch","#","Velo","Max","IVB","HB","Spin","bTilt","Height","Side","Ext","InZone%","Comp%","Ctrl+","Stuff+")
 live_cols         <- c("Pitch","#","Velo","Max","IVB","HB","FPS%","E+A%","InZone%","Strike%","Whiff%","K%","BB%","QP+")
 usage_cols        <- c("Pitch","#","Usage","0-0","Behind","Even","Ahead","<2K","2K")
-banny_cols        <- c("Pitch","Usage","Strike%","InZone%","Comp%","Velo","Max","IVB","HB","Stuff+","QP+","Pitching+")
+banny_cols        <- c("Pitch","Usage","Strike%","QP%","InZone%","Comp%","Velo","Max","IVB","HB","Stuff+","QP+","Pitching+")
 perf_cols         <- c("Pitch","#","BF","RV/100","InZone%","Comp%","Strike%","FPS%","E+A%","K%","BB%","Whiff%","CSW%","EV","LA","Ctrl+","QP+","Pitching+")
 
 # ---- unified list for the pickers + a helper to compute visibility
@@ -2403,8 +2379,8 @@ custom_tables(load_custom_tables())
 
 update_custom_table_choices <- function(session) {
   nms <- names(custom_tables())
-  base_modes <- c("Stuff","Process","Results","Swing Decisions","Bullpen","Live","Usage","Raw Data","Batted Ball Data")
-  base_modes_pitch <- setdiff(base_modes, "Swing Decisions")  # Pitching summary/DP: drop Swing Decisions
+  base_modes <- c("Stuff","Process","Results","Swing Decisions","Bullpen","Live","Usage","Banny","Raw Data","Batted Ball Data")
+  pitch_modes <- setdiff(base_modes, "Swing Decisions")
   safe_update <- function(id) {
     try(updateSelectInput(session, id, choices = c("", nms)), silent = TRUE)
   }
@@ -2414,9 +2390,10 @@ update_custom_table_choices <- function(session) {
     "pp_goal1_customSaved","pp_goal2_customSaved","pp_goal3_customSaved"
   )) safe_update(id)
   # Update table-mode dropdowns to include saved customs (custom always last)
-  for (id in c("summaryTableMode","dpTableMode","cmpA_tableMode","cmpB_tableMode","lbMode")) {
-    modes <- if (id %in% c("summaryTableMode","dpTableMode")) base_modes_pitch else base_modes
-    try(updateSelectInput(session, id, choices = c(modes, nms, "Custom"), selected = NULL), silent = TRUE)
+  try(updateSelectInput(session, "summaryTableMode", choices = c(pitch_modes, nms, "Custom"), selected = NULL), silent = TRUE)
+  try(updateSelectInput(session, "dpTableMode",       choices = c(pitch_modes, nms, "Custom"), selected = NULL), silent = TRUE)
+  for (id in c("cmpA_tableMode","cmpB_tableMode","lbMode")) {
+    try(updateSelectInput(session, id, choices = c(base_modes, nms, "Custom"), selected = NULL), silent = TRUE)
   }
 }
 
@@ -2548,6 +2525,7 @@ get_process_thresholds <- function(column_name, pitch_type) {
   }
   if (column_name == "FPS%") return(list(poor = 55, avg = 60, great = 65))
   if (column_name == "E+A%" && pitch_type == "all") return(list(poor = 65, avg = 70, great = 75))
+  if (column_name == "QP%") return(list(poor = 38, avg = 48, great = 58))
   if (column_name == "Ctrl+") return(list(poor = 75, avg = 85, great = 95))
   if (column_name == "QP+") return(list(poor = 75, avg = 90, great = 105))
   if (column_name == "Pitching+") return(list(poor = 80, avg = 95, great = 110))
@@ -2696,7 +2674,53 @@ enforce_process_order <- function(df) {
   if (all(c("BF","RV/100") %in% names(df))) df <- dplyr::relocate(df, `RV/100`, .after = `BF`)
   if (all(c("RV/100","Usage") %in% names(df))) df <- dplyr::relocate(df, Usage, .after = `RV/100`)
   else if (all(c("BF","Usage") %in% names(df))) df <- dplyr::relocate(df, Usage, .after = `BF`)
+  if (all(c("E+A%","QP%") %in% names(df))) df <- dplyr::relocate(df, `QP%`, .after = `E+A%`)
   df
+}
+
+# --- Ensure the “All” row has QP% populated (using the current data frame) ---
+fill_all_qp_pct <- function(df_table, src_df) {
+  if (missing(src_df) || is.null(src_df) || !is.data.frame(src_df) || !nrow(src_df)) return(df_table)
+  if (!("QP%" %in% names(df_table))) return(df_table)
+  
+  idx <- rep(FALSE, nrow(df_table))
+  
+  # Look across common split columns first
+  for (col in c("Pitch","PitchType","SplitColumn","Player")) {
+    if (col %in% names(df_table)) {
+      val <- tolower(as.character(df_table[[col]]))
+      clean <- gsub("[^a-z0-9]+", "", val)
+      idx <- idx | val == "all" | grepl("^all\\b", val) | grepl("^all", clean) | clean == "overall"
+    }
+  }
+  
+  # If still none, scan all character columns for an "all"-like label
+  if (!any(idx)) {
+    char_cols <- vapply(df_table, is.character, logical(1))
+    if (any(char_cols)) {
+      vals <- apply(df_table[, char_cols, drop = FALSE], 2, function(v) tolower(as.character(v)))
+      if (is.vector(vals)) vals <- matrix(vals, ncol = 1)
+      clean_vals <- apply(vals, 2, function(v) gsub("[^a-z0-9]+", "", v))
+      idx <- apply(vals, 1, function(row) any(grepl("^all", row) | row %in% c("all","all players","all pitchers","all pitch types","(all pitch types)"))) |
+        apply(clean_vals, 1, function(row) any(grepl("^all", row) | row == "overall"))
+    }
+  }
+  
+  missing_qp <- which(is.na(df_table$`QP%`) | df_table$`QP%` == "")
+  if (!any(idx) && length(missing_qp) == 1) {
+    idx[missing_qp] <- TRUE
+  }
+  if (!any(idx) && length(missing_qp) > 1) {
+    idx[missing_qp] <- TRUE
+  }
+  if (!any(idx)) return(df_table)
+  
+  qp_val <- safe_pct(
+    sum((compute_qp_points(src_df) * 200) >= 100, na.rm = TRUE),
+    nrow(src_df)
+  )
+  df_table$`QP%`[idx] <- qp_val
+  df_table
 }
 
 # --- Keep Stuff tables with Ext immediately after Side
@@ -2794,7 +2818,9 @@ make_session_logs_table <- function(df) {
       stuff_all <- round(.s_nz_mean(d$`Stuff+`), 1)
       
       # QP+ scalar — use your real one if available; else NA
+      qp_points <- compute_qp_points(d)
       qp_all <- if (!is.null(get0("safe_qp_scalar"))) get0("safe_qp_scalar")(d) else NA_real_
+      qp_pct <- .s_fmt_pct1(sum((qp_points * 200) >= 100, na.rm = TRUE), nrow(d))
       pitc_all <- round(.s_nz_mean(c(stuff_all, qp_all)), 1)
       
       tibble::tibble(
@@ -2848,6 +2874,7 @@ make_session_logs_table <- function(df) {
           ), na.rm = TRUE),
           sum(d$SessionType=="Live" & d$Balls==0 & d$Strikes==0, na.rm = TRUE)
         ),
+        `QP%`    = qp_pct,
         `K%`     = .s_safe_div(Kct_all, PAt),
         `BB%`    = .s_safe_div(BBc_all, PAt),
         `Whiff%` = .s_safe_div(whiffs, swings),
@@ -3011,118 +3038,6 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
                theme_void())
     }
     
-    # Function to create QP+ heatmap data for the competitive zone
-    create_qp_heatmap_data <- function(pt, p_hand, b_hand, state) {
-      # Create a larger grid that extends beyond the competitive zone for better color range
-      x_seq <- seq(COMP_LEFT - 0.3, COMP_RIGHT + 0.3, length.out = 18)
-      y_seq <- seq(COMP_BOTTOM - 0.3, COMP_TOP + 0.3, length.out = 18)
-      grid_data <- expand.grid(x = x_seq, y = y_seq)
-      
-      # Calculate QP+ scores for each grid point
-      grid_data$qp_score <- sapply(seq_len(nrow(grid_data)), function(i) {
-        x <- grid_data$x[i]
-        y <- grid_data$y[i]
-        sq <- zone9_square(x, y)
-        
-        # Start with base QP+ score, but apply count-specific modifications
-        if (is.na(sq)) {
-          base_score <- 0  # Outside competitive zone
-        } else {
-          # Get custom seeds for count-specific adjustments
-          custom_seeds <- get_custom_seeds_for_count(pt, p_hand, state)
-          if (!is.null(custom_seeds)) {
-            # Use custom calculation with count-specific seeds
-            rc <- sq_to_rc(sq)
-            dec <- qp_decay(state)
-            best <- 0
-            for (j in seq_len(nrow(custom_seeds))) {
-              d <- abs(custom_seeds$r[j] - rc$r) + abs(custom_seeds$c[j] - rc$c)
-              di <- ifelse(d >= 3, 4, d + 1)
-              best <- max(best, custom_seeds$w[j] * dec[di])
-            }
-            base_score <- best * 100
-          } else {
-            # Use original calculation
-            base_score <- qp_weight_for_square(sq, pt, p_hand, state) * 100
-          }
-        }
-        
-        # Apply penalties for out-of-zone locations based on count state
-        if (state %in% c("Behind", "Even", "Ahead")) {
-          # Check if location is outside the strike zone
-          outside_zone <- (x < ZONE_LEFT || x > ZONE_RIGHT || 
-                             y < ZONE_BOTTOM || y > ZONE_TOP)
-          
-          if (outside_zone) {
-            # Calculate distance to nearest strike zone edge
-            x_dist <- pmax(0, pmax(ZONE_LEFT - x, x - ZONE_RIGHT))
-            y_dist <- pmax(0, pmax(ZONE_BOTTOM - y, y - ZONE_TOP))
-            zone_distance <- sqrt(x_dist^2 + y_dist^2)
-            
-            # Check if we're below the zone (for breaking balls/offspeed in even/ahead)
-            below_zone <- y < ZONE_BOTTOM
-            over_plate <- x >= ZONE_LEFT && x <= ZONE_RIGHT
-            # Expand to 1 square left and right of plate
-            plate_width <- ZONE_RIGHT - ZONE_LEFT
-            expanded_plate <- x >= (ZONE_LEFT - plate_width/3) && x <= (ZONE_RIGHT + plate_width/3)
-            very_low_over_plate <- below_zone && over_plate && y >= (ZONE_BOTTOM - 0.4)
-            low_over_expanded_plate <- below_zone && expanded_plate  # Any low area over expanded plate area
-            is_non_fastball_sinker <- pt %in% c("Cutter", "Slider", "Sweeper", "Curveball", "ChangeUp", "Splitter")
-            
-            # Apply count-specific penalties for out-of-zone locations
-            if (state == "Behind") {
-              # Most aggressive penalty for all pitches
-              distance_penalty <- pmin(0.9, 0.5 + zone_distance * 0.8)
-              if (zone_distance > 0.5) {
-                distance_penalty <- pmin(0.95, 0.7 + zone_distance * 1.2)
-              }
-            } else if (state == "Even") {
-              # Moderate penalty, but reduced for non-fastball/sinker below zone
-              if (below_zone && is_non_fastball_sinker) {
-                # Less penalty below zone for non-fastball/sinker in even counts
-                distance_penalty <- pmin(0.6, 0.15 + zone_distance * 0.4)
-                if (zone_distance > 0.5) {
-                  distance_penalty <- pmin(0.75, 0.25 + zone_distance * 0.5)
-                }
-              } else {
-                # Standard even count penalty
-                distance_penalty <- pmin(0.75, 0.3 + zone_distance * 0.6)
-                if (zone_distance > 0.5) {
-                  distance_penalty <- pmin(0.85, 0.5 + zone_distance * 0.8)
-                }
-              }
-            } else { # Ahead
-              # Special handling for non-fastball/sinker below zone over expanded plate area
-              if (low_over_expanded_plate && is_non_fastball_sinker) {
-                # For ahead counts, low over expanded plate should be light red - force higher minimum score
-                base_score <- pmax(base_score, 60)  # Higher minimum for light red instead of light blue
-                distance_penalty <- pmin(0.1, 0.01 + zone_distance * 0.05)  # Even smaller penalty
-              } else if (below_zone && is_non_fastball_sinker) {
-                # Moderate penalty below zone but outside expanded plate for non-fastball/sinker in ahead counts
-                distance_penalty <- pmin(0.6, 0.2 + zone_distance * 0.4)
-                if (zone_distance > 0.5) {
-                  distance_penalty <- pmin(0.75, 0.3 + zone_distance * 0.5)
-                }
-              } else {
-                # Standard ahead count penalty
-                distance_penalty <- pmin(0.6, 0.2 + zone_distance * 0.4)
-                if (zone_distance > 0.5) {
-                  distance_penalty <- pmin(0.75, 0.4 + zone_distance * 0.6)
-                }
-              }
-            }
-            
-            base_score <- base_score * (1 - distance_penalty)
-          }
-        }
-        
-        return(base_score)
-      })
-      
-      grid_data$pitch_type <- pt
-      return(grid_data)
-    }
-    
     # Helper function to get custom seeds for count-specific adjustments
     get_custom_seeds_for_count <- function(pt, hand, state) {
       pt <- as.character(pt)
@@ -3164,12 +3079,139 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
       return(NULL)
     }
     
+    # Shared scorer so tiles and pitch tooltips stay in sync (includes out-of-zone penalties)
+    score_location <- function(x, y, pt, p_hand, state, session_type = NULL) {
+      # Only score live pitches when we have session metadata
+      if (!is.null(session_type) && !is.na(session_type) && session_type != "Live") {
+        return(NA_real_)
+      }
+      if (is.na(x) || is.na(y) || is.na(pt)) return(NA_real_)
+      
+      sq <- zone9_square(x, y)
+      
+      # Start with base QP+ score (0-200 scale)
+      if (is.na(sq)) {
+        base_score <- 0  # Outside competitive zone
+      } else {
+        custom_seeds <- get_custom_seeds_for_count(pt, p_hand, state)
+        if (!is.null(custom_seeds)) {
+          # Count-specific seed weighting
+          rc <- sq_to_rc(sq)
+          dec <- qp_decay(state)
+          best <- 0
+          for (j in seq_len(nrow(custom_seeds))) {
+            d  <- abs(custom_seeds$r[j] - rc$r) + abs(custom_seeds$c[j] - rc$c)
+            di <- ifelse(d >= 3, 4, d + 1)
+            best <- max(best, custom_seeds$w[j] * dec[di])
+          }
+          base_score <- best * 200
+        } else {
+          # Default weighting
+          base_score <- qp_weight_for_square(sq, pt, p_hand, state) * 200
+        }
+      }
+      
+      # Apply count/state penalties for out-of-zone locations
+      if (state %in% c("Behind", "Even", "Ahead")) {
+        outside_zone <- (x < ZONE_LEFT || x > ZONE_RIGHT ||
+                           y < ZONE_BOTTOM || y > ZONE_TOP)
+        
+        if (outside_zone) {
+          # Distance to the nearest part of the strike zone
+          x_dist <- pmax(0, pmax(ZONE_LEFT - x, x - ZONE_RIGHT))
+          y_dist <- pmax(0, pmax(ZONE_BOTTOM - y, y - ZONE_TOP))
+          zone_distance <- sqrt(x_dist^2 + y_dist^2)
+          
+          below_zone <- y < ZONE_BOTTOM
+          over_plate <- x >= ZONE_LEFT && x <= ZONE_RIGHT
+          plate_width <- ZONE_RIGHT - ZONE_LEFT
+          expanded_plate <- x >= (ZONE_LEFT - plate_width/3) && x <= (ZONE_RIGHT + plate_width/3)
+          very_low_over_plate <- below_zone && over_plate && y >= (ZONE_BOTTOM - 0.4)
+          low_over_expanded_plate <- below_zone && expanded_plate
+          is_non_fastball_sinker <- pt %in% c("Cutter", "Slider", "Sweeper", "Curveball", "ChangeUp", "Splitter")
+          
+          if (state == "Behind") {
+            distance_penalty <- pmin(0.9, 0.5 + zone_distance * 0.8)
+            if (zone_distance > 0.5) {
+              distance_penalty <- pmin(0.95, 0.7 + zone_distance * 1.2)
+            }
+          } else if (state == "Even") {
+            if (below_zone && is_non_fastball_sinker) {
+              distance_penalty <- pmin(0.6, 0.15 + zone_distance * 0.4)
+              if (zone_distance > 0.5) {
+                distance_penalty <- pmin(0.75, 0.25 + zone_distance * 0.5)
+              }
+            } else {
+              distance_penalty <- pmin(0.75, 0.3 + zone_distance * 0.6)
+              if (zone_distance > 0.5) {
+                distance_penalty <- pmin(0.85, 0.5 + zone_distance * 0.8)
+              }
+            }
+          } else { # Ahead
+            if (low_over_expanded_plate && is_non_fastball_sinker) {
+              base_score <- pmax(base_score, 120)
+              distance_penalty <- pmin(0.1, 0.01 + zone_distance * 0.05)
+            } else if (below_zone && is_non_fastball_sinker) {
+              distance_penalty <- pmin(0.6, 0.2 + zone_distance * 0.4)
+              if (zone_distance > 0.5) {
+                distance_penalty <- pmin(0.75, 0.3 + zone_distance * 0.5)
+              }
+            } else {
+              distance_penalty <- pmin(0.6, 0.2 + zone_distance * 0.4)
+              if (zone_distance > 0.5) {
+                distance_penalty <- pmin(0.75, 0.4 + zone_distance * 0.6)
+              }
+            }
+          }
+          
+          base_score <- base_score * (1 - distance_penalty)
+        }
+      }
+      
+      base_score
+    }
+    
+    # Function to create QP+ heatmap data for the competitive zone
+    create_qp_heatmap_data <- function(pt, p_hand, b_hand, state) {
+      # Create a larger grid that extends beyond the competitive zone for better color range
+      x_seq <- seq(COMP_LEFT - 0.3, COMP_RIGHT + 0.3, length.out = 18)
+      y_seq <- seq(COMP_BOTTOM - 0.3, COMP_TOP + 0.3, length.out = 18)
+      grid_data <- expand.grid(x = x_seq, y = y_seq)
+      
+      grid_data$qp_score <- vapply(
+        seq_len(nrow(grid_data)),
+        function(i) score_location(grid_data$x[i], grid_data$y[i], pt, p_hand, state),
+        numeric(1)
+      )
+      
+      grid_data$pitch_type <- pt
+      return(grid_data)
+    }
+    
     # Prepare QP+ heatmap data for all pitch types
     all_heatmap_data <- do.call(rbind, lapply(pitch_types, function(pt) {
       create_qp_heatmap_data(pt, pitcher_hand, batter_hand, count_state)
     }))
     
-    # Add pitch data with results and colors
+    # Ensure per-pitch QP+ (scaled to 0-200) is present for tooltips
+    state_data <- tryCatch({
+      if (!nrow(state_data)) return(state_data)
+      qp_scored <- vapply(
+        seq_len(nrow(state_data)),
+        function(i) score_location(
+          state_data$PlateLocSide[i],
+          state_data$PlateLocHeight[i],
+          state_data$TaggedPitchType[i],
+          pitcher_hand,
+          count_state,
+          if ("SessionType" %in% names(state_data)) state_data$SessionType[i] else NULL
+        ),
+        numeric(1)
+      )
+      state_data %>% dplyr::mutate(`QP+` = round(qp_scored, 1))
+    }, error = function(e) state_data)
+    
+    # Add pitch data with results and colors (includes QP+ for hover)
     state_data_with_result <- state_data %>%
       dplyr::mutate(
         Result = compute_result(PitchCall, PlayResult),
@@ -3206,7 +3248,8 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
       # Blue to red color scale for QP+
       scale_fill_gradient2(
         low = "blue", mid = "white", high = "red",
-        midpoint = 50, name = "QP+",
+        midpoint = 100, name = "QP+",
+        limits = c(0, 200),
         guide = "none"
       ) +
       # Add home plate
@@ -3270,12 +3313,31 @@ convert_to_clock <- Vectorize(function(x) {
 
 fmt_date <- function(d) format(d, "%m/%d/%y")
 
+transparent_bg_theme <- theme(
+  panel.background = element_rect(fill = "transparent", color = NA),
+  plot.background  = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent", color = NA),
+  legend.box.background = element_rect(fill = "transparent", color = NA),
+  strip.background = element_rect(fill = "transparent", color = NA)
+)
+
 axis_theme <- theme(
   axis.text.x  = element_text(color="black", face="bold"),
   axis.text.y  = element_text(color="black", face="bold"),
   axis.title.x = element_text(color="black", face="bold"),
   axis.title.y = element_text(color="black", face="bold")
-)
+) + transparent_bg_theme
+
+grid_theme <- function(dark_on = FALSE) {
+  grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                          alpha.f = if (dark_on) 0.18 else 0.12)
+  theme(
+    panel.grid.major = element_line(color = grid_col),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "transparent", color = NA),
+    plot.background  = element_rect(fill = "transparent", color = NA)
+  )
+}
 
 # ----- Shared heatmap palette (identical to current heat maps) -----
 heat_pal <- function(bins = 10) {
@@ -3660,7 +3722,7 @@ compute_qp_points <- function(df) {
   out
 }
 
-# QP Locations filter: determine if pitch locations are good (red/QP+ >= 50) or bad (blue/white/QP+ < 50)
+# QP Locations filter: determine if pitch locations are good (red/QP+ >= 100) or bad (blue/white/QP+ < 100)
 # This function calculates QP+ scores for pitch locations and classifies them
 filter_qp_locations <- function(df, qp_choice) {
   # Pass-through if "All" or invalid choice
@@ -3683,7 +3745,7 @@ filter_qp_locations <- function(df, qp_choice) {
   hand <- as.character(df$PitcherThrows)
   state <- count_state_vec(df$Balls, df$Strikes)
   
-  # Calculate QP+ scores (0-100 scale)
+  # Calculate QP+ scores (0-200 scale)
   qp_scores <- rep(NA_real_, n)
   
   for (i in seq_len(n)) {
@@ -3700,17 +3762,17 @@ filter_qp_locations <- function(df, qp_choice) {
     } else {
       # Calculate QP+ score using existing function
       qp_weight <- qp_weight_for_square(sq, pt[i], hand[i], ifelse(is.na(state[i]), "Even", state[i]))
-      qp_scores[i] <- qp_weight * 100
+      qp_scores[i] <- qp_weight * 200
     }
   }
   
   # Apply filter based on choice
   if (qp_choice == "Yes") {
-    # Show only good locations (red areas, QP+ >= 50)
-    return(df[qp_scores >= 50 & !is.na(qp_scores), , drop = FALSE])
+    # Show only good locations (red areas, QP+ >= 100)
+    return(df[qp_scores >= 100 & !is.na(qp_scores), , drop = FALSE])
   } else if (qp_choice == "No") {
-    # Show only poor locations (blue/white areas, QP+ < 50)
-    return(df[qp_scores < 50 & !is.na(qp_scores), , drop = FALSE])
+    # Show only poor locations (blue/white areas, QP+ < 100)
+    return(df[qp_scores < 100 & !is.na(qp_scores), , drop = FALSE])
   }
   
   return(df)
@@ -3941,51 +4003,31 @@ apply_after_count_filter <- function(df, selection) {
 apply_split_by <- function(df, split_choice) {
   if (is.null(split_choice)) split_choice <- "Pitch Types"
   
-  # Helper to safely convert column to character, handling list columns
-  safe_as_char <- function(x) {
-    if (is.list(x)) {
-      vapply(x, function(v) {
-        if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-      }, character(1))
-    } else {
-      as.character(x)
-    }
-  }
-  
-  # Helper to safely convert column to numeric, handling list columns
-  safe_as_num <- function(x) {
-    if (is.list(x)) {
-      vapply(x, function(v) {
-        if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]]))
-      }, numeric(1))
-    } else {
-      suppressWarnings(as.numeric(x))
-    }
-  }
-  
   df <- switch(
     split_choice,
     
     "Pitch Types" = {
-      df %>% dplyr::mutate(SplitColumn = safe_as_char(TaggedPitchType))
+      df %>% dplyr::mutate(SplitColumn = as.character(TaggedPitchType))
     },
     
     "Batter Hand" = {
-      bside <- safe_as_char(df$BatterSide)
-      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(bside) & bside != "", bside, "Unknown"))
+      df %>% dplyr::mutate(SplitColumn = ifelse(
+        !is.na(BatterSide) & BatterSide != "", 
+        as.character(BatterSide), 
+        "Unknown"
+      ))
     },
     
     "Pitcher Hand" = {
-      pthrows <- safe_as_char(df$PitcherThrows)
-      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(pthrows) & pthrows != "", pthrows, "Unknown"))
+      df %>% dplyr::mutate(SplitColumn = ifelse(
+        !is.na(PitcherThrows) & PitcherThrows != "", 
+        as.character(PitcherThrows), 
+        "Unknown"
+      ))
     },
     
     "Count" = {
-      balls_num <- safe_as_num(df$Balls)
-      strikes_num <- safe_as_num(df$Strikes)
       df %>% dplyr::mutate(
-        Balls = balls_num,
-        Strikes = strikes_num,
         SplitColumn = ifelse(
           is.finite(Balls) & is.finite(Strikes),
           paste0(Balls, "-", Strikes),
@@ -4000,10 +4042,7 @@ apply_split_by <- function(df, split_choice) {
       if (!all(c("PAofInning", "Inning", "Date") %in% names(df))) {
         df %>% dplyr::mutate(SplitColumn = "Unknown")
       } else {
-        balls_num <- safe_as_num(df$Balls)
-        strikes_num <- safe_as_num(df$Strikes)
         df %>%
-          dplyr::mutate(Balls = balls_num, Strikes = strikes_num) %>%
           dplyr::arrange(Date, Inning, PAofInning, PitchofPA) %>%
           dplyr::group_by(Date, Inning, PAofInning) %>%
           dplyr::mutate(
@@ -4020,54 +4059,51 @@ apply_split_by <- function(df, split_choice) {
     },
     
     "Velocity" = {
-      velo <- safe_as_num(df$RelSpeed)
-      df %>% dplyr::mutate(
-        RelSpeed = velo,
-        SplitColumn = dplyr::case_when(
-          !is.finite(RelSpeed) ~ "Unknown",
-          RelSpeed < 70 ~ "<70",
-          RelSpeed >= 100 ~ ">99",
-          TRUE ~ paste0(floor(RelSpeed/2)*2, "-", floor(RelSpeed/2)*2 + 1)
-        ))
+      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
+        !is.finite(RelSpeed) ~ "Unknown",
+        RelSpeed < 70 ~ "<70",
+        RelSpeed >= 100 ~ ">99",
+        TRUE ~ paste0(floor(RelSpeed/2)*2, "-", floor(RelSpeed/2)*2 + 1)
+      ))
     },
     
     "IVB" = {
-      ivb <- safe_as_num(df$InducedVertBreak)
-      df %>% dplyr::mutate(
-        InducedVertBreak = ivb,
-        SplitColumn = dplyr::case_when(
-          !is.finite(InducedVertBreak) ~ "Unknown",
-          InducedVertBreak < -22 ~ "<-22",
-          InducedVertBreak > 22 ~ ">22",
-          TRUE ~ paste0(floor(InducedVertBreak/2)*2, "-", floor(InducedVertBreak/2)*2 + 1)
-        ))
+      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
+        !is.finite(InducedVertBreak) ~ "Unknown",
+        InducedVertBreak < -22 ~ "<-22",
+        InducedVertBreak > 22 ~ ">22",
+        TRUE ~ paste0(floor(InducedVertBreak/2)*2, "-", floor(InducedVertBreak/2)*2 + 1)
+      ))
     },
     
     "HB" = {
-      hb <- safe_as_num(df$HorzBreak)
-      df %>% dplyr::mutate(
-        HorzBreak = hb,
-        SplitColumn = dplyr::case_when(
-          !is.finite(HorzBreak) ~ "Unknown",
-          HorzBreak < -22 ~ "<-22",
-          HorzBreak > 22 ~ ">22",
-          TRUE ~ paste0(floor(HorzBreak/2)*2, "-", floor(HorzBreak/2)*2 + 1)
-        ))
+      df %>% dplyr::mutate(SplitColumn = dplyr::case_when(
+        !is.finite(HorzBreak) ~ "Unknown",
+        HorzBreak < -22 ~ "<-22",
+        HorzBreak > 22 ~ ">22",
+        TRUE ~ paste0(floor(HorzBreak/2)*2, "-", floor(HorzBreak/2)*2 + 1)
+      ))
     },
     
     "Batter" = {
-      batter_chr <- safe_as_char(df$Batter)
-      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(batter_chr) & nzchar(batter_chr), batter_chr, "Unknown"))
+      df %>% dplyr::mutate(SplitColumn = ifelse(
+        !is.na(Batter) & nzchar(Batter), 
+        as.character(Batter), 
+        "Unknown"
+      ))
     },
     
     "Pitcher" = {
-      pitcher_chr <- safe_as_char(df$Pitcher)
-      df %>% dplyr::mutate(SplitColumn = ifelse(!is.na(pitcher_chr) & nzchar(pitcher_chr), pitcher_chr, "Unknown"))
+      df %>% dplyr::mutate(SplitColumn = ifelse(
+        !is.na(Pitcher) & nzchar(Pitcher), 
+        as.character(Pitcher), 
+        "Unknown"
+      ))
     },
     
     # Default: Pitch Types
     {
-      df %>% dplyr::mutate(SplitColumn = safe_as_char(TaggedPitchType))
+      df %>% dplyr::mutate(SplitColumn = as.character(TaggedPitchType))
     }
   )
   attr(df, "split_choice") <- split_choice
@@ -4440,18 +4476,6 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
 
 pitch_data <- purrr::map_dfr(all_csvs, read_one)
 
-# NUCLEAR OPTION: Force all list columns to atomic immediately after loading
-# purrr::map_dfr can create list columns when combining data frames with different types
-pitch_data <- as.data.frame(pitch_data, stringsAsFactors = FALSE)
-for (nm in names(pitch_data)) {
-  if (is.list(pitch_data[[nm]])) {
-    message("pitch_data load: Found list column '", nm, "' - flattening")
-    pitch_data[[nm]] <- vapply(pitch_data[[nm]], function(v) {
-      if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-    }, character(1))
-  }
-}
-
 # Ensure required columns exist since downstream code expects them
 # ------ add to need_cols ------
 need_cols <- c(
@@ -4529,17 +4553,8 @@ message("Loaded ", nrow(pitch_data), " rows from ", length(all_csvs),
 
 # Read lookup table and keep Email in a separate column to avoid .x/.y
 lookup_table <- if (file.exists("lookup_table.csv")) {
-  # Clean up potential BOM/sanitized column names before renaming
-  raw_lookup <- read.csv("lookup_table.csv", stringsAsFactors = FALSE, check.names = FALSE)
-  names(raw_lookup) <- names(raw_lookup) %>%
-    trimws() %>%
-    gsub("^ï\\.\\.|^X\\.\\.\\.", "", ., perl = TRUE)
-  if (!all(c("PlayerName", "Email") %in% names(raw_lookup))) {
-    message("lookup_table.csv is missing expected columns; skipping lookup merge")
-    data.frame(Pitcher = character(), Email_lookup = character(), stringsAsFactors = FALSE)
-  } else {
-    raw_lookup %>% dplyr::rename(Pitcher = PlayerName, Email_lookup = Email)
-  }
+  read.csv("lookup_table.csv", stringsAsFactors = FALSE) %>%
+    dplyr::rename(Pitcher = PlayerName, Email_lookup = Email)
 } else {
   data.frame(Pitcher = character(), Email_lookup = character(), stringsAsFactors = FALSE)
 }
@@ -4884,117 +4899,35 @@ compute_usage_by_count <- function(df, original_df = NULL) {
 # ---- NEW: calculator for Process/Results metrics per pitch type (+ All) ----
 compute_process_results <- function(df, mode = "All") {
   return(tryCatch({
-  df <- flatten_metrics_df(df)
-  # Determine which column to use for pitch type grouping
-  # Prefer SplitColumn if it exists (Split By mode), otherwise use TaggedPitchType
-  pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
-  
-  # Generic flattener: if a column is a list of length-1 elements, collapse to vector
-  flatten_simple_lists <- function(dfx) {
-    # First pass: collapse any list-column by taking the first element (even if length > 1)
-    for (nm in names(dfx)) {
-      col <- dfx[[nm]]
-      if (is.list(col)) {
-        col <- vapply(col, function(x) {
-          if (length(x)) x[[1]] else NA_character_
-        }, character(1))
-        dfx[[nm]] <- col
+    # Flatten any list columns early to avoid list inputs in downstream sums
+    df <- flatten_metrics_df(df)
+    # Force key fields to atomic types
+    chr_fields <- intersect(c("PitchCall","PlayResult","TaggedHitType","KorBB","SessionType","SplitColumn","TaggedPitchType"), names(df))
+    num_fields <- intersect(c("ExitSpeed","Angle","OutsOnPlay","Balls","Strikes"), names(df))
+    for (nm in chr_fields) {
+      if (is.list(df[[nm]])) {
+        df[[nm]] <- vapply(df[[nm]], function(v) if (length(v)) as.character(v[[1]]) else NA_character_, character(1))
+      } else {
+        df[[nm]] <- as.character(df[[nm]])
       }
     }
-    # Second pass: coerce length-1 lists (if any remain) with heuristic numeric conversion
-    for (nm in names(dfx)) {
-      col <- dfx[[nm]]
-      if (is.list(col) && length(col) && all(lengths(col) <= 1)) {
-        vals_chr <- vapply(col, function(x) {
-          if (length(x) && !is.null(x[[1]])) as.character(x[[1]]) else NA_character_
-        }, character(1))
-        vals_num <- suppressWarnings(as.numeric(vals_chr))
-        # If numeric conversion retains most non-NA values, keep numeric; else keep character
-        if (sum(!is.na(vals_num)) >= sum(!is.na(vals_chr)) * 0.8) {
-          dfx[[nm]] <- vals_num
-        } else {
-          dfx[[nm]] <- vals_chr
-        }
+    for (nm in num_fields) {
+      if (is.list(df[[nm]])) {
+        df[[nm]] <- vapply(df[[nm]], function(v) if (length(v)) suppressWarnings(as.numeric(v[[1]])) else NA_real_, numeric(1))
+      } else {
+        df[[nm]] <- suppressWarnings(as.numeric(df[[nm]]))
       }
     }
-    dfx
-  }
-  df <- flatten_simple_lists(df)
-  
-  # Defensive: normalize ALL columns to atomic vectors (no lists/matrices)
-  normalize_col <- function(col) {
-    if (!is.list(col)) return(col)
-    vapply(col, function(v) {
-      if (is.null(v) || length(v) == 0) return(NA)
-      # unwrap nested lists up to two levels
-      if (is.list(v) && length(v) == 1) v <- v[[1]]
-      if (is.list(v) && length(v) == 1) v <- v[[1]]
-      if (is.list(v)) {
-        # last resort: collapse any remaining list to comma string
-        return(paste0(unlist(v), collapse = ","))
+    # Last sweep: collapse any remaining list columns to character
+    for (nm in names(df)) {
+      if (is.list(df[[nm]])) {
+        df[[nm]] <- vapply(df[[nm]], function(v) if (length(v)) as.character(v[[1]]) else NA_character_, character(1))
       }
-      if (is.atomic(v)) return(v)
-      if (length(v) >= 1) return(v[[1]])
-      NA
-    }, FUN.VALUE = NA)
-  }
-  df <- as.data.frame(lapply(df, normalize_col), stringsAsFactors = FALSE, check.names = FALSE)
-  
-  # Ensure pitch grouping column is present/character
-  if (pitch_col %in% names(df)) {
-    df[[pitch_col]] <- as.character(df[[pitch_col]])
-  }
-  # Explicit coercions for fields used in math/grouping
-  chr_fields <- intersect(c("PitchCall","PlayResult","TaggedHitType","KorBB",
-                            "SessionType","SplitColumn"), names(df))
-  num_fields <- intersect(c("ExitSpeed","Angle","OutsOnPlay","Balls","Strikes"), names(df))
-  for (nm in chr_fields) df[[nm]] <- as.character(df[[nm]])
-  for (nm in num_fields) df[[nm]] <- suppressWarnings(as.numeric(df[[nm]]))
-  # Final sweep: if any column is still a list, collapse to character
-  for (nm in names(df)) {
-    if (is.list(df[[nm]])) {
-      df[[nm]] <- vapply(df[[nm]], function(v) {
-        if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-      }, character(1))
     }
-  }
-  
-  # Explicit character/number coercion for columns touched below
-  force_chr <- function(x) {
-    if (is.list(x)) {
-      vapply(x, function(v) {
-        if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-      }, character(1))
-    } else {
-      as.character(x)
-    }
-  }
-  force_num <- function(x) {
-    if (is.list(x)) {
-      vapply(x, function(v) {
-        if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]]))
-      }, numeric(1))
-    } else {
-      suppressWarnings(as.numeric(x))
-    }
-  }
-  char_cols <- intersect(
-    c(pitch_col, "PitchCall", "PlayResult", "TaggedHitType", "KorBB", "SessionType", "SplitColumn"),
-    names(df)
-  )
-  num_cols <- intersect(c("ExitSpeed", "Angle", "OutsOnPlay", "Balls", "Strikes"), names(df))
-  for (nm in char_cols) df[[nm]] <- force_chr(df[[nm]])
-  for (nm in num_cols)  df[[nm]] <- force_num(df[[nm]])
-  # If anything else is still a list, collapse to character to avoid downstream map/sum failures
-  for (nm in names(df)) {
-    if (is.list(df[[nm]])) df[[nm]] <- force_chr(df[[nm]])
-  }
-  
-  # Debug aid: log any list columns that somehow remain
-  list_cols_global <- names(df)[vapply(df, is.list, logical(1))]
-  if (length(list_cols_global)) {
-    message("compute_process_results: list columns pre-map: ", paste(list_cols_global, collapse = ", "))
-  }
+    
+    # Determine which column to use for pitch type grouping
+    # Prefer SplitColumn if it exists (Split By mode), otherwise use TaggedPitchType
+    pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
   
   calc_run_value <- function(pitch_call, play_result, korbb = NA) {
     pitch_call  <- as.character(pitch_call)
@@ -5031,60 +4964,25 @@ compute_process_results <- function(df, mode = "All") {
   )
   
   calc_one <- function(dfi) {
-    # Safety: ensure per-group data has no list columns before any sums
+    # Per-group safety: flatten again after split
     dfi <- as.data.frame(dfi, stringsAsFactors = FALSE, check.names = FALSE)
-    # Helper flattener that unwraps nested lists/data.frames and takes first scalar
-    flat_chr <- function(x) {
-      if (!is.list(x)) return(as.character(x))
-      vapply(x, function(v) {
-        val <- v
-        while (is.list(val) && length(val) == 1) val <- val[[1]]
-        if (is.list(val)) val <- unlist(val)
-        if (is.null(val) || length(val) == 0) return(NA_character_)
-        as.character(val[[1]])
-      }, character(1))
-    }
-    flat_num <- function(x) {
-      if (!is.list(x)) return(suppressWarnings(as.numeric(x)))
-      vapply(x, function(v) {
-        val <- v
-        while (is.list(val) && length(val) == 1) val <- val[[1]]
-        if (is.list(val)) val <- unlist(val)
-        if (is.null(val) || length(val) == 0) return(NA_real_)
-        suppressWarnings(as.numeric(val[[1]]))
-      }, numeric(1))
-    }
-    # Force key columns to atomic vectors before any math
-    chr_fields <- intersect(c("PitchCall","PlayResult","TaggedHitType","KorBB","SessionType","SplitColumn", pitch_col), names(dfi))
-    num_fields <- intersect(c("Balls","Strikes","OutsOnPlay","ExitSpeed","Angle"), names(dfi))
-    for (nm in chr_fields) dfi[[nm]] <- flat_chr(dfi[[nm]])
-    for (nm in num_fields) dfi[[nm]] <- flat_num(dfi[[nm]])
-    if (any(vapply(dfi, is.list, logical(1)))) {
-      # Coerce known fields appropriately, then collapse any stragglers to character
-      safe_chr <- function(x) {
-        if (is.list(x)) vapply(x, function(v) if (length(v)) as.character(v[[1]]) else NA_character_, character(1))
-        else as.character(x)
-      }
-      safe_num <- function(x) {
-        if (is.list(x)) vapply(x, function(v) if (length(v)) suppressWarnings(as.numeric(v[[1]])) else NA_real_, numeric(1))
-        else suppressWarnings(as.numeric(x))
-      }
-      chr_fields <- intersect(c("PitchCall","PlayResult","TaggedHitType","KorBB","SessionType","SplitColumn", pitch_col), names(dfi))
-      num_fields <- intersect(c("Balls","Strikes","OutsOnPlay","ExitSpeed","Angle"), names(dfi))
-      for (nm in chr_fields) dfi[[nm]] <- safe_chr(dfi[[nm]])
-      for (nm in num_fields) dfi[[nm]] <- safe_num(dfi[[nm]])
-      for (nm in names(dfi)) {
-        if (is.list(dfi[[nm]])) {
-          dfi[[nm]] <- vapply(dfi[[nm]], function(v) if (length(v)) as.character(v[[1]]) else NA_character_, character(1))
+    for (nm in names(dfi)) {
+      col <- dfi[[nm]]
+      if (is.list(col)) {
+        # If list of scalars, unlist; else take first element
+        if (all(lengths(col) <= 1)) {
+          dfi[[nm]] <- vapply(col, function(v) if (length(v)) v[[1]] else NA, FUN.VALUE = NA_character_)
+        } else {
+          dfi[[nm]] <- vapply(col, function(v) if (length(v)) as.character(v[[1]]) else NA_character_, character(1))
         }
       }
-      # Log columns still lists after coercion
-      list_cols_local <- names(dfi)[vapply(dfi, is.list, logical(1))]
-      if (length(list_cols_local)) {
-        message("compute_process_results group ", pitch_col, "='", dfi[[pitch_col]][1], "' still has list columns: ", paste(list_cols_local, collapse = ", "))
-      }
     }
-    
+    # Coerce key fields per group
+    chr_fields_g <- intersect(c("PitchCall","PlayResult","TaggedHitType","KorBB","SessionType","SplitColumn", pitch_col), names(dfi))
+    num_fields_g <- intersect(c("Balls","Strikes","OutsOnPlay","ExitSpeed","Angle"), names(dfi))
+    for (nm in chr_fields_g) dfi[[nm]] <- as.character(dfi[[nm]])
+    for (nm in num_fields_g) dfi[[nm]] <- suppressWarnings(as.numeric(dfi[[nm]]))
+
     # label for this group (force character, fall back to "Undefined")
     pitch_lab <- dfi[[pitch_col]][1]
     if (is.factor(pitch_lab)) pitch_lab <- as.character(pitch_lab)
@@ -5433,6 +5331,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       StrikePercent = character(),
       SwingPercent  = character(),
       WhiffPercent  = character(),
+      QPPercent     = character(),
       EV            = numeric(),
       LA            = numeric(),
       `Stuff+`      = numeric(),
@@ -5440,34 +5339,6 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       `QP+`         = numeric(),
       `Pitching+`   = numeric()
     ))
-  }
-  
-  # NUCLEAR OPTION: Force data.frame and aggressively unlist ALL columns
-  df <- as.data.frame(df, stringsAsFactors = FALSE)
-  for (nm in names(df)) {
-    col <- df[[nm]]
-    # Check multiple ways a column can be a list
-    if (is.list(col) || inherits(col, "list") || !is.atomic(col)) {
-      # Force to character vector using unlist with recursive unlisting
-      df[[nm]] <- tryCatch({
-        vapply(col, function(x) {
-          if (is.null(x) || length(x) == 0) NA_character_
-          else as.character(x[[1]])
-        }, character(1))
-      }, error = function(e) {
-        # Fallback: use unlist
-        as.character(unlist(col))
-      })
-    }
-  }
-  
-  # Ensure critical numeric columns are numeric
-  num_cols <- c("Balls", "Strikes", "RelSpeed", "InducedVertBreak", "HorzBreak",
-                "SpinRate", "SpinEfficiency", "RelHeight", "RelSide", "Extension",
-                "VertApprAngle", "HorzApprAngle", "PlateLocSide", "PlateLocHeight",
-                "ExitSpeed", "Angle", "Stuff+", "ReleaseTilt", "BreakTilt")
-  for (nc in intersect(num_cols, names(df))) {
-    df[[nc]] <- suppressWarnings(as.numeric(df[[nc]]))
   }
   
   usage_map    <- tryCatch(
@@ -5526,11 +5397,13 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       
       KPercent  = safe_pct(K_all,  BF_all),
       BBPercent = safe_pct(BB_all, BF_all),
+      QPCount   = sum((QP_pts * 200) >= 100, na.rm = TRUE),
+      fps_opp  = sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE),
       
-      FPS_all = sum(!is.na(Balls) & !is.na(Strikes) & Balls == 0 & Strikes == 0 &
+      FPS_all = sum(SessionType == "Live" & !is.na(Balls) & !is.na(Strikes) & Balls == 0 & Strikes == 0 &
                       !is.na(PitchCall) & PitchCall %in% c("InPlay","StrikeSwinging","StrikeCalled","FoulBallNotFieldable","FoulBall","FoulBallFieldable"), na.rm = TRUE),
       EA_all  = sum(
-        (!is.na(Balls) & !is.na(Strikes) & !is.na(PitchCall)) & (
+        SessionType == "Live" & (!is.na(Balls) & !is.na(Strikes) & !is.na(PitchCall)) & (
           (Balls == 0 & Strikes == 0 & PitchCall == "InPlay") |
             (Balls == 0 & Strikes == 1 & PitchCall %in% c(
               "InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable","FoulBall"
@@ -5542,8 +5415,9 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         ), na.rm = TRUE
       ),
       
-      FPSPercent = safe_pct(FPS_all, BF_all),
-      EAPercent  = safe_pct(EA_all,  BF_all),
+      FPSPercent = safe_pct(FPS_all, fps_opp),
+      EAPercent  = safe_pct(EA_all,  fps_opp),
+      QPPercent  = safe_pct(QPCount, PitchCount),
       
       StrikePercent = {
         strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBallNotFieldable","InPlay","FoulBallFieldable","FoulBall")
@@ -5600,7 +5474,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       Velo_Avg, Velo_Max, IVB, HB,
       ReleaseTilt, BreakTilt, SpinEff, SpinRate,
       RelHeight, RelSide, VertApprAngle, HorzApprAngle, Extension,
-      InZonePercent, CompPercent, KPercent, BBPercent, FPSPercent, EAPercent,
+      InZonePercent, CompPercent, KPercent, BBPercent, FPSPercent, EAPercent, QPPercent,
       StrikePercent, SwingPercent, WhiffPercent, EV, LA,
       `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
     ) %>%
@@ -5628,7 +5502,7 @@ pitch_ui <- function(show_header = FALSE) {
           padding: 15px 18px; 
           border-radius: 50px;
           cursor: pointer;
-          box-shadow: 0 4px 15px rgba(227, 82, 5, 0.4);
+          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
           transition: all 0.3s ease;
           font-size: 20px;
           width: 56px;
@@ -5639,7 +5513,7 @@ pitch_ui <- function(show_header = FALSE) {
         }
         #pitchingSidebarToggle:hover { 
           transform: translateY(-2px);
-          box-shadow: 0 6px 20px rgba(227, 82, 5, 0.6);
+          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
           background: linear-gradient(135deg, #ff8c1a 0%, #e35205 100%);
         }
         #pitchingSidebarToggle:active {
@@ -5792,6 +5666,25 @@ pitch_ui <- function(show_header = FALSE) {
       class = "btn",
       title = "Hide Filters",
       HTML('<i class="fa fa-angle-double-left"></i>')
+    ),
+    
+    # Anchored dark mode toggle (under navbar, above sidebar)
+    fluidRow(
+      column(
+        width = 3,
+        div(
+          style = "padding: 6px 0 4px 4px;",
+          tags$div(
+            class = "dark-toggle inline-toggle",
+            tags$label(
+              class = "switch-label",
+              tags$input(id = "dark_mode", type = "checkbox"),
+              tags$span(class = "switch-track", tags$span(class = "switch-thumb")),
+              tags$span(class = "switch-text", "Dark mode")
+            )
+          )
+        )
+      )
     ),
     
     # Optional header (logos + title). Hidden by default.
@@ -6043,9 +5936,10 @@ pitch_ui <- function(show_header = FALSE) {
               column(
                 12,
                 div(
+                  class = "legend-plot-wrap",
                   style = "display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0px; min-height: 130px;",
-                  plotOutput("summary_legend", height = "70px", width = "60%"),
-                  plotOutput("summary_result_legend", height = "70px", width = "60%")
+                  plotOutput("summary_legend", height = "70px", width = "100%"),
+                  plotOutput("summary_result_legend", height = "70px", width = "100%")
                 )
               )
             ),
@@ -6207,6 +6101,7 @@ pitch_ui <- function(show_header = FALSE) {
                     "Stuff+",
                     "Ctrl+",
                     "QP+",
+                    "QP%",
                     "Pitching+",
                     "IVB",
                     "HB",
@@ -6532,15 +6427,15 @@ safe_for_dt <- function(df) {
 # never sees list/NULL values (bullpen data occasionally carries nested cells)
 flatten_metrics_df <- function(df) {
   if (!is.data.frame(df) || !nrow(df)) return(df)
-  
+
   # NUCLEAR OPTION: Force to plain data.frame first
   df <- as.data.frame(df, stringsAsFactors = FALSE)
-  
+
   flatten_col <- function(col) {
     if (is.factor(col)) col <- as.character(col)
     # Use is.atomic to catch all non-atomic types
     if (is.atomic(col) && !is.list(col)) return(col)
-    
+
     # First pass: extract first element from each list item
     vals <- lapply(col, function(x) {
       if (is.null(x) || length(x) == 0) return(NA)
@@ -6550,23 +6445,23 @@ flatten_metrics_df <- function(df) {
       if (is.null(val) || length(val) == 0) return(NA)
       val
     })
-    
+
     vals_chr <- vapply(vals, function(v) {
       if (is.null(v) || length(v) == 0 || (length(v) == 1 && is.na(v))) return(NA_character_)
       as.character(v[1])
     }, character(1))
     vals_num <- suppressWarnings(as.numeric(vals_chr))
-    
+
     if (sum(!is.na(vals_num)) >= sum(!is.na(vals_chr)) * 0.6) {
       vals_num
     } else {
       vals_chr
     }
   }
-  
+
   # Apply flattening to all columns
   df[] <- lapply(df, flatten_col)
-  
+
   # Second pass: ensure no non-atomic columns remain
   for (nm in names(df)) {
     col <- df[[nm]]
@@ -6581,12 +6476,24 @@ flatten_metrics_df <- function(df) {
       })
     }
   }
-  
+
   df
 }
 
 mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_range = NULL) {
   moduleServer(id, function(input, output, session) {
+    # Global dark-mode flag (root scope toggle)
+    is_dark_mode <- reactive({
+      dm <- NULL
+      # Prefer root scope (non-namespaced) dark_mode toggle
+      dm <- tryCatch({
+        rs <- session$rootScope()
+        if (!is.null(rs) && !is.null(rs$input$dark_mode)) rs$input$dark_mode else NULL
+      }, error = function(...) NULL)
+      # Fallback to local (in case running outside root)
+      if (is.null(dm) && !is.null(input$dark_mode)) dm <- input$dark_mode
+      isTRUE(dm)
+    })
     observe({
       custom_tables()
       update_custom_table_choices(session)
@@ -6830,6 +6737,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     
     # Small ggplot bits to draw the zone + dashed competitive box
     .ab_geom_zone <- function() {
+      dark_on <- is_dark_mode()
+      line_col <- if (dark_on) "#ffffff" else "black"
       home <- data.frame(
         x=c(-0.75,0.75,0.75,0.00,-0.75),
         y=c(1.05,1.05,1.15,1.25,1.15)-0.5
@@ -6837,11 +6746,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       list(
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "black"),
+        geom_polygon(data = home, aes(x, y), fill = NA, color = line_col),
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black", linetype = "dashed"),
+                  fill = NA, color = line_col, linetype = "dashed"),
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black")
+                  fill = NA, color = line_col)
       )
     }
     
@@ -6870,6 +6779,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           tags$em("Select a single hitter in the main sidebar to enable AB Report.")
         ))
       }
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      border_col <- if (dark_on) "rgba(255,255,255,0.35)" else "rgba(0,0,0,.25)"
       
       dates <- ab_dates()
       if (!length(dates)) return(tagList(tags$em("No completed plate appearances found for this hitter.")))
@@ -6906,11 +6818,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         tags$br(),
         tags$div(tags$strong("Pitch Types")),
         tags$div(lapply(types_for_legend, function(tt) {
-          col <- all_colors[[as.character(tt)]]; if (is.null(col)) col <- "gray"
+          col <- cols[[as.character(tt)]]; if (is.null(col)) col <- "gray"
           tags$div(style="display:flex;align-items:center;margin:2px 0;",
                    tags$span(style=paste0("display:inline-block;width:12px;height:12px;",
                                           "background:", col, ";margin-right:6px;",
-                                          "border:1px solid rgba(0,0,0,.25);border-radius:2px;")),
+                                          "border:1px solid ", border_col, ";border-radius:2px;")),
                    tags$span(as.character(tt))
           )
         }))
@@ -6966,7 +6878,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         dat <- pa_list[[i]] %>% dplyr::mutate(
           pitch_idx = dplyr::row_number(),
           Result    = factor(compute_result(PitchCall, PlayResult), levels = result_levels),
-          tt_fill   = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray80"),
+          tt_fill   = dplyr::coalesce(colors_for_mode(is_dark_mode())[as.character(TaggedPitchType)], "gray80"),
           tt        = paste0(
             "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f", ExitSpeed), "—"), " mph\n",
             "LA: ", ifelse(is.finite(Angle),     sprintf("%.1f", Angle),     "—"), "°\n",
@@ -6998,6 +6910,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           out_plot_id_local <- paste0("abPlot_", pid)
           output[[out_plot_id_local]] <- ggiraph::renderGirafe({
             types <- as.character(intersect(names(all_colors), unique(dat_local$TaggedPitchType)))
+            cols <- colors_for_mode(is_dark_mode())
+            col_vals <- cols[types]
+            col_vals[is.na(col_vals)] <- "gray70"
             p <- ggplot() +
               .ab_geom_zone() +
               # visible points
@@ -7020,13 +6935,13 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                 aes(PlateLocSide, PlateLocHeight, tooltip = tt, data_id = pitch_idx, fill = I(tt_fill)),
                 shape = 21, size = 7, alpha = 0.001, stroke = 0, inherit.aes = FALSE
               ) +
-              scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
-              scale_fill_manual(values  = all_colors[types], limits = types, name = NULL) +
+              scale_color_manual(values = col_vals, limits = types, name = NULL) +
+              scale_fill_manual(values  = col_vals, limits = types, name = NULL) +
               scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
               coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
               theme_void() + theme(legend.position = "none")
             
-            ggiraph::girafe(
+            girafe_transparent(
               ggobj = p,
               options = list(
                 ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
@@ -7137,6 +7052,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       if (!"Result" %in% names(df_subset)) {
         df_subset$Result <- compute_result(df_subset$PitchCall, df_subset$PlayResult)
       }
+      dark_on <- is_dark_mode()
+      line_col <- if (dark_on) "#ffffff" else "black"
+      grid_col <- if (dark_on) "#d1d5db" else "black"
+      cols <- colors_for_mode(dark_on)
       
       # Use hit_shape_map levels for the hitting suite
       hit_result_levels <- names(hit_shape_map)
@@ -7175,11 +7094,13 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         p_empty <- ggplot() + 
           annotate("text", x = 0, y = 2.5, label = "No pitches", size = 5) +
           theme_void()
-        return(ggiraph::girafe(ggobj = p_empty))
+        return(girafe_transparent(ggobj = p_empty))
       }
       
-      types_chr <- intersect(names(all_colors), unique(df_plot$TaggedPitchType))
+      types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
       if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
+      col_vals <- cols[types_chr]
+      col_vals[is.na(col_vals)] <- "gray70"
       
       home <- data.frame(
         x = c(-0.75, 0.75, 0.75, 0, -0.75),
@@ -7214,19 +7135,19 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       tooltip_css <- "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.4);"
       
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = "black") +
+        geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  inherit.aes = FALSE, fill = NA, color = "black") +
+                  inherit.aes = FALSE, fill = NA, color = line_col) +
         geom_rect(data = green_box,
                   aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   inherit.aes = FALSE,
                   fill = "#66c87a", alpha = 0.18, color = NA) +
         geom_segment(data = grid_vertical,
                      aes(x = x, xend = x, y = ymin, yend = ymax),
-                     inherit.aes = FALSE, color = "black", linewidth = 0.4) +
+                     inherit.aes = FALSE, color = grid_col, linewidth = 0.4) +
         geom_segment(data = grid_horizontal,
                      aes(x = xmin, xend = xmax, y = y, yend = y),
-                     inherit.aes = FALSE, color = "black", linewidth = 0.4) +
+                     inherit.aes = FALSE, color = grid_col, linewidth = 0.4) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight,
@@ -7241,14 +7162,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
               tooltip = tooltip, data_id = rid),
           size = 5, alpha = 0.95, stroke = 0.8
         ) +
-        scale_color_manual(values = all_colors[types_chr], limits = types_chr, drop = FALSE, name = NULL) +
-        scale_fill_manual(values = all_colors[types_chr], limits = types_chr, drop = FALSE, name = NULL) +
+        scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
+        scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
         scale_shape_manual(values = hit_shape_map, drop = TRUE) +
         coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
         theme_void() +
         theme(legend.position = "none")
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -7558,7 +7479,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       
       render_heatmap_stat(df, stat)
-    })
+    }, bg = "transparent")
     
     # ---- HeatMaps → Pitch (interactive scatter) ----
     output$heatmapsPitchPlot <- ggiraph::renderGirafe({
@@ -7584,11 +7505,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       df_other <- dplyr::filter(df_i,  is.na(Result))
       
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "black") +
+        geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black", linetype = "dashed") +
+                  fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black") +
+                  fill = NA, color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight,
@@ -7603,13 +7524,13 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
               tooltip = tt, data_id = rid),
           size = 4.0, alpha = 0.95, stroke = 0.8
         ) +
-        scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-        scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
+        scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+        scale_fill_manual(values  = cols[types_chr], limits = types_chr, name = NULL) +
         scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
         coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
         theme_void() + theme(legend.position = "none")
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
@@ -7635,23 +7556,35 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     
     # ---- Result key (legend for pitch results) ----
     output$result_key <- renderPlot({
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#333333"
+      stroke_col <- text_col
+      fill_inplay <- if (dark_on) "#e5e7eb" else "#333333"
+      fill_other  <- if (dark_on) "#0f172a" else "#ffffff"
       df <- data.frame(
         Result = factor(names(hit_shape_map), levels = names(hit_shape_map)),
         x = seq_along(hit_shape_map)
       )
-      df$fill <- ifelse(df$Result == "In Play", "#333333", "#ffffff")
+      df$fill <- ifelse(df$Result == "In Play", fill_inplay, fill_other)
       
       ggplot(df, aes(x = x, y = 0)) +
-        geom_point(aes(shape = Result, fill = fill), color = "#333333", size = 5.5, stroke = 1.1, show.legend = FALSE) +
-        geom_text(aes(y = -0.48, label = Result), size = 4, fontface = "bold", color = "#333333") +
+        geom_point(aes(shape = Result, fill = fill), color = stroke_col, size = 5.5, stroke = 1.1, show.legend = FALSE) +
+        geom_text(aes(y = -0.48, label = Result), size = 4, fontface = "bold", color = text_col) +
         scale_shape_manual(values = hit_shape_map, drop = FALSE) +
         scale_fill_identity() +
         coord_cartesian(xlim = c(0.5, length(hit_shape_map) + 0.5), ylim = c(-0.85, 0.35)) +
-        theme_void()
-    })
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+    }, bg = "transparent")
     
     # ---- Pitch type key (legend for pitch types) ----
     output$pitch_type_key <- renderPlot({
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#333333"
+      stroke_col <- text_col
       df <- filtered_hit()
       if (is.null(df) || !nrow(df)) return(NULL)
       
@@ -7676,11 +7609,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       types <- c(known_types, sort(unknown_types))
       
       # Create color mapping - use default gray for any unknown types
+      cols <- colors_for_mode(dark_on)
       type_colors <- sapply(types, function(t) {
-        if (t %in% names(all_colors)) {
-          all_colors[t]
+        if (t %in% names(cols)) {
+          cols[t]
         } else {
-          "gray50"
+          if (dark_on) "#e5e7eb" else "gray50"
         }
       })
       names(type_colors) <- types
@@ -7692,16 +7626,28 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       )
       
       ggplot(leg_df, aes(x = x, y = 0)) +
-        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = "#333333", stroke = 1.1) +
-        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = "#333333") +
+        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = text_col) +
         scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
         coord_cartesian(xlim = c(0.5, length(types) + 0.5), ylim = c(-0.9, 0.35)) +
-        theme_void()
-    })
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+    }, bg = "transparent")
     
     # ---- Spray chart (interactive) ----
     output$sprayChart <- ggiraph::renderGirafe({
       df <- filtered_hit(); if (!nrow(df)) return(NULL)
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      field_fill  <- if (dark_on) "transparent" else "#f3f5f7"
+      field_alpha <- if (dark_on) 0 else 0.6
+      foul_line_col <- if (dark_on) "#e5e7eb" else "grey50"
+      fence_col  <- if (dark_on) "#9ca3af" else "grey40"
+      infield_col <- if (dark_on) "#cbd5e1" else "grey70"
+      text_col   <- if (dark_on) "#e5e7eb" else "black"
       
       # Accept any live-like session text
       st <- tolower(trimws(as.character(df$SessionType)))
@@ -7736,17 +7682,17 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       # If nothing to plot, show field + message
       if (!length(ok)) {
         p_empty <- ggplot() +
-          geom_polygon(data = home, aes(x, y), fill = NA, color = "grey50") +
-          geom_path(data = fence, aes(x, y), color = "grey40", linewidth = 0.8) +
+          geom_polygon(data = home, aes(x, y), fill = NA, color = foul_line_col) +
+          geom_path(data = fence, aes(x, y), color = fence_col, linewidth = 0.8) +
           geom_polygon(data = rbind(fence, fence[1,]), aes(x, y),
-                       fill = "#f3f5f7", color = NA, alpha = 0.6) +
-          geom_path(data = fl_l, aes(x, y), color = "grey50") +
-          geom_path(data = fl_r, aes(x, y), color = "grey50") +
-          geom_path(data = infield, aes(x, y), color = "grey70") +
-          annotate("text", x = 0, y = 200, label = "No balls in play for current filters", size = 5) +
+                       fill = field_fill, color = NA, alpha = field_alpha) +
+          geom_path(data = fl_l, aes(x, y), color = foul_line_col) +
+          geom_path(data = fl_r, aes(x, y), color = foul_line_col) +
+          geom_path(data = infield, aes(x, y), color = infield_col) +
+          annotate("text", x = 0, y = 200, label = "No balls in play for current filters", size = 5, color = text_col) +
           coord_fixed(xlim = c(-380, 380), ylim = c(-30, 420)) +
           theme_void()
-        return(ggiraph::girafe(ggobj = p_empty))
+        return(girafe_transparent(ggobj = p_empty))
       }
       
       # --- Points to plot ---
@@ -7767,7 +7713,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       # Outcome colors
       outcome <- dplyr::case_when(bbe$PlayResult %in% hit_levels ~ bbe$PlayResult, TRUE ~ "Out")
       bbe$Outcome <- factor(outcome, levels = c("Out", hit_levels))
-      outcome_cols <- c("Single"="#1fab54","Double"="#1f77b4","Triple"="#7b1fa2","HomeRun"="#d62728","Out"="#222222")
+      outcome_cols <- if (dark_on) {
+        c("Single"="#34d399","Double"="#60a5fa","Triple"="#c084fc","HomeRun"="#f87171","Out"="#e5e7eb")
+      } else {
+        c("Single"="#1fab54","Double"="#1f77b4","Triple"="#7b1fa2","HomeRun"="#d62728","Out"="#222222")
+      }
       
       # Tooltip + tooltip fill by pitch type color
       bbe <- bbe %>%
@@ -7780,17 +7730,17 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             "Pitch: ", TaggedPitchType, "\n",
             "Result: ", PlayResult
           ),
-          tt_fill = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray80")
+          tt_fill = dplyr::coalesce(cols[as.character(TaggedPitchType)], "gray80")
         )
       
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "grey50") +
-        geom_path(data = fence, aes(x, y), color = "grey40", linewidth = 0.8) +
+        geom_polygon(data = home, aes(x, y), fill = NA, color = foul_line_col) +
+        geom_path(data = fence, aes(x, y), color = fence_col, linewidth = 0.8) +
         geom_polygon(data = rbind(fence, fence[1,]), aes(x, y),
-                     fill = "#f3f5f7", color = NA, alpha = 0.6) +
-        geom_path(data = fl_l, aes(x, y), color = "grey50") +
-        geom_path(data = fl_r, aes(x, y), color = "grey50") +
-        geom_path(data = infield, aes(x, y), color = "grey70") +
+                     fill = field_fill, color = NA, alpha = field_alpha) +
+        geom_path(data = fl_l, aes(x, y), color = foul_line_col) +
+        geom_path(data = fl_r, aes(x, y), color = foul_line_col) +
+        geom_path(data = infield, aes(x, y), color = infield_col) +
         
         ggiraph::geom_point_interactive(
           data = bbe,
@@ -7811,7 +7761,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           legend.margin = margin(t = -4, r = 0, b = -12, l = 0),
           legend.box.margin = margin(t = -6, r = 0, b = -14, l = 0),
           plot.margin = margin(t = 0, r = 0, b = -16, l = 0),
-          legend.text = element_text(size = 11, face = "bold")
+          legend.text = element_text(size = 11, face = "bold", color = text_col),
+          legend.background = element_rect(fill = "transparent", color = NA),
+          legend.box.background = element_rect(fill = "transparent", color = NA),
+          legend.key = element_rect(fill = "transparent", color = NA)
         ) +
         guides(
           color = guide_legend(
@@ -7824,7 +7777,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           )
         )
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_sizing(rescale = TRUE),
@@ -8859,10 +8812,12 @@ mod_catch_ui <- function(id, show_header = FALSE) {
                 width = 3
               ),
               mainPanel(
-                conditionalPanel(sprintf("input['%s']=='Heat'", ns("hmChartType")),
-                                 plotOutput(ns("heatPlot"), height = "500px")),
-                conditionalPanel(sprintf("input['%s']=='Pitch'", ns("hmChartType")),
-                                 ggiraph::girafeOutput(ns("pitchPlot"), height = "500px"))
+                div(style = "background: transparent !important;",
+                    conditionalPanel(sprintf("input['%s']=='Heat'", ns("hmChartType")),
+                                     plotOutput(ns("heatPlot"), height = "500px")),
+                    conditionalPanel(sprintf("input['%s']=='Pitch'", ns("hmChartType")),
+                                     ggiraph::girafeOutput(ns("pitchPlot"), height = "500px"))
+                )
               )
             )
           )
@@ -9005,7 +8960,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       
       # ⛔️ Team filtering - Filter by team selection ⛔️
       if (!is.null(input$teamType)) {
-        all_gcu_and_campers <- unique(c(ALLOWED_PITCHERS, ALLOWED_CAMPERS))
+        all_osu_and_campers <- unique(c(ALLOWED_PITCHERS, ALLOWED_CAMPERS))
         
         if (input$teamType == "Campers") {
           # Filter to only allowed campers (as pitchers)
@@ -9015,7 +8970,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
           df <- dplyr::filter(df, Pitcher %in% ALLOWED_PITCHERS)
         } else if (input$teamType == "Opponents") {
           # Show only opponent pitchers (anyone NOT in GCU or Campers lists)
-          df <- dplyr::filter(df, !(Pitcher %in% all_gcu_and_campers))
+          df <- dplyr::filter(df, !(Pitcher %in% all_osu_and_campers))
         }
         # If "All" is selected, don't filter - show all data
       }
@@ -9385,9 +9340,9 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       
       gc <- loc_guess_cols_xy(df)
       if (!nzchar(gc$x) || !nzchar(gc$y)) {
-        return(ggiraph::girafe(code = print(ggplot2::ggplot() +
-                                              ggplot2::annotate("text", x=0, y=0, label="No base-arrival X/Y columns found") +
-                                              ggplot2::theme_void())))
+        return(girafe_transparent(code = print(ggplot2::ggplot() +
+                                                 ggplot2::annotate("text", x=0, y=0, label="No base-arrival X/Y columns found") +
+                                                 ggplot2::theme_void())))
       }
       
       mode <- if (is.null(input$loc_units)) "auto" else input$loc_units
@@ -9426,9 +9381,10 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         ggplot2::coord_fixed(xlim = c(-zoom, zoom), ylim = c(-zoom, zoom)) +
         ggplot2::labs(x = "Across-bag (ft)", y = "Up/down-bag (ft)",
                       title = paste("Throw Location (Top-down) →", if (is.null(input$loc_targetBase)) "2B" else input$loc_targetBase)) +
-        ggplot2::theme_minimal()
+        ggplot2::theme_minimal() +
+        transparent_bg_theme
       
-      ggiraph::girafe(
+      girafe_transparent(
         code = print(p),
         options = list(
           ggiraph::opts_hover(css = "opacity:0.9;"),
@@ -9521,9 +9477,12 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
             xaxis = list(title = "Across-bag (ft)", range = lim),
             yaxis = list(title = "Up/down-bag (ft)", range = lim),
             zaxis = list(title = "Height (ft)"),
-            aspectmode = "cube"
+            aspectmode = "cube",
+            bgcolor = "rgba(0,0,0,0)"
           ),
-          title = paste("Throw Location (3D) →", if (is.null(input$loc_targetBase)) "2B" else input$loc_targetBase)
+          title = paste("Throw Location (3D) →", if (is.null(input$loc_targetBase)) "2B" else input$loc_targetBase),
+          paper_bgcolor = "rgba(0,0,0,0)",
+          plot_bgcolor = "rgba(0,0,0,0)"
         )
     })
     
@@ -9641,7 +9600,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         labs(title = "Called-Strike%", x = NULL, y = NULL) +
         theme_void() +
         theme(plot.title = element_text(face = "bold", hjust = 0.5))
-    })
+    }, bg = "transparent")
     
     
     # ---- HeatMaps: Pitch (interactive scatter) ----
@@ -9688,7 +9647,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
         theme_void() + theme(legend.position = "none")
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
@@ -10019,25 +9978,27 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if ("PitchSession" %in% names(df)) {
         df <- df %>% dplyr::filter(is.na(PitchSession) | PitchSession != "Warmup")
       }
-      # Apply per-user visibility rules - REMOVED: All users can now see all data
-      # Only admin status controls access to admin features, not data visibility
-      # admin_val <- tryCatch({
-      #   exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
-      # }, error = function(...) FALSE)
-      # if (!admin_val && "Email" %in% names(df)) {
-      #   norm_email_local <- function(x) tolower(trimws(x))
-      #   ue <- tryCatch({
-      #     if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
-      #   }, error = function(...) NA_character_)
-      #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
-      # }
+      # Per-user visibility: Coaches see all, Players see only their own data
+      is_coach_val <- tryCatch({
+        exists("is_coach", inherits = TRUE) && isTRUE(get("is_coach", inherits = TRUE)())
+      }, error = function(...) FALSE)
+      admin_val <- tryCatch({
+        exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
+      }, error = function(...) FALSE)
+      
+      if (!admin_val && !is_coach_val && "Email" %in% names(df)) {
+        norm_email_local <- function(x) tolower(trimws(x))
+        ue <- tryCatch({
+          if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
+        }, error = function(...) NA_character_)
+        if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
+      }
       
       # Date range (use Date column coerced to Date)
       dcol <- as_date_any(df$Date)
       if (length(input$dates) == 2) {
         df <- df[!is.na(dcol) & dcol >= as.Date(input$dates[1]) & dcol <= as.Date(input$dates[2]), , drop = FALSE]
       }
-      
       # Pitcher hand
       if (input$hand != "All") df <- dplyr::filter(df, PitcherThrows == input$hand)
       
@@ -10095,6 +10056,9 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
     # Summary Release Plot - Match main Pitching Summary exactly
     output$campSummaryReleasePlot <- ggiraph::renderGirafe({
       df <- pitch_df_for_plots(); if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
+      line_col <- if (dark_on) "#ffffff" else "black"
       
       # Get ordered types like main Pitching Summary
       types_chr <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
@@ -10136,7 +10100,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       p <- ggplot() +
         geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
         annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
-        geom_vline(xintercept = 0, color = "black", size = 0.7) +
+        geom_vline(xintercept = 0, color = line_col, size = 0.7) +
+        geom_hline(yintercept = 0, color = line_col, size = 0.7) +
         ggiraph::geom_point_interactive(
           data = avg,
           aes(x = avg_RelSide, y = avg_RelHeight,
@@ -10145,17 +10110,20 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         ) +
         scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
         scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-        theme_minimal() + axis_theme +
+        theme_minimal() + axis_theme + grid_theme(dark_on) +
         labs(x = NULL, y = NULL) +
         theme(
           legend.position = "none",
-          axis.text.x = element_text(size = 15, face = "bold"),
-          axis.text.y = element_text(size = 15, face = "bold")
+          axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+          axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
+          panel.grid = element_blank(),
+          axis.ticks = element_blank()
         )
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         width_svg = 8, height_svg = 6.5,
+        bg = "transparent",
         options = list(
           ggiraph::opts_sizing(rescale = TRUE),
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -10168,15 +10136,17 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
     # Summary Movement Plot - Match main Pitching Summary exactly
     output$campSummaryMovementPlot <- ggiraph::renderGirafe({
       df <- pitch_df_for_plots(); if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
+      line_col <- if (dark_on) "#ffffff" else "gray"
       
       types_chr <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       types_chr <- types_chr[types_chr %in% names(all_colors)]
       if (!length(types_chr)) return(NULL)
       
-      # last-25 avg per type (same as main Pitching Summary)
+      # Averages per type (respect filters)
       avg_mov <- df %>%
         dplyr::group_by(TaggedPitchType) %>%
-        dplyr::slice_tail(n = 25) %>%
         dplyr::summarise(
           avg_HorzBreak        = mean(HorzBreak, na.rm = TRUE),
           avg_InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
@@ -10193,8 +10163,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       # Note: breakLines input doesn't exist in Camps, so skip the baseline reference lines
       
       p <- ggplot() +
-        geom_hline(yintercept = 0, color = "gray", size = 0.5) +
-        geom_vline(xintercept = 0, color = "gray", size = 0.5) +
+        geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+        geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
         ggiraph::geom_point_interactive(
           data = avg_mov %>% dplyr::filter(TaggedPitchType %in% types_chr),
           aes(x = avg_HorzBreak, y = avg_InducedVertBreak, color = TaggedPitchType,
@@ -10204,17 +10174,20 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
           size = 8, show.legend = FALSE
         ) +
         scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-        theme_minimal() + axis_theme +
+        theme_minimal() + axis_theme + grid_theme(dark_on) +
         labs(x = NULL, y = NULL) +
         theme(
           legend.position = "none",
-          axis.text.x = element_text(size = 15, face = "bold"),
-          axis.text.y = element_text(size = 15, face = "bold")
+          axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+          axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
+          panel.grid = element_blank(),
+          axis.ticks = element_blank()
         )
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         width_svg = 8, height_svg = 6.5,
+        bg = "transparent",
         options = list(
           ggiraph::opts_sizing(rescale = TRUE),
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -10230,6 +10203,9 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if (!nrow(df)) return(NULL)
       df <- df %>% dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight))
       if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
+      line_col <- if (dark_on) "#ffffff" else "black"
       
       # Create outcome categories like the main Summary page
       df$Result <- compute_result(df$PitchCall, df$PlayResult)
@@ -10245,15 +10221,21 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
         scale_shape_manual(values = shape_map, name = NULL) +
         geom_rect(aes(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP),
-                  fill = NA, color = "black", linewidth = 1) +
+                  fill = NA, color = line_col, linewidth = 1) +
         geom_rect(aes(xmin = -1.5, xmax = 1.5, ymin = 2.65-1.5, ymax = 2.65+1.5),
-                  fill = NA, color = "gray50", linetype = "dashed", linewidth = 0.8) +
+                  fill = NA, color = line_col, linetype = "dashed", linewidth = 0.8) +
         coord_fixed(ratio = 1) +
         labs(x = "Plate Side (ft)", y = "Plate Height (ft)") +
-        theme_minimal() + axis_theme +
-        theme(legend.position = "none")
+        theme_minimal() + axis_theme + grid_theme(dark_on) +
+        theme(
+          legend.position = "none",
+          axis.text.x = element_text(color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          axis.title.x = element_text(color = axis_col),
+          axis.title.y = element_text(color = axis_col)
+        )
       
-      ggiraph::girafe(ggobj = p, options = list(ggiraph::opts_hover_inv(css = "opacity:0.1;")))
+      girafe_transparent(ggobj = p, options = list(ggiraph::opts_hover_inv(css = "opacity:0.1;")))
     })
     
     # Summary Heat Zone Plot
@@ -10272,15 +10254,18 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       draw_heat(grid, bins = HEAT_BINS, pal_fun = heat_pal_bwr, mark_max = FALSE,
                 show_scale = TRUE, scale_label = "Pitch Frequency",
                 scale_limits = c(0, 80))
-    })
+    }, bg = "transparent")
     
     # Summary Legend
     output$campSummaryLegend <- renderPlot({
       df <- pitch_df_for_plots()
       if (!nrow(df)) return(ggplot() + theme_void())
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#ffffff" else "black"
       
       types <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       if (!length(types)) return(ggplot() + theme_void())
+      pal <- colors_for_mode(dark_on)
       
       # Create a simple legend plot
       legend_df <- data.frame(
@@ -10291,17 +10276,18 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       
       ggplot(legend_df, aes(x, y, color = type)) +
         geom_point(size = 6) +
-        scale_color_manual(values = all_colors[types], name = "Pitch Type") +
+        scale_color_manual(values = pal[types], name = "Pitch Type") +
         theme_void() +
         theme(
           legend.position = "bottom",
           legend.direction = "horizontal",
-          legend.text = element_text(size = 12),
-          legend.title = element_text(size = 14, face = "bold"),
+          legend.box = "horizontal",
+          legend.text = element_text(size = 12, color = axis_col),
+          legend.title = element_text(size = 14, face = "bold", color = axis_col),
           legend.margin = margin(t = 0, b = 0)
         ) +
         guides(color = guide_legend(override.aes = list(size = 4), nrow = 1))
-    })
+    }, bg = "transparent")
     
     # Summary Table Buttons
     output$campSummaryTableButtons <- renderUI({
@@ -10375,6 +10361,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
           `BB%`     = BBPercent,
           `FPS%`    = FPSPercent,
           `E+A%`    = EAPercent,
+          `QP%`     = QPPercent,
           `Strike%` = StrikePercent,
           `Swing%`  = SwingPercent,
           `Whiff%`  = WhiffPercent,
@@ -10387,7 +10374,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
           dplyr::any_of(c("0-0","Behind","Even","Ahead","<2K","2K")),
           BF, `RV/100`,
           Velo, Max, IVB, HB, rTilt, bTilt, SpinEff, Spin, Height, Side, VAA, HAA, Ext,
-          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `K%`, `BB%`, `Whiff%`, EV, LA,
+          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `QP%`, `K%`, `BB%`, `Whiff%`, EV, LA,
           `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
         ) %>%
         dplyr::mutate(
@@ -10401,6 +10388,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       
       # Add Process/Results columns and join
       df_table <- df_table %>% dplyr::left_join(extras, by = "Pitch")
+      df_table <- fill_all_qp_pct(df_table, df)
       
       # Column reordering (same as main Pitching Summary)
       if (!identical(mode, "Banny")) {
@@ -10471,6 +10459,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if (!nrow(df)) return(NULL)
       df <- df %>% dplyr::filter(is.finite(RelSide), is.finite(RelHeight))
       if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
       
       types <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       p <- ggplot(df, aes(RelSide, RelHeight, color = TaggedPitchType)) +
@@ -10481,9 +10471,16 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         ), size = 2.8, alpha = 0.9) +
         scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
         labs(x = "Release Side (ft)", y = "Release Height (ft)") +
-        theme_minimal() + theme(legend.position = "none")
+        theme_minimal() + grid_theme(dark_on) +
+        theme(
+          legend.position = "none",
+          axis.text.x = element_text(color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          axis.title.x = element_text(color = axis_col),
+          axis.title.y = element_text(color = axis_col)
+        )
       
-      ggiraph::girafe(ggobj = p)
+      girafe_transparent(ggobj = p)
     })
     
     # Movement Plot: HB vs IVB
@@ -10492,6 +10489,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if (!nrow(df)) return(NULL)
       df <- df %>% dplyr::filter(is.finite(HorzBreak), is.finite(InducedVertBreak))
       if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
       
       types <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       p <- ggplot(df, aes(HorzBreak, InducedVertBreak, color = TaggedPitchType)) +
@@ -10502,9 +10501,16 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         ), size = 2.8, alpha = 0.9) +
         scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
         labs(x = "Horizontal Break (in)", y = "Induced Vertical Break (in)") +
-        theme_minimal() + theme(legend.position = "none")
+        theme_minimal() + grid_theme(dark_on) +
+        theme(
+          legend.position = "none",
+          axis.text.x = element_text(color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          axis.title.x = element_text(color = axis_col),
+          axis.title.y = element_text(color = axis_col)
+        )
       
-      ggiraph::girafe(ggobj = p)
+      girafe_transparent(ggobj = p)
     })
     
     # Location Plot: PlateLocSide vs PlateLocHeight + zone
@@ -10513,6 +10519,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       if (!nrow(df)) return(NULL)
       df <- df %>% dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight))
       if (!nrow(df)) return(NULL)
+      dark_on <- isTRUE(input$dark_mode)
+      line_col <- if (dark_on) "#ffffff" else "black"
       
       types <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       
@@ -10522,11 +10530,11 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "black") +
+        geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black", linetype = "dashed") +
+                  fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black") +
+                  fill = NA, color = line_col) +
         ggiraph::geom_point_interactive(
           data = df,
           aes(PlateLocSide, PlateLocHeight, color = TaggedPitchType,
@@ -10539,7 +10547,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
         theme_void() + theme(legend.position = "none")
       
-      ggiraph::girafe(ggobj = p)
+      girafe_transparent(ggobj = p)
     })
     
     # ----- Pitching table (same options/defs as your Pitching Summary) -----
@@ -10576,6 +10584,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
         
         bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+        fps_opp <- bf_live
         k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
         bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
         fps_live <- sum(df$SessionType == "Live" &
@@ -10600,7 +10609,9 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         la_all <- nz_mean(ifelse(df$SessionType=="Live", df$Angle,     NA_real_))
         stuff_all <- round(nz_mean(df$`Stuff+`), 1)
         ctrl_all   <- round(nz_mean(scores) * 100, 1)
-        qp_all    <- round(nz_mean(compute_qp_points(df)) * 200, 1)
+        qp_vals   <- compute_qp_points(df)
+        qp_all    <- round(nz_mean(qp_vals) * 200, 1)
+        qp_pct    <- safe_pct(sum((qp_vals * 200) >= 100, na.rm = TRUE), nrow(df))
         
         tibble::tibble(
           `#`            = nrow(df),
@@ -10625,8 +10636,9 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
                                         df$PlateLocHeight >= (2.65-1.5) & df$PlateLocHeight <= (2.65+1.5));
           safe_pct(sum(comp, na.rm = TRUE), sum(!is.na(comp))) },
           `Strike%`      = if (has_pc) safe_pct(strikes, nrow(df)) else "",
-          `FPS%`         = safe_pct(fps_live, bf_live),
-          `E+A%`         = safe_pct(ea_live,  bf_live),
+          `FPS%`         = safe_pct(fps_live, fps_opp),
+          `E+A%`         = safe_pct(ea_live,  fps_opp),
+          `QP%`          = qp_pct,
           `K%`           = safe_pct(k_live,   bf_live),
           `BB%`          = safe_pct(bb_live,  bf_live),
           `Whiff%`       = safe_pct(sw, den),
@@ -10736,7 +10748,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
           annotate("text", x = 0, y = 200, label = "No balls in play for current filters", size = 5) +
           coord_fixed(xlim = c(-380, 380), ylim = c(-30, 420)) +
           theme_void()
-        return(ggiraph::girafe(ggobj = p_empty))
+        return(girafe_transparent(ggobj = p_empty))
       }
       
       bbe <- df[ok, , drop = FALSE]
@@ -10791,7 +10803,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         coord_fixed(xlim = c(-380, 380), ylim = c(-30, 420)) +
         theme_void() + theme(legend.position = "right")
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_sizing(rescale = TRUE),
@@ -11304,18 +11316,21 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       if (nnz(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
       if (nnz(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
       
-      # Respect per-user visibility - REMOVED: All users can now see all data
-      # Only admin status controls access to admin features, not data visibility
-      # admin_val <- tryCatch({
-      #   exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
-      # }, error = function(...) FALSE)
-      # if (!admin_val && "Email" %in% names(df)) {
-      #   norm_email_local <- function(x) tolower(trimws(x))
-      #   ue <- tryCatch({
-      #     if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
-      #   }, error = function(...) NA_character_)
-      #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
-      # }
+      # Per-user visibility: Coaches see all, Players see only their own data
+      is_coach_val <- tryCatch({
+        exists("is_coach", inherits = TRUE) && isTRUE(get("is_coach", inherits = TRUE)())
+      }, error = function(...) FALSE)
+      admin_val <- tryCatch({
+        exists("is_admin", inherits = TRUE) && isTRUE(get("is_admin", inherits = TRUE)())
+      }, error = function(...) FALSE)
+      
+      if (!admin_val && !is_coach_val && "Email" %in% names(df)) {
+        norm_email_local <- function(x) tolower(trimws(x))
+        ue <- tryCatch({
+          if (exists("user_email", inherits = TRUE)) get("user_email", inherits = TRUE)() else NA_character_
+        }, error = function(...) NA_character_)
+        if (!is.na(ue)) df <- dplyr::filter(df, norm_email_local(Email) == norm_email_local(ue))
+      }
       
       compute_stuff_simple(df, base_type = "Fastball", level = "College") %>%
         force_pitch_levels()
@@ -11366,16 +11381,6 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
     # Build leaderboard table by player for the selected domain (Pitching path you already had)
     output$lbTable <- DT::renderDataTable({
       df <- filtered_lb()
-      # Flatten list columns upfront to prevent sum/mean errors
-      df <- flatten_metrics_df(df)
-      # Explicitly coerce key columns used below
-      chr_cols_lb <- intersect(c("PlayResult","KorBB","PitchCall","TaggedHitType","SessionType","TaggedPitchType","Pitcher","Batter","Catcher"), names(df))
-      num_cols_lb <- intersect(c("Balls","Strikes","ExitSpeed","Angle","RelSpeed","InducedVertBreak","HorzBreak",
-                                 "PlateLocSide","PlateLocHeight","SpinEfficiency","SpinRate","RelHeight","RelSide",
-                                 "VertApprAngle","HorzApprAngle","Extension"), names(df))
-      for (nm in chr_cols_lb) df[[nm]] <- if (is.list(df[[nm]])) vapply(df[[nm]], function(x) if (length(x)) as.character(x[[1]]) else NA_character_, character(1)) else as.character(df[[nm]])
-      for (nm in num_cols_lb) df[[nm]] <- if (is.list(df[[nm]])) vapply(df[[nm]], function(x) if (length(x)) suppressWarnings(as.numeric(x[[1]])) else NA_real_, numeric(1)) else suppressWarnings(as.numeric(df[[nm]]))
-
       validate(need(nrow(df) > 0, "No data for selected filters"))
       
       player_col <- switch(input$domain,
@@ -11511,6 +11516,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           
           df_live <- dplyr::filter(df, SessionType == "Live")
           bf_live <- calculate_bf(df_live)
+          fps_opp <- sum(df_live$Balls == 0 & df_live$Strikes == 0, na.rm = TRUE)
           # Use completed BF (shared calculation)
           bf_use <- calculate_bf(df)
           
@@ -11537,7 +11543,9 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           la_all <- nz_mean_local(ifelse(df$SessionType=="Live", df$Angle,     NA_real_))
           stuff_all <- round(nz_mean_local(df$`Stuff+`), 1)
           ctrl_all   <- round(nz_mean_local(scores) * 100, 1)
-          qp_all    <- round(nz_mean_local(compute_qp_points(df)) * 200, 1)
+          qp_vals   <- compute_qp_points(df)
+          qp_all    <- round(nz_mean_local(qp_vals) * 200, 1)
+          qp_pct    <- safe_pct(sum((qp_vals * 200) >= 100, na.rm = TRUE), nrow(df))
           
           tibble::tibble(
             `#`            = nrow(df),
@@ -11563,8 +11571,9 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
                                           df$PlateLocHeight >= (2.65-1.5) & df$PlateLocHeight <= (2.65+1.5));
             safe_pct(sum(comp, na.rm = TRUE), sum(!is.na(comp))) },
             `Strike%`      = if (has_pc) safe_pct(strikes, nrow(df)) else "",
-            `FPS%`         = safe_pct(fps_live, bf_live),
-            `E+A%`         = safe_pct(ea_live,  bf_live),
+            `FPS%`         = safe_pct(fps_live, fps_opp),
+            `E+A%`         = safe_pct(ea_live,  fps_opp),
+            `QP%`          = qp_pct,
             `K%`           = safe_pct(k_live,   bf_live),
             `BB%`          = safe_pct(bb_live,  bf_live),
             `Whiff%`       = safe_pct(sw, den),
@@ -11622,6 +11631,9 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         })
         
         out_tbl <- dplyr::bind_rows(rows) %>% dplyr::relocate(Player)
+        if ("IP" %in% names(out_tbl)) {
+          out_tbl$IP <- as.character(out_tbl$IP)
+        }
         # Reorder columns for custom
         if (identical(mode, "Custom")) {
           order_cols <- unique(c("Player", custom))
@@ -11631,6 +11643,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         
         if (identical(mode, "Process")) {
           out_tbl <- enforce_process_order(out_tbl)
+          out_tbl <- fill_all_qp_pct(out_tbl, df)
         }
         
         visible_set <- visible_set_for_lb(mode, custom)
@@ -12456,6 +12469,15 @@ mod_comp_ui <- function(id, show_header = FALSE) {
 
 mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_range = NULL) {
   moduleServer(id, function(input, output, session) {
+    # Dark-mode flag that respects root-scope toggle
+    is_dark_mode <- reactive({
+      dm <- tryCatch({
+        rs <- session$rootScope()
+        if (!is.null(rs) && !is.null(rs$input$dark_mode)) rs$input$dark_mode else NULL
+      }, error = function(...) NULL)
+      if (is.null(dm) && !is.null(input$dark_mode)) dm <- input$dark_mode
+      isTRUE(dm)
+    })
     
     # Sync custom table lists into comparison (namespaced) controls
     observe({
@@ -12629,17 +12651,17 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       df <- if (identical(dom, "Pitcher") && exists("pitch_data_pitching")) pitch_data_pitching else pitch_data
       if (!nrow(df)) return(df[0, , drop = FALSE])
       
-      # privacy scoping - REMOVED: All users can now see all data
-      # Only admin status controls access to admin features, not data visibility
-      # if (exists("user_email") && is.function(user_email) &&
-      #     exists("is_admin")   && is.function(is_admin)   &&
-      #     !is_admin()) {
-      #   ne <- function(x) tolower(trimws(x))
-      #   ue <- user_email()
-      #   if (!is.na(ue) && "Email" %in% names(df)) {
-      #     df <- dplyr::filter(df, ne(Email) == ne(ue))
-      #   }
-      # }
+      # Privacy scoping: Coaches see all, Players see only their own data
+      if (exists("user_email") && is.function(user_email) &&
+          exists("is_admin")   && is.function(is_admin)   &&
+          exists("is_coach")   && is.function(is_coach)   &&
+          !is_admin() && !is_coach()) {
+        ne <- function(x) tolower(trimws(x))
+        ue <- user_email()
+        if (!is.na(ue) && "Email" %in% names(df)) {
+          df <- dplyr::filter(df, ne(Email) == ne(ue))
+        }
+      }
       if (!nrow(df)) return(df)
       
       if (!("SessionType_std" %in% names(df))) {
@@ -12741,6 +12763,12 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
     # ---------- PLOTS ----------
     .movement_girafe <- function(df) {
       if (!nrow(df)) return(NULL)
+      dark_on <- is_dark_mode()
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
+      line_col <- if (dark_on) "#ffffff" else "black"
+      cols <- if (exists("colors_for_mode")) colors_for_mode(dark_on) else all_colors
+      grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                              alpha.f = if (dark_on) 0.18 else 0.12)
       df_i <- df %>% dplyr::mutate(tt = make_hover_tt(.), rid = dplyr::row_number())
       types_chr <- as.character(intersect(names(all_colors), unique(df_i$TaggedPitchType)))
       avg_mov <- df %>%
@@ -12764,19 +12792,24 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           aes(avg_HorzBreak, avg_InducedVertBreak, color = TaggedPitchType),
           size = 8
         ) +
-        geom_hline(yintercept = 0, color = "black") +
-        geom_vline(xintercept = 0, color = "black") +
+        geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+        geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
         coord_cartesian(xlim = c(-25, 25), ylim = c(-25, 25)) +
-        scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-        scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
+        scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+        scale_fill_manual(values  = cols[types_chr], limits = types_chr, name = NULL) +
         labs(x = "Horizontal Break (in)", y = "Induced Vertical Break (in)") +
-        theme_minimal(base_size = 12) +
+        theme_minimal(base_size = 12) + grid_theme(dark_on) +
         theme(
           legend.position = "none",
-          panel.grid = element_blank(),
-          axis.ticks = element_blank()
+          axis.text.x = element_text(color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          axis.title.x = element_text(color = axis_col),
+          axis.title.y = element_text(color = axis_col),
+          axis.ticks = element_blank(),
+          panel.grid.major = element_line(color = grid_col),
+          panel.grid.minor = element_blank()
         )
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_sizing(rescale = TRUE),
@@ -12792,6 +12825,12 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
     .release_plot <- function(df) {
       if (!nrow(df)) return(ggplot() + theme_void())
       axis_th <- get0("axis_theme", ifnotfound = theme())
+      dark_on <- is_dark_mode()
+      axis_col <- if (dark_on) "#e5e7eb" else "black"
+      line_col <- if (dark_on) "#ffffff" else "black"
+      grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                              alpha.f = if (dark_on) 0.18 else 0.12)
+      cols <- if (exists("colors_for_mode")) colors_for_mode(dark_on) else all_colors
       types <- if (exists("ordered_types") && is.function(ordered_types)) {
         ot <- as.character(ordered_types()); ot[ot %in% unique(df$TaggedPitchType)]
       } else as.character(intersect(names(all_colors), unique(df$TaggedPitchType)))
@@ -12809,15 +12848,25 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       ggplot() +
         geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
         annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
-        geom_vline(xintercept = 0, color = "black", size = 0.7) +
-        geom_hline(yintercept = 0, color = "black", size = 0.7) +
+        geom_vline(xintercept = 0, color = line_col, size = 0.7) +
+        geom_hline(yintercept = 0, color = line_col, size = 0.7) +
         geom_point(data = avg, aes(avg_RelSide, avg_RelHeight, color = TaggedPitchType), size = 4) +
-        scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
-        theme_minimal() + axis_th + theme(legend.position = "none", panel.grid = element_blank(), axis.ticks = element_blank()) +
+        scale_color_manual(values = cols[types], limits = types, name = NULL) +
+        theme_minimal() + axis_th + grid_theme(dark_on) +
+        theme(
+          legend.position = "none",
+          axis.text.x = element_text(color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          axis.ticks = element_blank(),
+          panel.grid.major = element_line(color = grid_col),
+          panel.grid.minor = element_blank(),
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.background = element_rect(fill = "transparent", color = NA)
+        ) +
         labs(x = NULL, y = NULL)
     }
-    output$cmpA_release <- renderPlot({ .release_plot(.filtered_panel("A")) })
-    output$cmpB_release <- renderPlot({ .release_plot(.filtered_panel("B")) })
+    output$cmpA_release <- renderPlot({ .release_plot(.filtered_panel("A")) }, bg = "transparent")
+    output$cmpB_release <- renderPlot({ .release_plot(.filtered_panel("B")) }, bg = "transparent")
     
     .kde_grid <- function(x, y, lims = c(-2.5, 2.5, 0, 4.5), n = 200, h = NULL) {
       ok <- is.finite(x) & is.finite(y)
@@ -12853,6 +12902,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         df <- df[keep, , drop = FALSE]
       }
       if (!nrow(df)) return(NULL)
+      dark_on <- is_dark_mode()
       dom <- attr(df, "domain") %||% "Pitcher"
       if (identical(dom, "Hitter")) {
         # Local copy of hitting location plot (with green box)
@@ -12861,6 +12911,9 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           if (!"Result" %in% names(df_subset)) {
             df_subset$Result <- compute_result(df_subset$PitchCall, df_subset$PlayResult)
           }
+          line_col <- if (dark_on) "#ffffff" else "black"
+          grid_col <- if (dark_on) "#d1d5db" else "black"
+          cols <- colors_for_mode(dark_on)
           hit_result_levels <- names(hit_shape_map)
           df_subset <- df_subset %>%
             dplyr::mutate(
@@ -12894,10 +12947,11 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             p_empty <- ggplot() +
               annotate("text", x = 0, y = 2.5, label = "No pitches", size = 5) +
               theme_void()
-            return(ggiraph::girafe(ggobj = p_empty))
+            return(girafe_transparent(ggobj = p_empty))
           }
-          types_chr <- intersect(names(all_colors), unique(df_plot$TaggedPitchType))
+          types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
           if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
+          col_vals <- cols[types_chr]; col_vals[is.na(col_vals)] <- "gray70"
           home <- data.frame(
             x = c(-0.75, 0.75, 0.75, 0, -0.75),
             y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5
@@ -12928,19 +12982,19 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           df_other <- dplyr::filter(df_plot, is.na(ResultDisplay))
           tooltip_css <- "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.4);"
           p <- ggplot() +
-            geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = "black") +
+            geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
             geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                      inherit.aes = FALSE, fill = NA, color = "black") +
+                      inherit.aes = FALSE, fill = NA, color = line_col) +
             geom_rect(data = green_box,
                       aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                       inherit.aes = FALSE,
                       fill = "#66c87a", alpha = 0.18, color = NA) +
             geom_segment(data = grid_vertical,
                          aes(x = x, xend = x, y = ymin, yend = ymax),
-                         inherit.aes = FALSE, color = "black", linewidth = 0.4) +
+                         inherit.aes = FALSE, color = grid_col, linewidth = 0.4) +
             geom_segment(data = grid_horizontal,
                          aes(x = xmin, xend = xmax, y = y, yend = y),
-                         inherit.aes = FALSE, color = "black", linewidth = 0.4) +
+                         inherit.aes = FALSE, color = grid_col, linewidth = 0.4) +
             ggiraph::geom_point_interactive(
               data = df_other,
               aes(PlateLocSide, PlateLocHeight,
@@ -12955,14 +13009,14 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
                   tooltip = tooltip, data_id = rid),
               size = 5, alpha = 0.95, stroke = 0.8
             ) +
-            scale_color_manual(values = all_colors[types_chr], limits = types_chr, drop = FALSE, name = NULL) +
-            scale_fill_manual(values = all_colors[types_chr], limits = types_chr, drop = FALSE, name = NULL) +
+            scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
+            scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
             scale_shape_manual(values = hit_shape_map, drop = TRUE) +
             coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
             theme_void() +
             theme(legend.position = "none")
           
-          ggiraph::girafe(
+          girafe_transparent(
             ggobj = p,
             options = list(
               ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -12980,20 +13034,21 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           Result  = factor(compute_result(PitchCall, PlayResult), levels = result_levels),
           tt      = make_hover_tt(.),
           rid     = dplyr::row_number(),
-          tt_fill = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray")
+          tt_fill = dplyr::coalesce(colors_for_mode(dark_on)[as.character(TaggedPitchType)], "gray")
         )
       home <- data.frame(x = c(-0.75,0.75,0.75,0.00,-0.75),
                          y = c(1.05,1.05,1.15,1.25,1.15) - 0.5)
       cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
+      line_col <- if (dark_on) "#ffffff" else "black"
       df_known <- dplyr::filter(df_i, !is.na(Result))
       df_other <- dplyr::filter(df_i,  is.na(Result))
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = "black") +
+        geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  inherit.aes = FALSE, fill = NA, color = "black", linetype = "dashed") +
+                  inherit.aes = FALSE, fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  inherit.aes = FALSE, fill = NA, color = "black") +
+                  inherit.aes = FALSE, fill = NA, color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight,
@@ -13010,8 +13065,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           position = "identity",
           size = 3.8, alpha = 0.95, stroke = 0.8
         ) +
-        scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-        scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
+        scale_color_manual(values = colors_for_mode(dark_on)[types_chr], limits = types_chr, name = NULL) +
+        scale_fill_manual(values  = colors_for_mode(dark_on)[types_chr], limits = types_chr, name = NULL) +
         scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
         coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
         theme_void() + theme(legend.position = "none") +
@@ -13020,7 +13075,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           aes(PlateLocSide, PlateLocHeight, tooltip = tt, data_id = rid, fill = I(tt_fill)),
           inherit.aes = FALSE, shape = 21, size = 6, alpha = 0.001, stroke = 0
         )
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         options = list(
           ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -13900,7 +13955,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       
       # Percent-ish columns: if they already end with "%", keep; else format smartly
       pct_cols <- c("SpinEff","InZonePercent","CompPercent","KPercent","BBPercent",
-                    "FPSPercent","EAPercent","StrikePercent","SwingPercent","WhiffPercent")
+                    "FPSPercent","EAPercent","QPPercent","StrikePercent","SwingPercent","WhiffPercent")
       for (nm in pct_cols) if (nm %in% names(summ)) {
         x <- summ[[nm]]
         if (is.numeric(x)) {
@@ -13923,7 +13978,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       
       # Percent-like columns (DP page expects strings with %)
       for (nm in c("SpinEff","InZonePercent","CompPercent","KPercent","BBPercent",
-                   "FPSPercent","EAPercent","StrikePercent","SwingPercent","WhiffPercent")) {
+                   "FPSPercent","EAPercent","QPPercent","StrikePercent","SwingPercent","WhiffPercent")) {
         if (nm %in% names(summ) && !is.character(summ[[nm]])) {
           # SpinEff is stored as a rate (0–1) in many builds, same pctify works
           summ[[nm]] <- pctify(summ[[nm]])
@@ -13945,6 +14000,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
       csw_all <- sum(df$PitchCall %in% c("StrikeSwinging","StrikeCalled"), na.rm = TRUE)
       bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+      fps_opp <- bf_live
       k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
       bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
       fps_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0 &
@@ -14001,8 +14057,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           safe_pct(sum(comp, na.rm=TRUE), sum(!is.na(comp))) },
           KPercent      = safe_pct(k_live, bf_live),
           BBPercent     = safe_pct(bb_live, bf_live),
-          FPSPercent    = safe_pct(fps_live, bf_live),
-          EAPercent     = safe_pct(ea_live, bf_live),
+          FPSPercent    = safe_pct(fps_live, fps_opp),
+          EAPercent     = safe_pct(ea_live, fps_opp),
           StrikePercent = if (has_pc) safe_pct(strikes, nrow(df)) else "",
           SwingPercent  = safe_pct(sum(!is.na(df$PitchCall) & df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","FoulBall","InPlay"), na.rm = TRUE), nrow(df)),
           WhiffPercent  = safe_pct(sw, den),
@@ -14027,6 +14083,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           `BB%`     = BBPercent,
           `FPS%`    = FPSPercent,
           `E+A%`    = EAPercent,
+          `QP%`     = QPPercent,
           `Strike%` = StrikePercent,
           `Swing%`  = SwingPercent,
           `Whiff%`  = WhiffPercent,
@@ -14037,7 +14094,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         dplyr::select(
           Pitch, `#`, Usage, BF,
           Velo, Max, IVB, HB, rTilt, bTilt, SpinEff, Spin, Height, Side, VAA, HAA, Ext,
-          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `K%`, `BB%`, `Whiff%`, EV, LA,
+          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `QP%`, `K%`, `BB%`, `Whiff%`, EV, LA,
           `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
         ) %>%
         dplyr::mutate(
@@ -14080,6 +14137,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       date_like <- vapply(df_table, is_date_like, logical(1))
       if (any(date_like)) df_table[date_like] <- lapply(df_table[date_like], as.character)
       df_table <- as.data.frame(df_table, stringsAsFactors = FALSE, check.names = FALSE)
+      df_table <- fill_all_qp_pct(df_table, df)
       
       if (all(c("Whiff%","CSW%") %in% names(df_table))) {
         df_table <- df_table %>% dplyr::relocate(`CSW%`, .after = `Whiff%`)
@@ -14249,10 +14307,36 @@ correlations_ui <- function() {
           border: 1px solid #dee2e6;
           border-radius: 5px;
           padding: 15px;
-          background-color: white;
+          background-color: transparent;
         }
         .correlation-controls {
           margin-bottom: 20px;
+        }
+        /* Dark mode overrides */
+        body.theme-dark .correlation-sidebar {
+          background-color: transparent !important;
+          border-color: rgba(255,255,255,0.08) !important;
+          color: #e5e7eb !important;
+        }
+        body.theme-dark .correlation-main {
+          background: transparent !important;
+          color: #e5e7eb !important;
+        }
+        body.theme-dark .correlation-chart {
+          background: transparent !important;
+          border-color: rgba(255,255,255,0.12) !important;
+          box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+        }
+        body.theme-dark #corr_summary,
+        body.theme-dark #corr_data_table,
+        body.theme-dark .correlation-controls label {
+          color: #e5e7eb !important;
+        }
+        body.theme-dark .correlation-controls .form-control,
+        body.theme-dark .correlation-controls .selectize-input {
+          background: #0f172a !important;
+          color: #e5e7eb !important;
+          border-color: #1f2937 !important;
         }
       "))
     ),
@@ -15154,6 +15238,18 @@ custom_reports_server <- function(id) {
         } else {
           df <- pitch_data_pitching %>% dplyr::filter(Pitcher %in% players)
         }
+        
+        # Apply three-tier filtering for players (admins and coaches see all)
+        tryCatch({
+          if (!is_admin() && !is_coach()) {
+            ue <- user_email()
+            if (!is.na(ue)) {
+              df <- df %>% dplyr::filter(norm_email(Email) == norm_email(ue))
+            }
+          }
+        }, error = function(e) {
+          # Silently handle if is_admin/is_coach not available
+        })
       } else {
         # For Hitting: filter by Batter, ensure Batter column exists and has data
         if (!"Batter" %in% names(pitch_data)) {
@@ -15166,6 +15262,18 @@ custom_reports_server <- function(id) {
           df <- pitch_data %>% 
             dplyr::filter(!is.na(Batter), nzchar(as.character(Batter)), Batter %in% players)
         }
+        
+        # Apply three-tier filtering for players (admins and coaches see all)
+        tryCatch({
+          if (!is_admin() && !is_coach()) {
+            ue <- user_email()
+            if (!is.na(ue)) {
+              df <- df %>% dplyr::filter(norm_email(Email) == norm_email(ue))
+            }
+          }
+        }, error = function(e) {
+          # Silently handle if is_admin/is_coach not available
+        })
       }
       
       # Apply all filters efficiently
@@ -15282,6 +15390,17 @@ custom_reports_server <- function(id) {
       out_id <- paste0("cell_render_", cell_id)
       tooltip_css_local <- if (exists("tooltip_css", inherits = TRUE)) tooltip_css else
         "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.4);"
+      # Dark-mode helper
+      is_dark_mode_local <- function() {
+        dm <- NULL
+        # prefer root scope to pick up global toggle
+        dm <- tryCatch({
+          rs <- session$rootScope()
+          if (!is.null(rs) && !is.null(rs$input$dark_mode)) rs$input$dark_mode else NULL
+        }, error = function(...) NULL)
+        if (is.null(dm) && !is.null(input$dark_mode)) dm <- input$dark_mode
+        isTRUE(dm)
+      }
       # clear previous output so switching types always re-renders
       output[[out_id]] <- renderUI({ NULL })
       if (!nzchar(tsel)) {
@@ -15304,13 +15423,19 @@ custom_reports_server <- function(id) {
         if (!"Stuff+" %in% names(df_mv) && "StuffPlus" %in% names(df_mv)) df_mv$`Stuff+` <- df_mv$StuffPlus
         output[[out_id]] <- ggiraph::renderGirafe({
           if (!nrow(df_mv)) return(NULL)
+          dark_on <- is_dark_mode_local()
+          axis_col <- if (dark_on) "#e5e7eb" else "black"
+          line_col <- if (dark_on) "#ffffff" else "black"
+          grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                                  alpha.f = if (dark_on) 0.18 else 0.12)
+          cols <- colors_for_mode(dark_on)
           df_mv <- df_mv %>%
             dplyr::mutate(
               SplitColumn = .data[[if ("SplitColumn" %in% names(df_mv)) "SplitColumn" else "TaggedPitchType"]],
               tt = make_hover_tt(.),
               rid = dplyr::row_number()
             )
-          types_chr <- as.character(intersect(names(all_colors), unique(df_mv$SplitColumn)))
+          types_chr <- as.character(intersect(names(cols), unique(df_mv$SplitColumn)))
           avg <- df_mv %>%
             dplyr::group_by(SplitColumn) %>%
             dplyr::summarise(
@@ -15341,15 +15466,19 @@ custom_reports_server <- function(id) {
               aes(avg_HB, avg_IVB, color = SplitColumn, tooltip = tt, data_id = data_id),
               size = 8, show.legend = FALSE
             ) +
-            geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+            geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+            geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
             coord_cartesian(xlim = c(-25,25), ylim = c(-25,25)) +
-            scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-            scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-            theme_minimal() + axis_theme +
+            scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+            scale_fill_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+            theme_minimal() + axis_theme + grid_theme(dark_on) +
             theme(legend.position = "none",
-                  axis.text.x = element_text(size = 15, face = "bold"),
-                  axis.text.y = element_text(size = 15, face = "bold"))
-          ggiraph::girafe(
+                  axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+                  axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
+                  axis.ticks = element_blank(),
+                  panel.grid.major = element_line(color = grid_col),
+                  panel.grid.minor = element_blank())
+          girafe_transparent(
             ggobj = p,
             width_svg = 8, height_svg = 6.5,
             options = list(
@@ -15366,9 +15495,15 @@ custom_reports_server <- function(id) {
           df$SplitColumn <- df[[if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"]]
           df <- df %>% dplyr::filter(is.finite(RelSide), is.finite(RelHeight))
           if (!nrow(df)) return(NULL)
+          dark_on <- is_dark_mode_local()
+          axis_col <- if (dark_on) "#e5e7eb" else "black"
+          line_col <- if (dark_on) "#ffffff" else "black"
+          grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                                  alpha.f = if (dark_on) 0.18 else 0.12)
+          cols <- colors_for_mode(dark_on)
           
-          types_chr <- intersect(names(all_colors), as.character(unique(df$SplitColumn)))
-          types_chr <- types_chr[types_chr %in% names(all_colors)]
+          types_chr <- intersect(names(cols), as.character(unique(df$SplitColumn)))
+          types_chr <- types_chr[types_chr %in% names(cols)]
           
           sess_lbl <- {
             ss <- unique(df$SessionType)
@@ -15402,26 +15537,32 @@ custom_reports_server <- function(id) {
           y_max <- max(6, suppressWarnings(max(df$RelHeight, na.rm = TRUE) + 0.2))
           
           p <- ggplot() +
-            geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
+            geom_polygon(data = mound, aes(x, y), fill = if (dark_on) "transparent" else "tan", color = "tan") +
             annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
-            geom_vline(xintercept = 0, color = "black", size = 0.7) +
+            geom_vline(xintercept = 0, color = line_col, size = 0.7) +
+            geom_hline(yintercept = 0, color = line_col, size = 0.7) +
             ggiraph::geom_point_interactive(
               data = avg,
               aes(x = avg_RelSide, y = avg_RelHeight,
                   color = SplitColumn, tooltip = tt, data_id = SplitColumn),
               size = 8, show.legend = FALSE
             ) +
-            scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
+            scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
             scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-            theme_minimal() + axis_theme +
+            theme_minimal() + axis_theme + grid_theme(dark_on) +
             labs(x = NULL, y = NULL) +
             theme(
               legend.position = "none",
-              axis.text.x = element_text(size = 15, face = "bold"),
-              axis.text.y = element_text(size = 15, face = "bold")
+              axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+              axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
+              axis.ticks = element_blank(),
+              panel.grid.major = element_line(color = grid_col),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent", color = NA),
+              plot.background = element_rect(fill = "transparent", color = NA)
             )
           
-          ggiraph::girafe(
+          girafe_transparent(
             ggobj = p,
             width_svg = 8, height_svg = 6.5,
             options = list(
@@ -15437,6 +15578,10 @@ custom_reports_server <- function(id) {
         output[[out_id]] <- ggiraph::renderGirafe({
           df_loc <- df %>% dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight))
           if (!nrow(df_loc)) return(NULL)
+          dark_on <- is_dark_mode_local()
+          line_col <- if (dark_on) "#ffffff" else "black"
+          grid_col <- if (dark_on) "#d1d5db" else "black"
+          cols <- colors_for_mode(dark_on)
           
           # Use different location plots based on report type
           if (input$report_type == "Hitting") {
@@ -15475,8 +15620,9 @@ custom_reports_server <- function(id) {
                 rid = dplyr::row_number()
               )
             
-            types_chr <- intersect(names(all_colors), unique(df_plot$TaggedPitchType))
+            types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
             if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
+            col_vals <- cols[types_chr]; col_vals[is.na(col_vals)] <- "gray70"
             
             home <- data.frame(
               x = c(-0.75, 0.75, 0.75, 0, -0.75),
@@ -15509,19 +15655,19 @@ custom_reports_server <- function(id) {
             df_other <- dplyr::filter(df_plot, is.na(ResultDisplay))
             
             p <- ggplot() +
-              geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = "black") +
+              geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
               geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                        inherit.aes = FALSE, fill = NA, color = "black") +
+                        inherit.aes = FALSE, fill = NA, color = line_col) +
               geom_rect(data = green_box,
                         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                         inherit.aes = FALSE,
                         fill = "#4CAF50", alpha = 0.15, color = "#4CAF50", linetype = "dashed", linewidth = 0.75) +
               geom_segment(data = grid_vertical,
                            aes(x = x, xend = x, y = ymin, yend = ymax),
-                           inherit.aes = FALSE, color = "black", linetype = "solid") +
+                           inherit.aes = FALSE, color = grid_col, linetype = "solid") +
               geom_segment(data = grid_horizontal,
                            aes(y = y, yend = y, x = xmin, xend = xmax),
-                           inherit.aes = FALSE, color = "black", linetype = "solid") +
+                           inherit.aes = FALSE, color = grid_col, linetype = "solid") +
               ggiraph::geom_point_interactive(
                 data = df_other,
                 aes(PlateLocSide, PlateLocHeight,
@@ -15536,13 +15682,13 @@ custom_reports_server <- function(id) {
                     tooltip = tooltip, data_id = rid),
                 size = 4.0, alpha = 0.85, stroke = 0.8
               ) +
-              scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-              scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
+              scale_color_manual(values = col_vals, limits = types_chr, name = NULL) +
+              scale_fill_manual(values = col_vals, limits = types_chr, name = NULL) +
               scale_shape_manual(values = hit_shape_map, drop = TRUE, name = NULL) +
               coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
               theme_void() + theme(legend.position = "none")
             
-            ggiraph::girafe(
+            girafe_transparent(
               ggobj = p,
               options = list(
                 ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css_local),
@@ -15558,11 +15704,11 @@ custom_reports_server <- function(id) {
                 Result = factor(compute_result(PitchCall, PlayResult), levels = result_levels),
                 tt = make_hover_tt(.),
                 rid = dplyr::row_number(),
-                tt_fill = dplyr::coalesce(all_colors[as.character(SplitColumn)], "gray")
+                tt_fill = dplyr::coalesce(cols[as.character(SplitColumn)], "gray")
               )
             df_known <- df_loc %>% dplyr::filter(!is.na(Result))
             df_other <- df_loc %>% dplyr::filter(is.na(Result))
-            types_chr <- as.character(intersect(names(all_colors), unique(df_loc$SplitColumn)))
+            types_chr <- as.character(intersect(names(cols), unique(df_loc$SplitColumn)))
             home <- data.frame(x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
                                y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5)
             cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
@@ -15599,7 +15745,7 @@ custom_reports_server <- function(id) {
                 aes(PlateLocSide, PlateLocHeight, tooltip = tt, data_id = rid, fill = I(tt_fill)),
                 shape = 21, size = 6, alpha = 0.001, stroke = 0, inherit.aes = FALSE
               )
-            ggiraph::girafe(
+            girafe_transparent(
               ggobj = p,
               options = list(
                 ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css_local),
@@ -15743,7 +15889,7 @@ custom_reports_server <- function(id) {
           
           # Default fallback
           ggplot() + theme_void()
-        })
+        }, bg = "transparent")
         return(plotOutput(ns(out_id), height = "280px"))
       } else if (tsel == "Summary Table") {
         output[[out_id]] <- DT::renderDataTable({
@@ -16217,6 +16363,14 @@ custom_reports_server <- function(id) {
           }
           
           if (!nrow(df_spray)) return(NULL)
+          dark_on <- is_dark_mode_local()
+          cols <- colors_for_mode(dark_on)
+          field_fill  <- if (dark_on) "transparent" else "#f3f5f7"
+          field_alpha <- if (dark_on) 0 else 0.6
+          foul_line_col <- if (dark_on) "#e5e7eb" else "grey50"
+          fence_col  <- if (dark_on) "#9ca3af" else "grey40"
+          infield_col <- if (dark_on) "#cbd5e1" else "grey70"
+          text_col   <- if (dark_on) "#e5e7eb" else "black"
           
           # Accept any live-like session text
           st <- tolower(trimws(as.character(df_spray$SessionType)))
@@ -16251,17 +16405,17 @@ custom_reports_server <- function(id) {
           # If nothing to plot, show field + message
           if (!length(ok)) {
             p_empty <- ggplot() +
-              geom_polygon(data = home, aes(x, y), fill = NA, color = "grey50") +
-              geom_path(data = fence, aes(x, y), color = "grey40", linewidth = 0.8) +
+              geom_polygon(data = home, aes(x, y), fill = NA, color = foul_line_col) +
+              geom_path(data = fence, aes(x, y), color = fence_col, linewidth = 0.8) +
               geom_polygon(data = rbind(fence, fence[1,]), aes(x, y),
-                           fill = "#f3f5f7", color = NA, alpha = 0.6) +
-              geom_path(data = fl_l, aes(x, y), color = "grey50") +
-              geom_path(data = fl_r, aes(x, y), color = "grey50") +
-              geom_path(data = infield, aes(x, y), color = "grey70") +
-              annotate("text", x = 0, y = 200, label = "No balls in play for current filters", size = 5) +
+                           fill = field_fill, color = NA, alpha = field_alpha) +
+              geom_path(data = fl_l, aes(x, y), color = foul_line_col) +
+              geom_path(data = fl_r, aes(x, y), color = foul_line_col) +
+              geom_path(data = infield, aes(x, y), color = infield_col) +
+              annotate("text", x = 0, y = 200, label = "No balls in play for current filters", size = 5, color = text_col) +
               coord_fixed(xlim = c(-380, 380), ylim = c(-30, 420)) +
               theme_void()
-            return(ggiraph::girafe(ggobj = p_empty))
+            return(girafe_transparent(ggobj = p_empty))
           }
           
           # --- Points to plot ---
@@ -16282,7 +16436,11 @@ custom_reports_server <- function(id) {
           # Outcome colors
           outcome <- dplyr::case_when(bbe$PlayResult %in% hit_levels ~ bbe$PlayResult, TRUE ~ "Out")
           bbe$Outcome <- factor(outcome, levels = c("Out", hit_levels))
-          outcome_cols <- c("Single"="#1fab54","Double"="#1f77b4","Triple"="#7b1fa2","HomeRun"="#d62728","Out"="#222222")
+          outcome_cols <- if (dark_on) {
+            c("Single"="#34d399","Double"="#60a5fa","Triple"="#c084fc","HomeRun"="#f87171","Out"="#e5e7eb")
+          } else {
+            c("Single"="#1fab54","Double"="#1f77b4","Triple"="#7b1fa2","HomeRun"="#d62728","Out"="#222222")
+          }
           
           # Tooltip + tooltip fill by pitch type color
           bbe <- bbe %>%
@@ -16295,17 +16453,17 @@ custom_reports_server <- function(id) {
                 "Pitch: ", TaggedPitchType, "\n",
                 "Result: ", PlayResult
               ),
-              tt_fill = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray80")
+              tt_fill = dplyr::coalesce(cols[as.character(TaggedPitchType)], "gray80")
             )
           
           p <- ggplot() +
-            geom_polygon(data = home, aes(x, y), fill = NA, color = "grey50") +
-            geom_path(data = fence, aes(x, y), color = "grey40", linewidth = 0.8) +
+            geom_polygon(data = home, aes(x, y), fill = NA, color = foul_line_col) +
+            geom_path(data = fence, aes(x, y), color = fence_col, linewidth = 0.8) +
             geom_polygon(data = rbind(fence, fence[1,]), aes(x, y),
-                         fill = "#f3f5f7", color = NA, alpha = 0.6) +
-            geom_path(data = fl_l, aes(x, y), color = "grey50") +
-            geom_path(data = fl_r, aes(x, y), color = "grey50") +
-            geom_path(data = infield, aes(x, y), color = "grey70") +
+                         fill = field_fill, color = NA, alpha = field_alpha) +
+            geom_path(data = fl_l, aes(x, y), color = foul_line_col) +
+            geom_path(data = fl_r, aes(x, y), color = foul_line_col) +
+            geom_path(data = infield, aes(x, y), color = infield_col) +
             
             ggiraph::geom_point_interactive(
               data = bbe,
@@ -16319,9 +16477,21 @@ custom_reports_server <- function(id) {
             ) +
             scale_color_manual(values = outcome_cols, name = "Result") +
             coord_fixed(xlim = c(-380, 380), ylim = c(-30, 420)) +
-            theme_void() + theme(legend.position = "right")
+            theme_void() + theme(
+              legend.position = "bottom",
+              legend.direction = "horizontal",
+              legend.box = "horizontal",
+              legend.margin = margin(t = -4, r = 0, b = -12, l = 0),
+              legend.box.margin = margin(t = -6, r = 0, b = -14, l = 0),
+              plot.margin = margin(t = 0, r = 0, b = -16, l = 0),
+              legend.text = element_text(size = 11, face = "bold", color = text_col),
+              legend.title = element_text(color = text_col),
+              legend.background = element_rect(fill = "transparent", color = NA),
+              legend.box.background = element_rect(fill = "transparent", color = NA),
+              legend.key = element_rect(fill = "transparent", color = NA)
+            )
           
-          ggiraph::girafe(
+          girafe_transparent(
             ggobj = p,
             options = list(
               ggiraph::opts_sizing(rescale = TRUE),
@@ -16540,7 +16710,7 @@ player_plans_ui <- function() {
             condition = "input.pp_goal1_type == 'Execution'",
             selectInput("pp_goal1_execution_stat", "Stat:",
                         choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                                    "Comp%", "Ctrl+", "QP+", "QP%", "Whiff%", "CSW%"),
                         selected = ""),
             selectInput("pp_goal1_execution_pitch", "Pitch Type:",
                         choices = c("All"),
@@ -16632,7 +16802,7 @@ player_plans_ui <- function() {
             condition = "input.pp_goal2_type == 'Execution'",
             selectInput("pp_goal2_execution_stat", "Stat:",
                         choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                                    "Comp%", "Ctrl+", "QP+", "QP%", "Whiff%", "CSW%"),
                         selected = ""),
             selectInput("pp_goal2_execution_pitch", "Pitch Type:",
                         choices = c("All"),
@@ -16724,7 +16894,7 @@ player_plans_ui <- function() {
             condition = "input.pp_goal3_type == 'Execution'",
             selectInput("pp_goal3_execution_stat", "Stat:",
                         choices = c("", "FPS%", "E+A%", "InZone%", "Strike%", 
-                                    "Comp%", "Ctrl+", "QP+", "Whiff%", "CSW%"),
+                                    "Comp%", "Ctrl+", "QP+", "QP%", "Whiff%", "CSW%"),
                         selected = ""),
             selectInput("pp_goal3_execution_pitch", "Pitch Type:",
                         choices = c("All"),
@@ -16870,12 +17040,12 @@ player_plans_ui <- function() {
       
       # Add custom CSS for the modal
       tags$style(HTML("
-        .modal-dialog {
-          max-width: 800px;
-        }
-        .goal-completion-checkbox {
-          margin-top: 5px;
-        }
+      .modal-dialog {
+        max-width: 800px;
+      }
+      .goal-completion-checkbox {
+        margin-top: 5px;
+      }
       "))
     )
   )
@@ -16884,275 +17054,45 @@ player_plans_ui <- function() {
 # == AUTHENTICATION SETUP ==
 # ==================================
 
-get_auth_db_config <- function() {
-  # Prefer env vars (shinyapps UI, .Renviron, etc)
-  host <- Sys.getenv("AUTH_DB_HOST", "")
-  db   <- Sys.getenv("AUTH_DB_NAME", "")
-  user <- Sys.getenv("AUTH_DB_USER", "")
-  pass <- Sys.getenv("AUTH_DB_PASSWORD", "")
-  driver <- Sys.getenv("AUTH_DB_DRIVER", "")
-  port   <- Sys.getenv("AUTH_DB_PORT", "")
-  ssl_ca <- Sys.getenv("AUTH_DB_SSL_CA", "")
-  sslmode <- Sys.getenv("AUTH_DB_SSLMODE", "")
-  channel_binding <- Sys.getenv("AUTH_DB_CHANNEL_BINDING", "")
-  
-  # Fallback: read a config file checked into the app bundle (json or yaml)
-  if (!nzchar(host) || !nzchar(db) || !nzchar(user) || !nzchar(pass)) {
-    read_auth_file_config <- function(path) {
-      if (!file.exists(path)) return(NULL)
-      ext <- tools::file_ext(path)
-      cfg <- tryCatch(
-        {
-          if (tolower(ext) == "json") {
-            if (!requireNamespace("jsonlite", quietly = TRUE)) return(NULL)
-            jsonlite::fromJSON(path)
-          } else {
-            if (!requireNamespace("yaml", quietly = TRUE)) return(NULL)
-            yaml::read_yaml(path)
-          }
-        },
-        error = function(...) NULL
-      )
-      cfg
-    }
-    cfg_file <- read_auth_file_config("auth_db_config.yml") %||% read_auth_file_config("auth_db_config.json")
-    if (!is.null(cfg_file)) {
-      host   <- cfg_file$host   %||% host
-      db     <- cfg_file$dbname %||% cfg_file$name %||% db
-      user   <- cfg_file$user   %||% user
-      pass   <- cfg_file$password %||% cfg_file$pass %||% pass
-      driver <- cfg_file$driver %||% driver
-      port   <- cfg_file$port   %||% port
-      ssl_ca <- cfg_file$ssl_ca %||% ssl_ca
-      sslmode <- cfg_file$sslmode %||% cfg_file$ssl_mode %||% ""
-      channel_binding <- cfg_file$channel_binding %||% ""
-    }
-  }
-  
-  if (!nzchar(host) || !nzchar(db) || !nzchar(user) || !nzchar(pass)) return(NULL)
-  
-  driver <- tolower(if (nzchar(driver)) driver else "mariadb")
-  port   <- as.integer(if (nzchar(port)) port else if (identical(driver, "postgres")) "5432" else "3306")
-  
-  if (identical(driver, "postgres")) {
-    if (!requireNamespace("RPostgres", quietly = TRUE)) return(NULL)
-    drv <- RPostgres::Postgres()
-  } else {
-    if (!requireNamespace("RMariaDB", quietly = TRUE)) return(NULL)
-    drv <- RMariaDB::MariaDB()
-  }
-  
-  cfg <- list(
-    drv = drv,
-    dbname = db,
-    host = host,
-    user = user,
-    password = pass,
-    port = port
-  )
-  if (nzchar(ssl_ca)) cfg$ssl.ca <- ssl_ca
-  if (nzchar(sslmode)) cfg$sslmode <- sslmode
-  if (nzchar(channel_binding)) cfg$channel_binding <- channel_binding
-  cfg
-}
+# Using shinyapps.io native authentication instead of shinymanager
+# Three-tier access system:
+# 1. Admins - see all data + admin features
+# 2. Coaches - see all data, no admin features  
+# 3. Players - see only their own data (matched via lookup_table.csv)
 
-use_custom_auth <- {
-  flag <- tolower(Sys.getenv("USE_CUSTOM_AUTH", "false"))
-  isTRUE(flag %in% c("1", "true", "yes", "on"))
-}
-
-sm_db_config <- get_auth_db_config()
-auth_passphrase <- "cbu_baseball_2024_secure_passphrase"
-use_external_auth <- {
-  flag <- tolower(Sys.getenv("USE_EXTERNAL_AUTH", ""))
-  if (nzchar(flag)) {
-    isTRUE(flag %in% c("1", "true", "yes", "on"))
-  } else {
-    !is.null(sm_db_config)  # auto-enable if config file/vars exist
-  }
-}
-
-get_credentials_path <- function() {
-  p <- Sys.getenv("CREDENTIALS_SQLITE_PATH", unset = "credentials.sqlite")
-  p <- path.expand(p)
-  dir.create(dirname(p), recursive = TRUE, showWarnings = FALSE)
-  p
-}
-
-credentials_path <- get_credentials_path()
-
-# Create initial admin users using their actual emails as usernames
-initial_credentials <- data.frame(
-  user = c(
-    "jgaynor@pitchingcoachu.com",
-    "Blake.hawksworth@okstate.edu",
-    "Payton.stevens@okstate.edu",
-    "Trey.cobb@okstate.edu",
-    "jared.s.gaynor@gmail.com"
-  ),
-  password = c(
-    "pcu2025",
-    "pcu2025",
-    "pcu2025",
-    "pcu2025",
-    "pcu2025"
-  ),
-  admin = c(TRUE, FALSE, FALSE, FALSE, FALSE),
-  email = c(
-    "jgaynor@pitchingcoachu.com",
-    "Blake.hawksworth@okstate.edu",
-    "Payton.stevens@okstate.edu",
-    "Trey.cobb@okstate.edu",
-    "jared.s.gaynor@gmail.com"
-  ),
-  stringsAsFactors = FALSE
+admin_emails <- c(
+  "jgaynor@pitchingcoachu.com",
+  "ahalverson@pitchingcoachu.com"
 )
 
-# Initialize credentials database (external if enabled, else SQLite)
-use_ext_db <- use_external_auth && !is.null(sm_db_config)
+# Coach emails - these users can see ALL data but don't have admin features
+coach_emails <- c(
+  "jgaynor@pitchingcoachu.com",
+  "Blake.hawksworth@okstate.edu",
+  "Payton.stevens@okstate.edu",
+  "Trey.cobb@okstate.edu",
+  "jared.s.gaynor@gmail.com"
+)
 
-if (use_custom_auth && use_ext_db) {
-  try(create_db(
-    credentials_data = initial_credentials,
-    passphrase = auth_passphrase,
-    db_config = sm_db_config
-  ), silent = TRUE)
-} else if (!file.exists(credentials_path)) {
-  create_db(
-    credentials_data = initial_credentials,
-    sqlite_path = credentials_path,
-    passphrase = auth_passphrase  # Keep this secret!
-  )
-  
-  message("✓ Credentials database created: credentials.sqlite")
-  message("✓ Admin users created - use emails as usernames")
-  message("⚠ IMPORTANT: Change default passwords after first login!")
-}
-
-# Ensure seed users exist (idempotent)
-ensure_seed_users <- function(seed_df, db_cfg, sqlite_path, passphrase) {
-  for (i in seq_len(nrow(seed_df))) {
-    u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- isTRUE(seed_df$admin[i]); em <- seed_df$email[i]
-    exists <- FALSE
-    con <- NULL
-    if (!is.null(db_cfg)) {
-      args <- db_cfg
-      drv <- args$drv
-      args$drv <- NULL
-      con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
-    } else if (file.exists(sqlite_path)) {
-      con <- try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE)
-    }
-    if (!inherits(con, "try-error") && !is.null(con)) {
-      on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-      tbl <- try(DBI::dbReadTable(con, "credentials"), silent = TRUE)
-      if (!inherits(tbl, "try-error") && nrow(tbl)) {
-        exists <- any(tolower(tbl$user) == tolower(u))
-      }
-    }
-    if (!exists) {
-      try(shinymanager::create_user(
-        user = u,
-        password = pwd,
-        admin = adm,
-        comment = em,
-        db = if (!is.null(db_cfg)) db_cfg else sqlite_path,
-        passphrase = passphrase
-      ), silent = TRUE)
-    }
-  }
-}
-
-ensure_seed_users(initial_credentials, if (use_custom_auth && use_ext_db) sm_db_config else NULL, credentials_path, auth_passphrase)
-
-# Enforce admin flags: only these users stay admins
-enforce_admin_flags <- function(admin_users, db_cfg, sqlite_path) {
-  con <- NULL
-  if (!is.null(db_cfg)) {
-    args <- db_cfg
-    drv <- args$drv
-    args$drv <- NULL
-    con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
-  } else if (file.exists(sqlite_path)) {
-    con <- try(DBI::dbConnect(RSQLite::SQLite(), sqlite_path), silent = TRUE)
-  }
-  if (inherits(con, "try-error") || is.null(con)) return()
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-  admin_list <- paste(sprintf("'%s'", tolower(admin_users)), collapse = ",")
-  try(DBI::dbExecute(con, sprintf("UPDATE credentials SET admin = 0 WHERE LOWER(user) NOT IN (%s)", admin_list)), silent = TRUE)
-  try(DBI::dbExecute(con, sprintf("UPDATE credentials SET admin = 1 WHERE LOWER(user) IN (%s)", admin_list)), silent = TRUE)
-}
-
-enforce_admin_flags(c("jgaynor@pitchingcoachu.com"), if (use_custom_auth && use_ext_db) sm_db_config else NULL, credentials_path)
-
-# --- External auth helpers (direct DBI, no shinymanager helper needed) ---
-hash_pwd <- function(pwd) digest::digest(pwd, algo = "sha256")
-
-ensure_external_auth_table <- function(db_cfg, seed_df) {
-  args <- db_cfg
-  drv <- args$drv
-  args$drv <- NULL
-  con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
-  if (inherits(con, "try-error") || is.null(con)) return(FALSE)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-  DBI::dbExecute(con, "
-    CREATE TABLE IF NOT EXISTS auth_users (
-      username TEXT PRIMARY KEY,
-      password TEXT NOT NULL,
-      admin INTEGER DEFAULT 0,
-      email TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  ")
-  tbl <- try(DBI::dbGetQuery(con, "SELECT password FROM auth_users LIMIT 1"), silent = TRUE)
-  if (!inherits(tbl, "try-error") && nrow(tbl) && grepl("^argon2", tbl$password[[1]]) && !requireNamespace("sodium", quietly = TRUE)) {
-    try(DBI::dbExecute(con, "DROP TABLE auth_users"), silent = TRUE)
-    DBI::dbExecute(con, "
-      CREATE TABLE IF NOT EXISTS auth_users (
-        username TEXT PRIMARY KEY,
-        password TEXT NOT NULL,
-        admin INTEGER DEFAULT 0,
-        email TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    ")
-  }
-  for (i in seq_len(nrow(seed_df))) {
-    u <- seed_df$user[i]; pwd <- seed_df$password[i]; adm <- as.integer(isTRUE(seed_df$admin[i])); em <- seed_df$email[i]
-    existing <- try(DBI::dbGetQuery(con, "SELECT username FROM auth_users WHERE LOWER(username)=LOWER($1) LIMIT 1", params = list(u)), silent = TRUE)
-    if (inherits(existing, "try-error") || is.null(existing) || !nrow(existing)) {
-      hashed <- hash_pwd(pwd)
-      try(DBI::dbExecute(con,
-                         "INSERT INTO auth_users (username, password, admin, email) VALUES ($1,$2,$3,$4)",
-                         params = list(u, hashed, adm, em)), silent = TRUE)
-    }
-  }
-  TRUE
-}
-
-make_external_check <- function(db_cfg) {
-  function(user, password) {
-    args <- db_cfg
-    drv <- args$drv
-    args$drv <- NULL
-    con <- try(do.call(DBI::dbConnect, c(list(drv), args)), silent = TRUE)
-    if (inherits(con, "try-error") || is.null(con)) return(list(result = FALSE, message = "DB connect failed"))
-    on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
-    row <- try(DBI::dbGetQuery(con,
-                               "SELECT username, password, admin FROM auth_users WHERE LOWER(username)=LOWER($1) LIMIT 1",
-                               params = list(user)), silent = TRUE)
-    if (inherits(row, "try-error") || is.null(row) || !nrow(row)) return(list(result = FALSE))
-    stored <- row$password[[1]]
-    hashed <- hash_pwd(password)
-    if (!identical(stored, hashed) && !identical(stored, password)) return(list(result = FALSE))
-    list(user = row$username[[1]], admin = isTRUE(row$admin[[1]]), expire = NA, result = TRUE)
-  }
-}
+# Players are identified by their email being in the lookup_table.csv Email column
+# They will only see data where Email matches their login email
 
 
 ui <- tagList(
   # --- Custom navbar colors & styling ---
   tags$head(
+    # Apple iOS home screen icon
+    tags$link(rel = "apple-touch-icon", href = "PCUlogo.png"),
+    tags$link(rel = "apple-touch-icon", sizes = "152x152", href = "PCUlogo.png"),
+    tags$link(rel = "apple-touch-icon", sizes = "180x180", href = "PCUlogo.png"),
+    tags$link(rel = "apple-touch-icon", sizes = "167x167", href = "PCUlogo.png"),
+    # Standard favicon
+    tags$link(rel = "icon", type = "image/png", href = "PCUlogo.png"),
+    # Apple mobile web app settings
+    tags$meta(name = "apple-mobile-web-app-capable", content = "yes"),
+    tags$meta(name = "apple-mobile-web-app-status-bar-style", content = "black-translucent"),
+    tags$meta(name = "apple-mobile-web-app-title", content = "PCU Dashboard"),
+    
     tags$script(HTML("
       document.addEventListener('DOMContentLoaded', function() {
         var checkbox = document.querySelector('.dark-toggle input#dark_mode');
@@ -17167,52 +17107,181 @@ ui <- tagList(
         sync();
       });
     ")),
-    # Persist shinymanager token in localStorage so users stay logged in across visits
     tags$script(HTML("
-      (function() {
-        var KEY = 'sm_token';
-        var params = new URLSearchParams(window.location.search || '');
-        var current = (params.get('token') || '').replace(/\"/g, '');
-
-        // Save the current token after login
-        if (current) {
-          try { localStorage.setItem(KEY, current); } catch (e) {}
-        } else {
-          // If no token in URL, try to reattach a saved one
-          var saved = null;
-          try { saved = localStorage.getItem(KEY); } catch (e) {}
-          if (saved) {
-            params.set('token', saved);
-            var qs = params.toString();
-            var target = window.location.origin + window.location.pathname + '?' + qs + window.location.hash;
-            if (window.location.search !== '?' + qs) {
-              window.location.replace(target);
-              return;
+      // Add a simple dropdown mirror for the top navbar tabs (mobile only)
+      document.addEventListener('DOMContentLoaded', function() {
+        var buildSelect = function() {
+          var nav = document.querySelector('#top .navbar-nav');
+          if (!nav) return;
+          var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+          if (!links.length || document.getElementById('topNavSelect')) return;
+          var select = document.createElement('select');
+          select.id = 'topNavSelect';
+          select.className = 'form-control nav-dropdown';
+          links.forEach(function(link) {
+            var opt = document.createElement('option');
+            var val = (link.getAttribute('data-value') || link.textContent || '').trim();
+            opt.value = val;
+            opt.textContent = (link.textContent || '').trim();
+            if (link.parentElement && link.parentElement.classList.contains('active')) opt.selected = true;
+            select.appendChild(opt);
+          });
+          select.addEventListener('change', function() {
+            var target = links.find(function(l) {
+              var val = (l.getAttribute('data-value') || l.textContent || '').trim();
+              return val === select.value;
+            });
+            if (target) target.click();
+          });
+          var container = document.querySelector('#top .navbar-header') || nav.parentNode;
+          if (container) {
+            container.parentNode.insertBefore(select, container.nextSibling);
+          } else {
+            nav.parentNode.insertBefore(select, nav);
+          }
+          $(document).on('shown.bs.tab', '#top .navbar-nav a', function(e) {
+            var val = ($(e.target).data('value') || $(e.target).text() || '').trim();
+            $('#topNavSelect').val(val);
+          });
+        };
+        buildSelect();
+        // fallback for late nav rendering
+        setTimeout(buildSelect, 300);
+      });
+    ")),
+    tags$script(HTML("
+      // Add dropdown mirrors for inner tabsets (suite pages) - mobile-friendly
+      document.addEventListener('DOMContentLoaded', function() {
+        var ensureSidebarDock = function() {
+          // Prefer the accordion body under Filters
+          var body = document.querySelector('.sidebar .sidebar-accordion-body');
+          if (body) return body;
+          // If accordion exists but body not yet created (unlikely), build one
+          var accordion = document.querySelector('.sidebar .sidebar-accordion');
+          if (accordion && !accordion.querySelector('.sidebar-accordion-body')) {
+            var b = document.createElement('div');
+            b.className = 'sidebar-accordion-body';
+            accordion.appendChild(b);
+            return b;
+          }
+          return null;
+        };
+        var placeWrapper = function(nav, wrapper) {
+          if (!nav || !wrapper) return;
+          var target = null;
+          var mobile = window.innerWidth <= 768;
+          if (mobile) {
+            var row = nav.closest('.row');
+            target = row ? row.querySelector('.sidebar-accordion-body') : null;
+            if (!target) target = ensureSidebarDock();
+            if (!target) target = document.querySelector('.sidebar .sidebar-accordion-body');
+          }
+          if (target) {
+            wrapper.classList.add('inner-nav-in-sidebar');
+            if (wrapper.parentNode !== target) {
+              target.insertBefore(wrapper, target.firstChild);
+            } else if (wrapper !== target.firstChild) {
+              target.insertBefore(wrapper, target.firstChild);
+            }
+          } else if (nav.parentNode) {
+            wrapper.classList.remove('inner-nav-in-sidebar');
+            if (wrapper.parentNode !== nav.parentNode) {
+              nav.parentNode.insertBefore(wrapper, nav);
+            } else if (wrapper.nextSibling !== nav) {
+              nav.parentNode.insertBefore(wrapper, nav);
             }
           }
-        }
-
-        // Clear saved token if we land on the login screen with a bad token
-        document.addEventListener('DOMContentLoaded', function() {
-          var onAuthPage = !!document.querySelector('.panel-auth');
-          if (onAuthPage && current) {
-            try { localStorage.removeItem(KEY); } catch (e) {}
-            params.delete('token');
-            var qs = params.toString();
-            var clean = window.location.origin + window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
-            window.history.replaceState({}, '', clean);
-          }
+        };
+        var enhance = function(nav) {
+          if (window.innerWidth <= 768) return; // show native tabs on mobile; no dropdown mirror
+          if (!nav || nav.dataset.hasSelect) return;
+          var links = Array.prototype.slice.call(nav.querySelectorAll('a'));
+          if (!links.length) return;
+          var sel = document.createElement('select');
+          sel.className = 'form-control inner-nav-dropdown';
+          links.forEach(function(link) {
+            var opt = document.createElement('option');
+            var href = (link.getAttribute('href') || '').replace('#','');
+            opt.value = href;
+            opt.textContent = (link.textContent || '').trim();
+            if (link.parentElement && link.parentElement.classList.contains('active')) opt.selected = true;
+            sel.appendChild(opt);
+          });
+          sel.addEventListener('change', function() {
+            var target = links.find(function(l) {
+              var href = (l.getAttribute('href') || '').replace('#','');
+              return href === sel.value;
+            });
+            if (target) target.click();
+          });
+          var wrapper = document.createElement('div');
+          wrapper.className = 'inner-nav-wrap';
+          wrapper.appendChild(sel);
+          nav._innerSelectWrapper = wrapper;
+          placeWrapper(nav, wrapper);
+          // Re-check placement after other mobile transforms run
+          setTimeout(function() { placeWrapper(nav, wrapper); }, 150);
+          window.addEventListener('resize', function() { placeWrapper(nav, wrapper); });
+          $(nav).on('shown.bs.tab', 'a', function(e) {
+            var href = ($(e.target).attr('href') || '').replace('#','');
+            sel.value = href;
+          });
+          nav.dataset.hasSelect = '1';
+        };
+        var init = function() {
+          // standard tabsets
+          document.querySelectorAll('.tabbable > .nav.nav-tabs').forEach(function(nav){
+            if (!nav.dataset.hasSelect) enhance(nav);
+            else if (nav._innerSelectWrapper) placeWrapper(nav, nav._innerSelectWrapper);
+          });
+          // fallback: any nav-tabs missing a select
+          document.querySelectorAll('.nav.nav-tabs').forEach(function(nav){
+            if (!nav.dataset.hasSelect) enhance(nav);
+            else if (nav._innerSelectWrapper) placeWrapper(nav, nav._innerSelectWrapper);
+          });
+        };
+        init();
+        // Re-run when DOM mutates (late-rendered tabsets)
+        var mo = new MutationObserver(function() {
+          clearTimeout(mo._debounce);
+          mo._debounce = setTimeout(init, 120);
         });
-
-        // Clear saved token when the user clicks logout
-        document.addEventListener('click', function(e) {
-          var btn = e.target.closest('[id=\".shinymanager_logout\"]');
-          if (btn) {
-            try { localStorage.removeItem(KEY); } catch (err) {}
-          }
-        }, true);
-      })();
+        mo.observe(document.body, {childList: true, subtree: true});
+        document.addEventListener('shiny:recalculating', function() { setTimeout(init, 200); });
+      });
     ")),
+    tags$script(HTML("
+      // Mobile sidebar: replace full panel with a single dropdown accordion
+      document.addEventListener('DOMContentLoaded', function() {
+        var transform = function(sidebar) {
+          if (!sidebar || sidebar.dataset.mobileAccordion) return;
+          if (window.innerWidth > 768) return;
+          var details = document.createElement('details');
+          details.className = 'sidebar-accordion';
+          var summary = document.createElement('summary');
+          summary.textContent = 'Filters';
+          summary.className = 'sidebar-accordion-summary';
+          var body = document.createElement('div');
+          body.className = 'sidebar-accordion-body';
+          while (sidebar.firstChild) {
+            body.appendChild(sidebar.firstChild);
+          }
+          details.appendChild(summary);
+          details.appendChild(body);
+          sidebar.appendChild(details);
+          sidebar.dataset.mobileAccordion = '1';
+        };
+        var init = function() {
+          document.querySelectorAll('.sidebar').forEach(transform);
+        };
+        init();
+        window.addEventListener('resize', function() {
+          // Do not rebuild; only apply on first mobile render to avoid moving nodes back and forth
+        });
+        document.addEventListener('shiny:recalculating', function() { setTimeout(init, 200); });
+      });
+    ")),
+    # Custom authentication disabled - no need for token persistence
     tags$style(HTML("
       /* ===== MODERN PROFESSIONAL DESIGN ===== */
       
@@ -17261,7 +17330,7 @@ ui <- tagList(
         filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
       }
       .navbar-inverse .navbar-brand .brand-title {
-        background: linear-gradient(135deg, #fff 0%, #a8dadc 100%);
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
@@ -17278,10 +17347,41 @@ ui <- tagList(
         filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
       }
       @media (max-width: 768px) {
-        .navbar .pcu-right { right: 60px; height: 40px; }
+        .navbar .pcu-right { display: none; }
         .navbar-inverse .navbar-brand { font-size: 18px; }
-        .navbar-inverse .navbar-brand .brand-logo { height: 32px; }
-      }
+      .navbar-inverse .navbar-brand .brand-logo { height: 32px; }
+      /* Mobile nav: show original tabs (scrollable) plus dropdown */
+      .navbar-inverse .navbar-nav { display: flex; overflow-x: auto; white-space: nowrap; }
+      .navbar-inverse .navbar-nav > li { float: none; display: inline-block; }
+      #topNavSelect, .nav-dropdown { display: block; width: 100%; max-width: none; }
+      /* Sidebar: show accordion dropdown only on mobile */
+      .sidebar-dropdown-wrap { display: none; }
+        .sidebar { display: block !important; }
+        .sidebar details.sidebar-accordion { display: block; }
+        .sidebar .well { padding: 0; border: none; box-shadow: none; background: transparent; }
+        .sidebar .sidebar-accordion-body .well { padding: 16px; }
+        /* Prevent thin charts/tables: allow horizontal scroll when needed */
+        .plotly { overflow-x: auto !important; }
+        .plotly .main-svg { overflow: visible !important; }
+        .plotly .legend, .plotly .infolayer { overflow: visible !important; }
+        .plot-container { overflow: auto !important; padding-bottom: 12px; }
+        .girafe_container_std, .ggiraph-container { overflow: auto !important; }
+        .dataTables_wrapper { overflow-x: auto !important; width: 100% !important; }
+        /* Hide desktop sidebar toggle button on mobile */
+        #pitchingSidebarToggle { display: none !important; }
+        /* Allow Plotly legends to scroll on small screens */
+        .plotly .legend {
+          max-height: 65vh;
+          overflow-y: auto !important;
+          white-space: normal !important;
+          max-width: 100% !important;
+          position: relative !important;
+        }
+      .plotly .legend .scrollbox { overflow: visible !important; }
+      /* Let static legend plots breathe on mobile */
+      .legend-plot-wrap { width: 100%; overflow-x: auto; }
+      #summary_legend, #summary_result_legend { min-height: 140px !important; }
+    }
 
       /* Tab Navigation - Modern pill style */
       .navbar-inverse .navbar-nav {
@@ -17305,7 +17405,7 @@ ui <- tagList(
         left: 0;
         right: 0;
         bottom: 0;
-        background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+        background: linear-gradient(135deg, rgba(227,82,5,0.18) 0%, rgba(255,140,26,0.12) 100%);
         opacity: 0;
         transition: opacity 0.3s ease;
       }
@@ -17315,9 +17415,9 @@ ui <- tagList(
       .navbar-inverse .navbar-nav > li > a:hover,
       .navbar-inverse .navbar-nav > li > a:focus { 
         color: #ffffff !important;
-        background: rgba(255, 255, 255, 0.15);
+        background: linear-gradient(135deg, rgba(227,82,5,0.55) 0%, rgba(255,140,26,0.45) 100%);
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
       }
 
       /* Active tab - vibrant gradient */
@@ -17329,6 +17429,152 @@ ui <- tagList(
         box-shadow: 0 4px 15px rgba(227, 82, 5, 0.4);
         transform: translateY(-2px);
       }
+      /* Charts/graphs: keep backgrounds transparent globally */
+      .plot-container, .plotly, .plotly .main-svg, .plotly .svg-container { background: transparent !important; }
+      .plotly .cartesianlayer .bg, .plotly .draglayer, .plotly .bglayer rect { fill: transparent !important; }
+      .plotly .polar > g, .plotly .ternary > g { fill: transparent !important; }
+      .girafe_container svg, .ggiraph-container svg, canvas { background: transparent !important; }
+      /* Nuke ggiraph’s white rect background in light mode */
+      body:not(.theme-dark) .girafe_container svg rect.bg,
+      body:not(.theme-dark) .ggiraph-container svg rect.bg {
+        fill: transparent !important;
+      }
+      /* Remove default white panel rects in girafe outputs */
+      body:not(.theme-dark) .girafe_container svg rect[fill='#FFFFFF'],
+      body:not(.theme-dark) .girafe_container svg rect[fill='#ffffff'],
+      body:not(.theme-dark) .girafe_container svg rect[fill='#fff'],
+      body:not(.theme-dark) .girafe_container svg rect[fill='white'],
+      body:not(.theme-dark) .ggiraph-container svg rect[fill='#FFFFFF'],
+      body:not(.theme-dark) .ggiraph-container svg rect[fill='#ffffff'],
+      body:not(.theme-dark) .ggiraph-container svg rect[fill='#fff'],
+      body:not(.theme-dark) .ggiraph-container svg rect[fill='white'] {
+        fill: transparent !important;
+        stroke: none !important;
+      }
+      /* Force plot images and canvases transparent */
+      .shiny-plot-output img,
+      .shiny-plot-output canvas,
+      .shiny-image-output img {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+      /* Light mode: transparent plot surfaces + no shadows */
+      body:not(.theme-dark) .shiny-plot-output,
+      body:not(.theme-dark) .plotly,
+      body:not(.theme-dark) .html-widget,
+      body:not(.theme-dark) .ggiraph-container,
+      body:not(.theme-dark) .girafe_container {
+        background: transparent !important;
+        box-shadow: none !important;
+        border: none !important;
+      }
+      /* Light mode: remove white panels behind plots/graphs (everywhere except sidebar) */
+      body:not(.theme-dark) .well,
+      body:not(.theme-dark) .panel {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      /* Light mode: ensure main content areas are transparent */
+      body:not(.theme-dark) .col-sm-9,
+      body:not(.theme-dark) .main-panel,
+      body:not(.theme-dark) .tab-content,
+      body:not(.theme-dark) .tab-pane {
+        background: transparent !important;
+      }
+      /* Light mode: force sidebarLayout panels transparent */
+      body:not(.theme-dark) .sidebarLayout,
+      body:not(.theme-dark) .sidebarPanel,
+      body:not(.theme-dark) .mainPanel,
+      body:not(.theme-dark) .container-fluid,
+      body:not(.theme-dark) .row {
+        background: transparent !important;
+      }
+      /* Light mode: all divs inside main content transparent */
+      body:not(.theme-dark) .col-sm-9 > div,
+      body:not(.theme-dark) .main-panel > div,
+      body:not(.theme-dark) .tab-pane > div {
+        background: transparent !important;
+      }
+      /* Light mode: specific plot IDs (matching dark mode approach) */
+      body:not(.theme-dark) #heatPlot,
+      body:not(.theme-dark) #heatPlot canvas,
+      body:not(.theme-dark) #heatPlot img,
+      body:not(.theme-dark) #pitchPlot,
+      body:not(.theme-dark) #pitchPlot canvas,
+      body:not(.theme-dark) #pitchPlot img,
+      body:not(.theme-dark) #heatmapPlot,
+      body:not(.theme-dark) #heatmapPlot canvas,
+      body:not(.theme-dark) #heatmapPlot img,
+      body:not(.theme-dark) #veloTrendPlot,
+      body:not(.theme-dark) #veloTrendPlot canvas,
+      body:not(.theme-dark) #veloTrendPlot img,
+      body:not(.theme-dark) #summary_heatZonePlot,
+      body:not(.theme-dark) #summary_heatZonePlot canvas,
+      body:not(.theme-dark) #summary_heatZonePlot img,
+      body:not(.theme-dark) #summary_legend,
+      body:not(.theme-dark) #summary_legend canvas,
+      body:not(.theme-dark) #summary_legend img,
+      body:not(.theme-dark) #heatmapsHeatPlot,
+      body:not(.theme-dark) #heatmapsHeatPlot canvas,
+      body:not(.theme-dark) #heatmapsHeatPlot img,
+      body:not(.theme-dark) #cmpA_heat,
+      body:not(.theme-dark) #cmpA_heat canvas,
+      body:not(.theme-dark) #cmpA_heat img,
+      body:not(.theme-dark) #cmpB_heat,
+      body:not(.theme-dark) #cmpB_heat canvas,
+      body:not(.theme-dark) #cmpB_heat img,
+      body:not(.theme-dark) #corr_plot,
+      body:not(.theme-dark) #corr_plot canvas,
+      body:not(.theme-dark) #corr_plot img,
+      body:not(.theme-dark) #campSummaryHeatZonePlot,
+      body:not(.theme-dark) #campSummaryHeatZonePlot canvas,
+      body:not(.theme-dark) #campSummaryHeatZonePlot img,
+      body:not(.theme-dark) #campSummaryLegend,
+      body:not(.theme-dark) #campSummaryLegend canvas,
+      body:not(.theme-dark) #campSummaryLegend img,
+      body:not(.theme-dark) #summary_result_legend,
+      body:not(.theme-dark) #summary_result_legend canvas,
+      body:not(.theme-dark) #summary_result_legend img,
+      body:not(.theme-dark) #result_key,
+      body:not(.theme-dark) #result_key canvas,
+      body:not(.theme-dark) #result_key img,
+      body:not(.theme-dark) #pitch_type_key,
+      body:not(.theme-dark) #pitch_type_key canvas,
+      body:not(.theme-dark) #pitch_type_key img {
+        background: transparent !important;
+      }
+      /* Keep sidebar styling intact in light mode */
+      body:not(.theme-dark) .sidebar .well,
+      body:not(.theme-dark) .col-sm-3 .well,
+      body:not(.theme-dark) .col-sm-4 .well,
+      body:not(.theme-dark) .sidebar .panel {
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%) !important;
+        border: none !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08) !important;
+        border-left: 4px solid #e35205 !important;
+      }
+      /* Tables: allow full width */
+      .dataTables_wrapper { width: 100% !important; }
+      /* Optional navbar dropdown mirror */
+      .nav-dropdown {
+        margin: 6px 0 10px 0;
+        max-width: 360px;
+        font-weight: 700;
+        font-size: 17px;
+        padding: 12px 14px;
+        min-height: 48px;
+        line-height: 1.4;
+      }
+      /* Inner tabset dropdown mirror */
+      .inner-nav-wrap { margin: 8px 0 12px 0; display: none; }
+      .inner-nav-dropdown { width: 100%; font-weight: 800; font-size: 17px; padding: 22px 18px; min-height: 76px; line-height: 1.45; letter-spacing: 0.2px; }
+      /* Sidebar dropdown */
+      .sidebar-dropdown-wrap { margin: 8px 0 8px 0; display: none; }
+      .sidebar-dropdown { width: 100%; font-weight: 700; font-size: 17px; padding: 12px 14px; min-height: 48px; line-height: 1.4; }
+      .sidebar-accordion { border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+      .sidebar-accordion-summary { padding: 14px; font-weight: 800; font-size: 16px; cursor: pointer; }
+      .sidebar-accordion-body { padding: 12px; }
       
       /* ===== SIDEBAR DESIGN ===== */
       .well {
@@ -17356,7 +17602,7 @@ ui <- tagList(
       }
       .form-control:focus, .selectize-input.focus {
         border-color: #e35205;
-        box-shadow: 0 0 0 3px rgba(227, 82, 5, 0.12);
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         outline: none;
       }
       
@@ -17408,7 +17654,7 @@ ui <- tagList(
         position: relative;
       }
       .nav-tabs > li > a:hover {
-        background: rgba(227, 82, 5, 0.08);
+        background: linear-gradient(135deg, rgba(227,82,5,0.12) 0%, rgba(255,140,26,0.08) 100%);
         color: #e35205;
         border: none;
       }
@@ -17419,6 +17665,28 @@ ui <- tagList(
         color: white;
         border: none;
         box-shadow: 0 -2px 10px rgba(227, 82, 5, 0.3);
+      }
+      /* Dark mode tabs (page-level) */
+      body.theme-dark .nav-tabs {
+        border-color: rgba(255,255,255,0.18);
+      }
+      body.theme-dark .nav-tabs > li > a {
+        color: rgba(229, 231, 235, 0.88);
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+      body.theme-dark .nav-tabs > li > a:hover {
+        background: rgba(255,255,255,0.10);
+        color: #ffffff;
+        border-color: rgba(255,255,255,0.14);
+      }
+      body.theme-dark .nav-tabs > li.active > a,
+      body.theme-dark .nav-tabs > li.active > a:hover,
+      body.theme-dark .nav-tabs > li.active > a:focus {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
+        color: #ffffff;
+        border: none;
+        box-shadow: 0 -2px 12px rgba(227,82,5,0.35);
       }
       
       /* ===== BUTTONS ===== */
@@ -17463,11 +17731,11 @@ ui <- tagList(
         border-radius: 50%;
         padding: 12px 14px;
         font-size: 18px;
-        box-shadow: 0 4px 20px rgba(227, 82, 5, 0.4);
+        box-shadow: 0 4px 20px rgba(85, 43, 154, 0.4);
         background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
       }
       #openNote:hover {
-        box-shadow: 0 6px 25px rgba(227, 82, 5, 0.6);
+        box-shadow: 0 6px 25px rgba(85, 43, 154, 0.6);
         transform: translateY(-3px) scale(1.05);
       }
       
@@ -17492,7 +17760,7 @@ ui <- tagList(
         transition: all 0.2s ease;
       }
       .dataTable tbody tr:hover {
-        background: rgba(227, 82, 5, 0.06);
+        background: rgba(102, 126, 234, 0.05);
         transform: scale(1.01);
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
       }
@@ -17525,7 +17793,7 @@ ui <- tagList(
         border-radius: 12px;
         overflow: hidden;
         box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-        background: white;
+        background: transparent;
       }
       
       /* ===== PAGE CONTAINER ===== */
@@ -17552,166 +17820,110 @@ ui <- tagList(
       ::-webkit-scrollbar-thumb:hover {
         background: linear-gradient(135deg, #ff8c1a 0%, #e35205 100%);
       }
-      
-      /* ===== Dark mode overrides ===== */
+
+      /* ===== DARK MODE OVERRIDES ===== */
       body.theme-dark {
-        background: linear-gradient(135deg, #0b0d12 0%, #111827 100%);
+        background: radial-gradient(circle at 20% 20%, #0d1224 0%, #0a0f1d 45%, #060910 100%);
         color: #e5e7eb;
       }
       body.theme-dark .navbar-inverse {
-        background: linear-gradient(135deg, #0f172a 0%, #0b0f19 50%, #0a0d14 100%);
-        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+        background: linear-gradient(135deg, #0b0f19 0%, #0f172a 100%);
+        box-shadow: 0 6px 24px rgba(0,0,0,0.5);
       }
-      body.theme-dark .navbar-inverse .navbar-brand,
+      body.theme-dark .navbar-inverse .navbar-brand .brand-title {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
       body.theme-dark .navbar-inverse .navbar-nav > li > a {
-        color: rgba(255,255,255,0.9) !important;
+        color: rgba(229, 231, 235, 0.9) !important;
       }
       body.theme-dark .navbar-inverse .navbar-nav > li > a:hover,
       body.theme-dark .navbar-inverse .navbar-nav > li > a:focus {
+        color: #ffffff !important;
         background: rgba(255,255,255,0.08);
-        color: #fff !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+      }
+      /* Dark mode: keep sidebars transparent (mobile + desktop) */
+      body.theme-dark .sidebar,
+      body.theme-dark .sidebar .well,
+      body.theme-dark .col-sm-3 .well,
+      body.theme-dark .col-sm-4 .well,
+      body.theme-dark .sidebar .panel,
+      body.theme-dark .sidebar-accordion,
+      body.theme-dark .sidebar-accordion-body {
+        background: transparent !important;
+        box-shadow: none !important;
+        border: none !important;
+      }
+      body.theme-dark .sidebar .well .form-control,
+      body.theme-dark .sidebar .well .selectize-input {
+        background: rgba(255,255,255,0.06) !important;
       }
       body.theme-dark .navbar-inverse .navbar-nav > .active > a,
       body.theme-dark .navbar-inverse .navbar-nav > .active > a:hover,
       body.theme-dark .navbar-inverse .navbar-nav > .active > a:focus {
         background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
-        box-shadow: 0 4px 15px rgba(227,82,5,0.45);
+        box-shadow: 0 6px 18px rgba(102,126,234,0.45);
+      }
+      body.theme-dark .container-fluid {
+        background: transparent !important;
       }
       body.theme-dark .well,
-      body.theme-dark .sidebar .well,
-      body.theme-dark .col-sm-3 .well,
-      body.theme-dark .col-sm-4 .well {
-        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%);
-        border-left: 4px solid #e35205;
-        color: #e5e7eb;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      body.theme-dark .panel {
+        background: rgba(15,23,42,0.9) !important;
+        border: 1px solid #1f2937 !important;
+        box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+        color: #e5e7eb !important;
+      }
+      body.theme-dark .panel-default > .panel-heading {
+        background: linear-gradient(135deg, #111827 0%, #0b1220 100%) !important;
+        color: #e5e7eb !important;
+        border: none !important;
       }
       body.theme-dark .form-control,
       body.theme-dark .selectize-input {
-        background: #0f172a;
-        border-color: #1f2937;
-        color: #e5e7eb;
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        border: 1px solid #1f2937 !important;
+        box-shadow: none !important;
       }
       body.theme-dark .form-control:focus,
       body.theme-dark .selectize-input.focus {
-        border-color: #e35205;
-        box-shadow: 0 0 0 3px rgba(227,82,5,0.25);
+        border-color: #ff8c1a !important;
+        box-shadow: 0 0 0 3px rgba(118, 75, 162, 0.25) !important;
       }
-      body.theme-dark .selectize-dropdown {
-        background: #0f172a;
-        border-color: #1f2937;
-      }
-      body.theme-dark .selectize-dropdown-content .option {
-        color: #e5e7eb;
-      }
-      body.theme-dark .selectize-dropdown-content .option:hover,
-      body.theme-dark .selectize-dropdown-content .option.active {
-        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
-        color: #fff;
-      }
-      body.theme-dark .nav-tabs {
-        border-bottom-color: #1f2937;
-      }
-      body.theme-dark .nav-tabs > li > a {
-        color: #cbd5e1;
-        background: transparent;
-      }
-      body.theme-dark .nav-tabs > li > a:hover {
-        background: rgba(227,82,5,0.12);
-        color: #fff;
-      }
-      body.theme-dark .nav-tabs > li.active > a,
-      body.theme-dark .nav-tabs > li.active > a:hover,
-      body.theme-dark .nav-tabs > li.active > a:focus {
-        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%);
-        color: #fff;
-        box-shadow: 0 -2px 10px rgba(227,82,5,0.4);
+      body.theme-dark .form-group label {
+        color: #e5e7eb !important;
       }
       body.theme-dark .btn-default {
-        background: #0f172a;
-        color: #e5e7eb;
-        border: 2px solid #1f2937;
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        border: 1px solid #1f2937 !important;
       }
-      body.theme-dark .btn-default:hover {
-        background: #111827;
-        border-color: #e35205;
-        color: #fff;
+      body.theme-dark .btn-primary {
+        background: linear-gradient(135deg, #e35205 0%, #ff8c1a 100%) !important;
+        color: #fff !important;
+        box-shadow: 0 4px 14px rgba(102,126,234,0.35);
       }
       body.theme-dark .dataTables_wrapper {
-        background: #0b1220;
-        color: #e5e7eb;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+        background: rgba(15,23,42,0.9) !important;
+        color: #e5e7eb !important;
       }
-      body.theme-dark table.dataTable tbody tr:hover {
-        background: rgba(227,82,5,0.12);
-      }
-      body.theme-dark .panel {
-        background: #0f172a;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-        color: #e5e7eb;
-      }
-      body.theme-dark .panel-default > .panel-heading {
-        background: linear-gradient(135deg, #111827 0%, #0b1220 100%);
-        border: none;
-        color: #e5e7eb;
+      body.theme-dark .dataTable tbody tr:hover {
+        background: rgba(102,126,234,0.08) !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.35) !important;
       }
       body.theme-dark .shiny-plot-output,
       body.theme-dark .plotly,
       body.theme-dark .html-widget {
-        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
         background: transparent !important;
+        box-shadow: 0 2px 16px rgba(0,0,0,0.35);
       }
-      body.theme-dark svg,
-      body.theme-dark canvas,
-      body.theme-dark .girafe_container svg {
-        background: transparent !important;
-      }
-      body.theme-dark .container-fluid {
-        color: #e5e7eb;
-      }
-      body.theme-dark .selectize-control.single .selectize-input:after {
-        border-color: #e5e7eb transparent transparent transparent;
-      }
-      body.theme-dark label,
-      body.theme-dark .control-label,
-      body.theme-dark .form-group,
-      body.theme-dark .form-group * {
-        color: #e5e7eb !important;
-      }
-      body.theme-dark table.dataTable tbody td,
-      body.theme-dark table.dataTable thead th {
-        color: #e5e7eb;
-        background: transparent;
-      }
-      body.theme-dark table.dataTable tbody tr {
-        background: transparent;
-      }
-      body.theme-dark svg text {
-        fill: #e5e7eb !important;
-      }
-      body.theme-dark svg line,
-      body.theme-dark svg path {
-        stroke: #e5e7eb !important;
-      }
-      body.theme-dark .selectize-input > input {
-        color: #e5e7eb !important;
-      }
-      body.theme-dark rect.panel.background,
-      body.theme-dark rect.plot.background,
-      body.theme-dark rect.background,
-      body.theme-dark g.panel.background rect,
-      body.theme-dark g.plot.background rect {
-        fill: transparent !important;
-        stroke: none !important;
-      }
-      body.theme-dark [fill='black'] { fill: #ffffff !important; }
-      body.theme-dark [stroke='black'] { stroke: #ffffff !important; }
-      body.theme-dark [fill='#000000'],
-      body.theme-dark [fill='#000'] { fill: #ffffff !important; }
-      body.theme-dark [stroke='#000000'],
-      body.theme-dark [stroke='#000'] { stroke: #ffffff !important; }
-      body.theme-dark svg rect[fill='white'],
+      /* Wipe embedded white rects in svg/png */
       body.theme-dark svg rect[fill='#FFFFFF'],
+      body.theme-dark svg rect[fill='#ffffff'],
       body.theme-dark svg rect[fill='#fff'] {
         fill: transparent !important;
         stroke: none !important;
@@ -17749,11 +17961,11 @@ ui <- tagList(
         background: #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         transition: transform 0.2s ease;
       }
-      .dark-toggle input#dark_mode:checked + .switch-track { background: #e35205; }
+      .dark-toggle input#dark_mode:checked + .switch-track { background: #ff8c1a; }
       .dark-toggle input#dark_mode:checked + .switch-track .switch-thumb { transform: translateX(24px); }
       .dark-toggle .switch-text { font-weight:600; color:#e5e7eb; }
       
-      /* Dropdowns (selectize + native) – scoped to dark mode; orange highlight for selected item */
+      /* Dropdowns (selectize + native) – scoped to dark mode; purple highlight for selected item */
       body.theme-dark .selectize-input,
       body.theme-dark .selectize-control.single .selectize-input,
       body.theme-dark select.form-control {
@@ -17806,7 +18018,7 @@ ui <- tagList(
         border-color: #1f2937 !important;
       }
       
-      /* Player Plans container dark mode */
+      /* Player Plans & Custom Reports root containers */
       .pp-root, .creports-root { background: transparent !important; }
       .pp-root .container-fluid,
       .creports-root .container-fluid {
@@ -17834,6 +18046,18 @@ ui <- tagList(
       body.theme-dark .creports-root canvas {
         background: transparent !important;
       }
+      body.theme-dark #creports-sidebar_column .well,
+      body.theme-dark #creports-main_column .well {
+        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%) !important;
+        border-left: 4px solid #ff8c1a !important;
+        color: #e5e7eb !important;
+      }
+      body.theme-dark #creports-main_column .panel,
+      body.theme-dark #creports-sidebar_column .panel {
+        background: #0f172a !important;
+        color: #e5e7eb !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+      }
       
       /* Player Plans container dark mode */
       body.theme-dark .pp-root {
@@ -17860,10 +18084,54 @@ ui <- tagList(
       body.theme-dark .pp-root canvas {
         background: transparent !important;
       }
-      
+      /* Make black strokes/lines white in dark mode (axes/strike zones) */
+      body.theme-dark svg rect[stroke='black'],
+      body.theme-dark svg line[stroke='black'],
+      body.theme-dark svg path[stroke='black'] {
+        stroke: #ffffff !important;
+      }
+      /* Also flip pure-black fills to white in dark mode (fastball dots/legend) */
+      body.theme-dark svg [fill='black'],
+      body.theme-dark svg [fill='#000'],
+      body.theme-dark svg [fill='#000000'] {
+        fill: #ffffff !important;
+      }
+      /* Subtle gridlines in dark mode */
+      body.theme-dark .panel.grid.major,
+      body.theme-dark line.panel.grid.major,
+      body.theme-dark polyline.panel.grid.major,
+      body.theme-dark path.panel.grid.major {
+        stroke: rgba(255,255,255,0.18) !important;
+      }
+      body.theme-dark .panel.grid.minor,
+      body.theme-dark line.panel.grid.minor,
+      body.theme-dark polyline.panel.grid.minor,
+      body.theme-dark path.panel.grid.minor {
+        stroke: rgba(255,255,255,0.08) !important;
+      }
+      /* Catch default ggplot grid strokes */
+      body.theme-dark svg line[stroke='#ebebeb'],
+      body.theme-dark svg line[stroke='#E5E5E5'],
+      body.theme-dark svg line[stroke='#d9d9d9'],
+      body.theme-dark svg path[stroke='#ebebeb'],
+      body.theme-dark svg path[stroke='#E5E5E5'],
+      body.theme-dark svg path[stroke='#d9d9d9'] {
+        stroke: rgba(255,255,255,0.18) !important;
+      }
+      /* Axis text/ticks in dark mode */
+      body.theme-dark .axis text,
+      body.theme-dark g.tick text,
+      body.theme-dark text {
+        fill: #e5e7eb !important;
+      }
+      body.theme-dark .axis line,
+      body.theme-dark g.tick line {
+        stroke: rgba(255,255,255,0.4) !important;
+      }
       /* Legend readability in dark mode */
       body.theme-dark g.legend text,
-      body.theme-dark [aria-label='legend'] text {
+      body.theme-dark [aria-label='legend'] text,
+      body.theme-dark g[class*='legend'] text {
         fill: #ffffff !important;
       }
       body.theme-dark g.legend rect,
@@ -17871,60 +18139,18 @@ ui <- tagList(
         fill: transparent !important;
         stroke: transparent !important;
       }
-      
-      /* Custom Reports: remove stray white backgrounds */
-      body.theme-dark #creports-sidebar_column,
-      body.theme-dark #creports-main_column {
-        background: transparent !important;
+      /* Inline toggle styling */
+      .inline-toggle {
+        background: rgba(0,0,0,0.35);
+        border-radius: 12px;
+        padding: 8px 12px;
+        width: fit-content;
       }
-      body.theme-dark #creports-sidebar_column .well,
-      body.theme-dark #creports-main_column .well {
-        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%) !important;
-        border-left: 4px solid #e35205 !important;
-        color: #e5e7eb !important;
-      }
-      body.theme-dark #creports-main_column .panel,
-      body.theme-dark #creports-sidebar_column .panel {
-        background: #0f172a !important;
-        color: #e5e7eb !important;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
-      }
-      body.theme-dark #creports-main_column,
-      body.theme-dark #creports-sidebar_column,
-      body.theme-dark #creports-main_column .tab-content,
-      body.theme-dark #creports-main_column .tab-pane {
-        background: transparent !important;
-      }
-      body.theme-dark .tab-content,
-      body.theme-dark .tab-pane,
-      body.theme-dark .container-fluid,
-      body.theme-dark .creports-root .container-fluid {
-        background: transparent !important;
-      }
-      body.theme-dark .creports-root {
-        background: transparent !important;
-      }
-      body.theme-dark .creports-root .well,
-      body.theme-dark .creports-root .panel,
-      body.theme-dark .creports-root .form-group,
-      body.theme-dark .creports-root .row,
-      body.theme-dark .creports-root .col-sm-3,
-      body.theme-dark .creports-root .col-sm-9 {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-      }
-      
-      /* Player Plan charts: drop white backgrounds in dark mode */
-      body.theme-dark #pp_goal1_plot,
-      body.theme-dark #pp_goal2_plot,
-      body.theme-dark #pp_goal3_plot {
-        background: transparent !important;
-      }
-      body.theme-dark #pp_goal1_plot svg,
-      body.theme-dark #pp_goal2_plot svg,
-      body.theme-dark #pp_goal3_plot svg {
-        background: transparent !important;
+      /* Modal text readable on light modal backgrounds */
+      body.theme-dark .modal-content,
+      body.theme-dark .modal-body,
+      body.theme-dark .modal-title {
+        color: #000000 !important;
       }
     "))
   ),
@@ -17954,6 +18180,8 @@ ui <- tagList(
     });
   ")),
   
+  shinyjs::useShinyjs(),
+  
   tags$style(HTML("
     /* Custom note button - already styled in main CSS */
     #openNote.btn-note {
@@ -17971,22 +18199,6 @@ ui <- tagList(
       outline: none;
     }
   ")),
-  
-  # --- Floating dark mode toggle (top-left, all pages) ---
-  absolutePanel(
-    style = "background:rgba(0,0,0,0.4); border-radius:12px; padding:8px 12px; color:#fff; z-index:2000;",
-    tags$div(
-      class = "dark-toggle",
-      tags$label(
-        class = "switch-label",
-        tags$input(id = "dark_mode", type = "checkbox"),
-        tags$span(class = "switch-track", tags$span(class = "switch-thumb")),
-        tags$span(class = "switch-text", "Dark mode")
-      )
-    ),
-    top = 80, left = 12, width = 170, fixed = TRUE, draggable = FALSE
-  ),
-  
   # --- Floating "Add Note" button (top-right, all pages) ---
   absolutePanel(
     style = "background:transparent; border:none; box-shadow:none; z-index:2000;",
@@ -17994,8 +18206,6 @@ ui <- tagList(
                  class = "btn btn-note", title = "Add Note"),
     top = 60, right = 12, width = 50, fixed = TRUE, draggable = FALSE
   ),
-  
-  
   navbarPage(
     title = tagList(
       tags$img(src = "OSUlogo.png", class = "brand-logo", alt = "OSU"),
@@ -18021,525 +18231,40 @@ ui <- tagList(
   )
 )
 
-# Wrap UI with beautiful custom authentication
-ui_custom <- secure_app(ui,
-                 enable_admin = FALSE,  # Hide shinymanager admin panel
-                 enable_reset_password = TRUE,  # Enable "Forgot Password" functionality
-                 
-                 # Email configuration for password reset
-                 mail_from = Sys.getenv("MAIL_FROM", "noreply@pitchingcoachu.com"),
-                 mail_subject = Sys.getenv("MAIL_SUBJECT", "PCU Dashboard - Password Reset Request"),
-                 
-                 # Custom header for login page - Clean and Professional
-                 tags_top = tags$div(
-                   class = "login-header",
-                   # PCU Logo
-                   tags$div(
-                     class = "logo-container",
-                     tags$img(src = "PCUlogo.png", width = 280,
-                              style = "display: block; margin: 0 auto 40px auto;")
-                   ),
-                   # Main title - CLEAN AND PROFESSIONAL
-                   tags$h1(
-                     "PCU DASHBOARD",
-                     class = "main-title",
-                     style = "text-align: center; color: #000000; font-weight: 700; 
-               margin: 0 0 25px 0; font-size: 48px; letter-spacing: 4px;
-               text-transform: uppercase;
-               font-family: 'Helvetica Neue', 'Arial', sans-serif;
-               text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);"
-                   ),
-                   # Simple underline
-                   tags$div(
-                     class = "title-underline",
-                     style = "width: 250px; height: 3px; margin: 0 auto 0 auto;
-               background: #FF1744;
-               box-shadow: 0 0 15px rgba(255, 23, 68, 0.5);"
-                   )
-                 ),
-                 
-                 # Custom footer for login page
-                 tags_bottom = tags$div(
-                   tags$div(
-                     class = "footer-line",
-                     style = "width: 150px; height: 2px; margin: 35px auto 20px auto;
-               background: linear-gradient(90deg, 
-                 transparent 0%, 
-                 rgba(220, 20, 60, 0.5) 50%, 
-                 transparent 100%);"
-                   ),
-                   tags$p("Powered by Pitching Coach U", 
-                          style = "text-align: center; color: rgba(255, 255, 255, 0.5); 
-                    margin-top: 12px; font-size: 12px; letter-spacing: 2px;
-                    font-weight: 500;"),
-                   tags$p("© 2024 • All Rights Reserved", 
-                          style = "text-align: center; color: rgba(255, 255, 255, 0.3); 
-                    font-size: 10px; margin-top: 8px; letter-spacing: 1px;")
-                 ),
-                 
-                 # Dark background with subtle pattern
-                 background = "linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)",
-                 
-                 # Custom CSS for sleek, modern look
-                 tags_head = tags$head(
-                   tags$style(HTML("
-      /* Force dark background everywhere on login page */
-      html[data-panel='auth'],
-      body[data-panel='auth'],
-      .container-fluid[data-panel='auth'] {
-        background: #0a0a0a !important;
-        background-color: #0a0a0a !important;
-        background-image: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%) !important;
-      }
-      
-      /* Dark background with diagonal stripes */
-      body[data-panel='auth'] {
-        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%) !important;
-        background-attachment: fixed !important;
-        position: relative;
-        overflow: hidden;
-        min-height: 100vh !important;
-      }
-      
-      /* Subtle animated background pattern */
-      body[data-panel='auth']::before {
-        content: '';
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-image: 
-          repeating-linear-gradient(
-            45deg,
-            transparent,
-            transparent 35px,
-            rgba(220, 20, 60, 0.02) 35px,
-            rgba(220, 20, 60, 0.02) 70px
-          );
-        z-index: 0;
-        pointer-events: none;
-      }
-      
-      /* Radial gradient overlay */
-      body[data-panel='auth']::after {
-        content: '';
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 800px;
-        height: 800px;
-        background: radial-gradient(
-          circle,
-          rgba(220, 20, 60, 0.08) 0%,
-          transparent 70%
-        );
-        z-index: 0;
-        pointer-events: none;
-        animation: breathe 4s ease-in-out infinite;
-      }
-      
-      @keyframes breathe {
-        0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
-        50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.1); }
-      }
-      
-      @keyframes glowPulse {
-        0%, 100% { 
-          opacity: 1;
-          box-shadow: 0 0 15px rgba(220, 20, 60, 0.6);
-        }
-        50% { 
-          opacity: 0.7;
-          box-shadow: 0 0 25px rgba(220, 20, 60, 0.9);
-        }
-      }
-      
-      /* Logo glow animation */
-      .logo-container img {
-        filter: drop-shadow(0 0 25px rgba(220, 20, 60, 0.4));
-        animation: logoFloat 3s ease-in-out infinite;
-      }
-      
-      @keyframes logoFloat {
-        0%, 100% { transform: translateY(0px); }
-        50% { transform: translateY(-10px); }
-      }
-      
-      /* Login container - Modern glass morphism with STRONG red accent */
-      .panel-auth {
-        background: rgba(20, 20, 20, 0.95) !important;
-        border: 2px solid #FF1744 !important;
-        border-radius: 25px !important;
-        box-shadow: 
-          0 20px 60px rgba(0, 0, 0, 0.9),
-          0 0 0 1px rgba(255, 23, 68, 0.3),
-          0 0 40px rgba(255, 23, 68, 0.3),
-          inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
-        padding: 50px 45px !important;
-        backdrop-filter: blur(30px) saturate(180%);
-        max-width: 480px !important;
-        margin: 50px auto !important;
-        position: relative;
-        z-index: 10;
-      }
-      
-      /* Strong top border glow */
-      .panel-auth::before {
-        content: '';
-        position: absolute;
-        top: -2px;
-        left: 10%;
-        right: 10%;
-        height: 3px;
-        background: linear-gradient(90deg,
-          transparent 0%,
-          #FF1744 20%,
-          #FF1744 80%,
-          transparent 100%);
-        box-shadow: 0 0 20px rgba(255, 23, 68, 0.8);
-        border-radius: 3px;
-      }
-      
-      /* Panel heading */
-      .panel-auth .panel-heading {
-        background: transparent !important;
-        border: none !important;
-        padding-bottom: 20px !important;
-      }
-
-      
-      /* Hide Please authenticate text */
-      .panel-auth .panel-heading h3,
-      .panel-auth .panel-heading .panel-title {
-        display: none !important;
-      }
-      
-      /* Input fields - Sleek modern style with stronger effects */
-      .panel-auth input.form-control {
-        background: rgba(0, 0, 0, 0.6) !important;
-        border: 2px solid rgba(255, 23, 68, 0.3) !important;
-        border-radius: 12px !important;
-        padding: 16px 22px !important;
-        font-size: 16px !important;
-        color: #ffffff !important;
-        font-family: 'Helvetica Neue', 'Arial', sans-serif !important;
-        font-weight: 400 !important;
-        transition: all 0.3s ease !important;
-        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5) !important;
-      }
-      
-      .panel-auth input.form-control::placeholder {
-        color: rgba(255, 255, 255, 0.4) !important;
-        font-weight: 400;
-      }
-      
-      .panel-auth input.form-control:focus {
-        border-color: #FF1744 !important;
-        background: rgba(0, 0, 0, 0.8) !important;
-        box-shadow: 
-          0 0 0 4px rgba(255, 23, 68, 0.15),
-          inset 0 2px 6px rgba(0, 0, 0, 0.5),
-          0 0 30px rgba(255, 23, 68, 0.3) !important;
-        outline: none !important;
-      }
-      
-      /* Login button - BOLD AND DRAMATIC */
-      .panel-auth button[type='submit'] {
-        background: linear-gradient(135deg, 
-          #FF1744 0%, 
-          #D50000 100%) !important;
-        border: none !important;
-        border-radius: 12px !important;
-        padding: 18px !important;
-        font-weight: 700 !important;
-        font-size: 16px !important;
-        letter-spacing: 3px !important;
-        text-transform: uppercase !important;
-        transition: all 0.3s ease !important;
-        margin-top: 25px !important;
-        width: 100% !important;
-        color: #ffffff !important;
-        font-family: 'Helvetica Neue', 'Arial', sans-serif !important;
-        box-shadow: 
-          0 6px 25px rgba(255, 23, 68, 0.5),
-          0 0 30px rgba(255, 23, 68, 0.3),
-          inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
-        position: relative;
-        overflow: hidden;
-      }
-      
-      .panel-auth button[type='submit']::after {
-        content: '';
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        width: 0;
-        height: 0;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.2);
-        transform: translate(-50%, -50%);
-        transition: width 0.6s, height 0.6s;
-      }
-      
-      .panel-auth button[type='submit']:hover {
-        transform: translateY(-3px) scale(1.02);
-        box-shadow: 
-          0 10px 40px rgba(255, 23, 68, 0.7),
-          0 0 50px rgba(255, 23, 68, 0.5),
-          inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
-      }
-      
-      .panel-auth button[type='submit']:hover::after {
-        width: 300px;
-        height: 300px;
-      }
-      
-      .panel-auth button[type='submit']:active {
-        transform: translateY(0);
-      }
-
-      /* Forgot Password button */
-      .panel-auth .forgot-password-btn,
-      body[data-panel='auth'] .forgot-password-btn {
-        margin-top: 14px !important;
-        width: 100% !important;
-        border: 2px solid #FF1744 !important;
-        background: transparent !important;
-        color: #FF1744 !important;
-        border-radius: 12px !important;
-        padding: 14px !important;
-        font-weight: 700 !important;
-        letter-spacing: 2px !important;
-        text-transform: uppercase !important;
-        transition: all 0.25s ease !important;
-        box-shadow: 0 6px 20px rgba(255, 23, 68, 0.25);
-      }
-      .panel-auth .forgot-password-btn:hover {
-        background: rgba(255, 23, 68, 0.12) !important;
-        transform: translateY(-2px);
-        box-shadow: 0 10px 26px rgba(255, 23, 68, 0.35);
-      }
-      .panel-auth .forgot-password-btn:active {
-        transform: translateY(0);
-        box-shadow: 0 6px 20px rgba(255, 23, 68, 0.25);
-      }
-
-      /* Hide shinymanager default heading */
-      body[data-panel='auth'] h3[data-i18n='please-authenticate'],
-      body[data-panel='auth'] .panel-heading h3,
-      body[data-panel='auth'] .panel-title,
-      h3[data-i18n='please-authenticate'],
-      h3.shinymanager-title,
-      .panel-auth .panel-heading h3,
-      .panel-auth .panel-heading .panel-title {
-        display: none !important;
-      }
-      
-      /* Labels - Clean style */
-      .panel-auth label {
-        font-weight: 600 !important;
-        color: rgba(255, 255, 255, 0.8) !important;
-        margin-bottom: 8px !important;
-        font-size: 13px !important;
-        text-transform: uppercase !important;
-        letter-spacing: 1px !important;
-        font-family: 'Helvetica Neue', 'Arial', sans-serif !important;
-      }
-      
-      /* Checkbox (Remember me) */
-      .panel-auth .checkbox label {
-        font-weight: 400 !important;
-        color: rgba(255, 255, 255, 0.5) !important;
-        font-size: 13px !important;
-        text-transform: none !important;
-        letter-spacing: 0.5px !important;
-      }
-      
-      /* Forgot Password link - Make it VISIBLE and PROMINENT */
-      .panel-auth .pull-right a,
-      .panel-auth a[data-target='#shinymanager-ask-change'],
-      .panel-auth a[href='#shinymanager-ask-change'] {
-        color: #FF1744 !important;
-        font-weight: 600 !important;
-        font-size: 14px !important;
-        transition: all 0.2s ease !important;
-        text-decoration: none !important;
-        font-family: 'Helvetica Neue', 'Arial', sans-serif !important;
-        display: inline-block !important;
-        margin-top: 15px !important;
-      }
-      
-      .panel-auth .pull-right a:hover,
-      .panel-auth a[data-target='#shinymanager-ask-change']:hover,
-      .panel-auth a[href='#shinymanager-ask-change']:hover {
-        color: #ffffff !important;
-        text-shadow: 0 0 10px rgba(255, 23, 68, 0.6);
-        text-decoration: underline !important;
-      }
-      
-      /* Make sure password reset link container is visible */
-      .panel-auth .pull-right {
-        display: block !important;
-        text-align: right !important;
-        margin-top: 15px !important;
-      }
-      
-      /* Error messages */
-      .panel-auth .alert {
-        background: rgba(220, 20, 60, 0.15) !important;
-        border: 1px solid rgba(220, 20, 60, 0.4) !important;
-        border-radius: 10px !important;
-        color: rgba(255, 255, 255, 0.9) !important;
-        font-family: 'Rajdhani', sans-serif !important;
-        font-weight: 500 !important;
-      }
-      
-      /* Admin button */
-      .panel-auth .btn-primary {
-        background: rgba(220, 20, 60, 0.15) !important;
-        border: 1px solid rgba(220, 20, 60, 0.3) !important;
-        border-radius: 10px !important;
-        transition: all 0.3s ease !important;
-        color: #DC143C !important;
-        font-family: 'Rajdhani', sans-serif !important;
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 1px !important;
-      }
-      
-      /* Labels */
-      .panel-auth label {
-        font-weight: 600 !important;
-        color: #333 !important;
-        margin-bottom: 8px !important;
-        font-size: 14px !important;
-      }
-      
-      /* Checkbox (Remember me) */
-      .panel-auth .checkbox label {
-        font-weight: 400 !important;
-        color: #666 !important;
-        font-size: 13px !important;
-      }
-      
-      /* Forgot Password link */
-      .panel-auth .pull-right a,
-      .panel-auth a[data-target='#shinymanager-ask-change'] {
-        color: #2c5364 !important;
-        font-weight: 600 !important;
-        font-size: 13px !important;
-        transition: all 0.2s ease !important;
-        text-decoration: none !important;
-      }
-      
-      .panel-auth .pull-right a:hover,
-      .panel-auth a[data-target='#shinymanager-ask-change']:hover {
-        color: #0f2027 !important;
-        text-decoration: underline !important;
-      }
-      
-      /* Error messages */
-      .panel-auth .alert {
-        border-radius: 10px !important;
-        border: none !important;
-      }
-      
-      /* Admin button */
-      .panel-auth .btn-primary {
-        background: #2c5364 !important;
-        border: none !important;
-        border-radius: 10px !important;
-        transition: all 0.3s ease !important;
-      }
-      
-      .panel-auth .btn-primary:hover {
-        background: rgba(220, 20, 60, 0.4) !important;
-        border-color: rgba(220, 20, 60, 0.6) !important;
-        box-shadow: 0 0 20px rgba(220, 20, 60, 0.3) !important;
-        transform: translateY(-2px);
-      }
-    ")),
-                   tags$script(HTML("
-      (function() {
-        function inject() {
-          var form = document.querySelector(\"body[data-panel='auth'] form\") ||
-                     document.querySelector(\"form#auth-login\") ||
-                     document.querySelector(\"form[action='auth']\") ||
-                     document.querySelector(\"form[action='']\");
-          if (!form) return;
-          if (form.dataset.forgotInjected === 'true') return;
-          form.dataset.forgotInjected = 'true';
-
-          // Hide default heading if it slipped through
-          var headings = form.querySelectorAll('h3, .panel-title');
-          headings.forEach(function(h) {
-            if ((h.dataset && h.dataset.i18n === 'please-authenticate') ||
-                (h.textContent && h.textContent.toLowerCase().indexOf('please authenticate') !== -1)) {
-              h.style.display = 'none';
-            }
-          });
-
-          var submit = form.querySelector(\"button[type='submit']\") || form.querySelector('.btn-primary');
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'btn forgot-password-btn';
-          btn.setAttribute('data-toggle', 'modal');
-          btn.setAttribute('data-target', '#shinymanager-ask-reset');
-          btn.textContent = 'Forgot Password';
-
-          if (submit && submit.parentNode) {
-            submit.insertAdjacentElement('afterend', btn);
-          } else {
-            form.appendChild(btn);
-          }
-        }
-
-        document.addEventListener('DOMContentLoaded', function() {
-          inject();
-          var observer = new MutationObserver(function() { inject(); });
-          observer.observe(document.body, { childList: true, subtree: true });
-        });
-      })();
-    "))
-                 )
-)
-
-ui <- if (use_custom_auth) ui_custom else ui
+# Custom authentication disabled - using shinyapps.io native authentication
 
 
 # Server logic
 server <- function(input, output, session) {
   
-  if (use_custom_auth) {
-    if (use_ext_db) {
-      ok <- ensure_external_auth_table(sm_db_config, initial_credentials)
-      check_creds <- if (ok) make_external_check(sm_db_config) else check_credentials(credentials_path, passphrase = auth_passphrase)
-    } else {
-      check_creds <- check_credentials(credentials_path, passphrase = auth_passphrase)
+  # Get user email from shinyapps.io authentication
+  # In shinyapps.io, session$user contains the authenticated user's email
+  user_email <- reactive({
+    # Try to get email from session
+    email <- session$user
+    
+    # If no session user (running locally), return NA
+    if (is.null(email) || !nzchar(email)) {
+      return(NA_character_)
     }
     
-    # Initialize authentication
-    res_auth <- secure_server(
-      check_credentials = check_creds,
-      timeout = 0,       # never auto-logout from inactivity
-      keep_token = TRUE  # keep token in query string so we can persist it client-side
-    )
-    
-    # Get current authenticated user info
-    auth_user <- reactive({
-      reactiveValuesToList(res_auth)
-    })
-    
-  } else {
-    # Bypass custom login: rely on shinyapps.io auth (session$user) or treat as public
-    res_auth <- NULL
-    auth_user <- reactive({
-      u <- session$user %||% "public"
-      list(user = u, email = u, admin = FALSE, result = TRUE)
-    })
-  }
+    as.character(email)
+  })
+  
+  # Check if current user is admin (only jgaynor@pitchingcoachu.com)
+  is_admin <- reactive({
+    u <- user_email()
+    !is.na(u) && u %in% admin_emails
+  })
+  
+  # Check if current user is a coach (can see all data)
+  is_coach <- reactive({
+    u <- user_email()
+    !is.na(u) && tolower(trimws(u)) %in% tolower(trimws(coach_emails))
+  })
+  
+  # Helper to normalize email for comparison
+  norm_email <- function(x) tolower(trimws(as.character(x)))
   
   # Initialize database on startup
   init_modifications_db()
@@ -18549,7 +18274,7 @@ server <- function(input, output, session) {
     update_custom_table_choices(session)
   })
   
-  # Theme toggle (light/dark) matches PCU behavior
+  # Theme toggle (light/dark)
   observeEvent(input$dark_mode, {
     if (isTRUE(input$dark_mode)) {
       shinyjs::addClass(selector = "body", class = "theme-dark")
@@ -18945,46 +18670,8 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  admin_emails <- c("jgaynor@pitchingcoachu.com")
-  # helper to normalize email
-  norm_email <- function(x) tolower(trimws(x))
-  
-  user_email <- reactive({
-    # 1) Try authenticated user email from shinymanager
-    user_info <- auth_user()
-    if (!is.null(user_info$email) && nzchar(user_info$email)) {
-      return(user_info$email)
-    }
-    
-    # 2) Try username if no email
-    if (!is.null(user_info$user) && nzchar(user_info$user)) {
-      return(user_info$user)
-    }
-    
-    # 3) Fallback to platform user (works if you enabled auth in shinyapps.io)
-    u <- session$user
-    if (!is.null(u) && nzchar(u)) return(u)
-    
-    # 4) Last resort: URL query param
-    qs <- tryCatch(parseQueryString(isolate(session$clientData$url_search)), error = function(e) NULL)
-    e <- if (!is.null(qs)) qs[["email"]] else NULL
-    if (!is.null(e) && nzchar(e)) return(e)
-    
-    NA_character_
-  })
-  
-  
-  is_admin <- reactive({
-    # 1) Check if user has admin flag from shinymanager
-    user_info <- auth_user()
-    if (!is.null(user_info$admin) && isTRUE(user_info$admin)) {
-      return(TRUE)
-    }
-    
-    # 2) Fallback: check email against admin list
-    u <- user_email()
-    !is.na(u) && u %in% admin_emails
-  })
+  # user_email and is_admin are now defined at the start of server function
+  # (removed duplicate definitions here)
   
   tooltip_css <- "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.4);"
   
@@ -19386,16 +19073,16 @@ server <- function(input, output, session) {
     if (is.null(split_sel)) split_sel <- "Pitch Types"
     
     tagList(
-        div(style = "display: flex; align-items: center; gap: 15px;",
-            div(style = "flex: 0 0 auto;",
-                div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
-                selectInput(
-                  "summaryTableMode", label = NULL,
-                  choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", ct_names, "Batted Ball Data", "Custom"),
-                  selected = sel,
-                  width = "120px"
-                )
-            ),
+      div(style = "display: flex; align-items: center; gap: 15px;",
+          div(style = "flex: 0 0 auto;",
+              div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
+              selectInput(
+                "summaryTableMode", label = NULL,
+                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data", ct_names, "Batted Ball Data", "Custom"),
+                selected = sel,
+                width = "120px"
+              )
+          ),
           div(style = "flex: 0 0 auto;",
               checkboxInput(
                 "summaryTableColors", 
@@ -19447,16 +19134,16 @@ server <- function(input, output, session) {
     if (is.null(split_sel)) split_sel <- "Pitch Types"
     
     tagList(
-        div(style = "display: flex; align-items: center; gap: 15px;",
-            div(style = "flex: 0 0 auto;",
-                div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
-                selectInput(
-                  "dpTableMode", label = NULL,
-                  choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", ct_names, "Batted Ball Data", "Custom"),
-                  selected = sel,
-                  width = "120px"
-                )
-            ),
+      div(style = "display: flex; align-items: center; gap: 15px;",
+          div(style = "flex: 0 0 auto;",
+              div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
+              selectInput(
+                "dpTableMode", label = NULL,
+                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data", ct_names, "Batted Ball Data", "Custom"),
+                selected = sel,
+                width = "120px"
+              )
+          ),
           div(style = "flex: 0 0 auto;",
               checkboxInput(
                 "dpTableColors", 
@@ -19529,66 +19216,63 @@ server <- function(input, output, session) {
     df_base <- if (input$sessionType == "All") pitch_data_pitching else
       dplyr::filter(pitch_data_pitching, SessionType == input$sessionType)
     
-    # Apply team filtering
+    # Apply team filtering to get the available pitchers
     if (input$teamType == "Campers") {
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_CAMPERS)
-      # Create name map for campers
-      raw_names_team <- sort(unique(df_base$Pitcher))
-      display_names_team <- ifelse(
-        grepl(",", raw_names_team),
-        vapply(strsplit(raw_names_team, ",\\s*"), function(x) paste(x[2], x[1]), ""),
-        raw_names_team
-      )
-      name_map_team <- setNames(raw_names_team, display_names_team)
-    } else if (input$teamType == "osu") {
+    } else if (input$teamType == "OSU") {
       # Filter to only GCU allowed pitchers (exclude campers)
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
-      raw_names_team <- sort(unique(df_base$Pitcher))
-      display_names_team <- ifelse(
-        grepl(",", raw_names_team),
-        vapply(strsplit(raw_names_team, ",\\s*"), function(x) paste(x[2], x[1]), ""),
-        raw_names_team
-      )
-      name_map_team <- setNames(raw_names_team, display_names_team)
+    }
+    # If "All" is selected, df_base already contains all pitchers
+    
+    # Create name map for the filtered dataset
+    raw_names_team <- sort(unique(df_base$Pitcher))
+    display_names_team <- ifelse(
+      grepl(",", raw_names_team),
+      vapply(strsplit(raw_names_team, ",\\s*"), function(x) paste(x[2], x[1]), ""),
+      raw_names_team
+    )
+    name_map_team <- setNames(raw_names_team, display_names_team)
+    
+    # Determine which pitchers the user can see:
+    # - Admins: all pitchers
+    # - Coaches: all pitchers  
+    # - Players: only pitchers where Email matches their login email
+    if (is_admin() || is_coach()) {
+      # Coaches and admins see all pitchers in filtered dataset
+      sel_raw <- unique(df_base$Pitcher) %>% na.omit()
     } else {
-      # "All" - show all pitchers (both GCU and Campers)
-      raw_names_team <- sort(unique(df_base$Pitcher))
-      display_names_team <- ifelse(
-        grepl(",", raw_names_team),
-        vapply(strsplit(raw_names_team, ",\\s*"), function(x) paste(x[2], x[1]), ""),
-        raw_names_team
-      )
-      name_map_team <- setNames(raw_names_team, display_names_team)
+      # Players see only their own data (matched by email)
+      sel_raw <- unique(df_base$Pitcher[norm_email(df_base$Email) == norm_email(user_email())]) %>% na.omit()
     }
     
-    # Allow all users to see all pitchers (removed email-based filtering)
-    # sel_raw <- unique(df_base$Pitcher[norm_email(df_base$Email) == norm_email(user_email())]) %>% na.omit()
-    
-    # All users now see all pitchers
-    selectInput(
-      "pitcher", "Select Pitcher:",
-      choices  = c("All" = "All", name_map_team),
-      selected = "All"
-    )
-    
-    # OLD CODE - removed to allow all users to see all data:
-    # if (is_admin()) {
-    #   selectInput(
-    #     "pitcher", "Select Pitcher:",
-    #     choices  = c("All" = "All", name_map_team),
-    #     selected = "All"
-    #   )
-    # } else if (length(sel_raw) > 0) {
-    #   disp <- if (input$teamType == "Campers") {
-    #     display_names_team[raw_names_team %in% sel_raw]
-    #   } else {
-    #     display_names_p[raw_names_p %in% sel_raw]
-    #   }
-    #   map2 <- setNames(sel_raw, disp)
-    #   selectInput("pitcher", "Select Pitcher:", choices = map2, selected = sel_raw[1])
-    # } else {
-    #   selectInput("pitcher", "Select Pitcher:", choices = "No data", selected = "No data")
-    # }
+    # Admins AND coaches get the "All" option
+    if (is_admin() || is_coach()) {
+      # Check if current selection is still valid, otherwise default to "All"
+      current_selection <- isolate(input$pitcher)
+      if (is.null(current_selection) || !(current_selection %in% c("All", raw_names_team))) {
+        current_selection <- "All"
+      }
+      
+      selectInput(
+        "pitcher", "Select Pitcher:",
+        choices  = c("All" = "All", name_map_team),
+        selected = current_selection
+      )
+    } else if (length(sel_raw) > 0) {
+      # Players see only their pitchers (filtered by email)
+      # Use the team-specific name map, but only show their pitchers
+      player_display_names <- display_names_team[raw_names_team %in% sel_raw]
+      player_map <- setNames(sel_raw, player_display_names)
+      
+      selectInput("pitcher", "Select Pitcher:", 
+                  choices = player_map, 
+                  selected = sel_raw[1])
+    } else {
+      selectInput("pitcher", "Select Pitcher:", 
+                  choices = "No data", 
+                  selected = "No data")
+    }
   })
   
   
@@ -19601,7 +19285,7 @@ server <- function(input, output, session) {
     # Apply team filtering
     if (input$teamType == "Campers") {
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_CAMPERS)
-    } else if (input$teamType == "osu") {
+    } else if (input$teamType == "OSU") {
       df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
     }
     # If "All" is selected, don't filter - show all data
@@ -19660,8 +19344,14 @@ server <- function(input, output, session) {
     
     # Pitcher & hand
     pick <- input$pitcher
-    if (!is.null(pick) && pick != "All") {
+    if (!is.null(pick) && pick != "All" && pick != "No data") {
+      # Filter by exact pitcher name match
       df <- dplyr::filter(df, Pitcher == pick)
+      # If no data after filtering, might be a name format mismatch - log warning
+      if (nrow(df) == 0) {
+        message("Warning: No data found for pitcher '", pick, "'. Available pitchers: ", 
+                paste(unique(pitch_data_pitching$Pitcher)[1:min(5, length(unique(pitch_data_pitching$Pitcher)))], collapse = ", "))
+      }
     }
     
     # Opponent Hitter filter
@@ -19693,12 +19383,11 @@ server <- function(input, output, session) {
     if (nnz(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
     if (nnz(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
     
-    # Per-user visibility - REMOVED: All users can now see all data
-    # Only admin status controls access to admin features, not data visibility
-    # if (!is_admin()) {
-    #   ue <- user_email()
-    #   if (!is.na(ue)) df <- dplyr::filter(df, norm_email(Email) == norm_email(ue))
-    # }
+    # Per-user visibility: Coaches see all, Players see only their own data
+    if (!is_admin() && !is_coach()) {
+      ue <- user_email()
+      if (!is.na(ue)) df <- dplyr::filter(df, norm_email(Email) == norm_email(ue))
+    }
     
     if (!nrow(df)) return(df[0, , drop = FALSE])
     
@@ -19706,20 +19395,6 @@ server <- function(input, output, session) {
     df2 <- compute_stuff_simple(df, base_type = input$stuffBase, level = input$stuffLevel) %>%
       force_pitch_levels() %>%
       dplyr::mutate(Result = factor(compute_result(PitchCall, PlayResult), levels = result_levels))
-    
-    # Flatten any nested columns that may have slipped in from edits/imports
-    df2 <- flatten_metrics_df(df2)
-    
-    # NUCLEAR OPTION: Convert to plain data.frame and force ALL columns to atomic types
-    # This prevents any list columns from surviving
-    df2 <- as.data.frame(df2, stringsAsFactors = FALSE)
-    for (nm in names(df2)) {
-      if (is.list(df2[[nm]])) {
-        df2[[nm]] <- vapply(df2[[nm]], function(v) {
-          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-        }, character(1))
-      }
-    }
     
     # Pitch type after derive
     if (!("All" %in% pitch_types)) df2 <- dplyr::filter(df2, TaggedPitchType %in% pitch_types)
@@ -19774,12 +19449,10 @@ server <- function(input, output, session) {
     if (!is.na(input$pcMin)) df <- dplyr::filter(df, PitchNumber >= input$pcMin)
     if (!is.na(input$pcMax)) df <- dplyr::filter(df, PitchNumber <= input$pcMax)
     
-    # Per-user visibility - REMOVED: All users can now see all data
-    # Only admin status controls access to admin features, not data visibility
-    # if (!is_admin()) {
-    #   ue <- user_email()
-    #   if (!is.na(ue)) df <- dplyr::filter(df, Email == ue)
-    # }
+    if (!is_admin()) {
+      ue <- user_email()
+      if (!is.na(ue)) df <- dplyr::filter(df, Email == ue)
+    }
     
     
     df2 <- compute_stuff_simple(df, input$stuffBase, input$stuffLevel) %>%
@@ -19800,7 +19473,7 @@ server <- function(input, output, session) {
   trend_girafe_plot <- function(dat, title, ylab, digits = 1) {
     if (!nrow(dat)) return(NULL)
     dark_on <- isTRUE(input$dark_mode)
-    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
     
     date_levels <- unique(fmt_date(dat$Date))
     dat <- dplyr::mutate(dat, Date_f = factor(fmt_date(Date), levels = date_levels))
@@ -19826,31 +19499,30 @@ server <- function(input, output, session) {
         ggiraph::geom_point_interactive(size = 2.5, na.rm = TRUE) +
         scale_color_manual(values = session_cols, breaks = c("Live", "Bullpen"), name = NULL) +
         labs(title = title, x = NULL, y = ylab) +
-        theme_minimal() + axis_theme +
-        theme(plot.title = element_text(face = "bold"),
-              axis.text.x = element_text(angle = 45, hjust = 1),
-              legend.position = "bottom",
-              panel.grid.major = element_line(color = grid_col),
-              panel.grid.minor = element_blank(),
-              panel.background = element_rect(fill = "transparent", color = NA),
-              plot.background  = element_rect(fill = "transparent", color = NA))
+        theme_minimal() + axis_theme + grid_theme(dark_on) +
+        theme(
+          plot.title = element_text(face = "bold", color = axis_col),
+          axis.text.x = element_text(angle = 45, hjust = 1, color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          legend.position = "bottom",
+          legend.text = element_text(color = axis_col)
+        )
     } else {
       p <- ggplot(dat, aes(Date_f, value, group = 1,
                            tooltip = tooltip, data_id = data_id_val)) +
         ggiraph::geom_line_interactive(size = 1.2, na.rm = TRUE) +
         ggiraph::geom_point_interactive(size = 2.5, na.rm = TRUE) +
         labs(title = title, x = NULL, y = ylab) +
-        theme_minimal() + axis_theme +
-        theme(plot.title = element_text(face = "bold"),
-              axis.text.x = element_text(angle = 45, hjust = 1),
-              legend.position = "none",
-              panel.grid.major = element_line(color = grid_col),
-              panel.grid.minor = element_blank(),
-              panel.background = element_rect(fill = "transparent", color = NA),
-              plot.background  = element_rect(fill = "transparent", color = NA))
+        theme_minimal() + axis_theme + grid_theme(dark_on) +
+        theme(
+          plot.title = element_text(face = "bold", color = axis_col),
+          axis.text.x = element_text(angle = 45, hjust = 1, color = axis_col),
+          axis.text.y = element_text(color = axis_col),
+          legend.position = "none"
+        )
     }
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj   = p,
       options = list(
         ggiraph::opts_hover_inv(css = "opacity:0.1;"),
@@ -20139,6 +19811,9 @@ server <- function(input, output, session) {
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
     sess_lbl <- session_label_from(df)
+    dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     # Get display option
     display_opt <- input$summaryReleaseDisplay
@@ -20188,8 +19863,8 @@ server <- function(input, output, session) {
     p <- ggplot() +
       geom_polygon(data = mound, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
-      geom_vline(xintercept = 0, color = "black", size = 0.7) +
-      geom_hline(yintercept = 0, color = "black", size = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, size = 0.7) +
+      geom_hline(yintercept = 0, color = line_col, size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -20212,17 +19887,17 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       labs(x = NULL, y = NULL) +
       theme(
         legend.position = "none",
-        axis.text.x = element_text(size = 15, face = "bold"),
-        axis.text.y = element_text(size = 15, face = "bold"),
+        axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+        axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
         panel.grid = element_blank(),
         axis.ticks = element_blank()
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       width_svg = 8, height_svg = 6.5,
       options = list(
@@ -20239,14 +19914,16 @@ server <- function(input, output, session) {
     types <- ordered_types()
     if (!length(types)) return(NULL)
     types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     # Add reactive dependency on target shapes
     target_shapes_version()
     
-    # last-25 avg per type
+    # Averages per type (respect filters)
     avg_mov <- df %>%
       dplyr::group_by(TaggedPitchType) %>%
-      dplyr::slice_tail(n = 25) %>%
       dplyr::summarise(
         avg_HorzBreak        = mean(HorzBreak, na.rm = TRUE),
         avg_InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
@@ -20399,26 +20076,28 @@ server <- function(input, output, session) {
           )
         )
       } } +
-      geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+      geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
       coord_cartesian(xlim = c(-25, 25), ylim = c(-25, 25)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       labs(x = NULL, y = NULL) +                        # <-- remove axis titles
       theme(
         legend.position = "none",
-        axis.text.x     = element_text(size = 15, face = "bold"),
-        axis.text.y     = element_text(size = 15, face = "bold"),
+        axis.text.x     = element_text(size = 15, face = "bold", color = axis_col),
+        axis.text.y     = element_text(size = 15, face = "bold", color = axis_col),
         axis.title.x    = element_blank(),              # <-- ensure blank
         axis.title.y    = element_blank(),              # <-- ensure blank
         panel.grid      = element_blank(),
         axis.ticks      = element_blank()
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       width_svg  = 8,
       height_svg = 6.5,
+      bg = "transparent",
       options = list(
         ggiraph::opts_sizing(rescale = TRUE),
         ggiraph::opts_tooltip(use_fill = TRUE, css = tooltip_css),
@@ -20433,6 +20112,8 @@ server <- function(input, output, session) {
   output$summary_zonePlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     df_i <- df %>%
       dplyr::mutate(
@@ -20453,11 +20134,11 @@ server <- function(input, output, session) {
     df_other <- df_i %>% dplyr::filter(is.na(Result))
     
     p <- ggplot() +
-      geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = "black") +
+      geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                inherit.aes = FALSE, fill = NA, linetype = "dashed", color = "black") +
+                inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                inherit.aes = FALSE, fill = NA, color = "black") +
+                inherit.aes = FALSE, fill = NA, color = line_col) +
       
       # filled circles for "no result" rows
       ggiraph::geom_point_interactive(
@@ -20492,8 +20173,9 @@ server <- function(input, output, session) {
         shape = 21, size = 6, alpha = 0.001, stroke = 0, inherit.aes = FALSE
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
+      bg = "transparent",
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
         ggiraph::opts_hover(css = "stroke-width:1.5px;"),
@@ -20519,15 +20201,16 @@ server <- function(input, output, session) {
   output$summary_legend <- renderPlot({
     types<-ordered_types(); if(!length(types)) return()
     dark_on <- isTRUE(input$dark_mode)
-    cols <- colors_for_mode(dark_on)
+    axis_col <- if (dark_on) "#ffffff" else "black"
+    pal <- colors_for_mode(dark_on)
     leg_df<-data.frame(TaggedPitchType=factor(types,levels=types),x=1,y=1)
     ggplot(leg_df,aes(x,y,color=TaggedPitchType))+geom_point(size=0,alpha=0)+
-      scale_color_manual(values=cols[types],limits=types,name=NULL)+
+      scale_color_manual(values=pal[types],limits=types,name=NULL)+
       guides(color=guide_legend(nrow=1,byrow=TRUE,override.aes=list(size=4,alpha=1)))+
       theme_void()+
       theme(
         legend.position=c(0.5, 0.5),
-        legend.text=element_text(size=12,face="bold", color = if (dark_on) "#ffffff" else "black"),
+        legend.text=element_text(size=12,face="bold", color = axis_col),
         legend.justification=c(0.5, 0.5),
         legend.direction="horizontal",
         plot.margin = margin(2, 10, 2, 10),
@@ -20544,13 +20227,14 @@ server <- function(input, output, session) {
     res_levels <- c("Called Strike", "Ball", "Foul", "Whiff", "In Play (Out)", "In Play (Hit)", "Error")
     leg_df <- data.frame(Result = factor(res_levels, levels = res_levels), x = 1, y = 1)
     dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#ffffff" else "black"
     ggplot(leg_df, aes(x, y, shape = Result)) +
       geom_point(size = 0, alpha = 0, show.legend = TRUE) +
       scale_shape_manual(values = shape_map, limits = res_levels, name = NULL) +
       theme_void() +
       theme(
         legend.position = c(0.5, 0.5),
-        legend.text = element_text(size = 12, face = "bold", color = if (dark_on) "#ffffff" else "black"),
+        legend.text = element_text(size = 12, face = "bold", color = axis_col),
         legend.justification = c(0.5, 0.5),
         legend.direction = "horizontal",
         plot.margin = margin(10, 10, 10, 10),
@@ -20560,7 +20244,7 @@ server <- function(input, output, session) {
       ) +
       guides(shape = guide_legend(
         nrow = 1, byrow = TRUE,
-        override.aes = list(size = 4, alpha = 1, color = if (dark_on) "#ffffff" else "black", fill = NA)
+        override.aes = list(size = 4, alpha = 1, color = axis_col, fill = NA)
       ))
   }, bg = "transparent")
   
@@ -20597,22 +20281,6 @@ server <- function(input, output, session) {
   output$summaryTablePage <- DT::renderDataTable({
     tryCatch({
       df <- filtered_data()
-      df <- flatten_metrics_df(df)
-      char_cols <- intersect(
-        c("PlayResult","PitchCall","KorBB","TaggedHitType","SessionType","TaggedPitchType","SplitColumn"),
-        names(df)
-      )
-      num_cols <- intersect(
-        c("Balls","Strikes","ExitSpeed","Angle","InducedVertBreak","HorzBreak","RelSpeed"),
-        names(df)
-      )
-      if (length(char_cols) || length(num_cols)) {
-        df <- df %>%
-          dplyr::mutate(
-            dplyr::across(dplyr::all_of(char_cols), ~ as.character(.)),
-            dplyr::across(dplyr::all_of(num_cols),  ~ suppressWarnings(as.numeric(.)))
-          )
-      }
       if (!nrow(df)) {
         return(DT::datatable(
           data.frame(Message = "No data for selected filters"),
@@ -20623,29 +20291,6 @@ server <- function(input, output, session) {
       # Apply Split By transformation
       split_choice <- if (!is.null(input$summarySplitBy)) input$summarySplitBy else "Pitch Types"
       df <- apply_split_by(df, split_choice)
-      
-      # Re-flatten after split transformation to ensure no list columns remain
-      df <- flatten_metrics_df(df)
-      
-      # Ensure critical columns used in summarise operations are not lists
-      for (col_nm in intersect(c("PlayResult", "PitchCall", "KorBB", "TaggedHitType",
-                                 "SessionType", "SplitColumn", "BatterSide", "Batter"), names(df))) {
-        if (is.list(df[[col_nm]])) {
-          df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
-            if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
-          }, character(1))
-        }
-      }
-      for (col_nm in intersect(c("Balls", "Strikes", "ExitSpeed", "Angle", "PlateLocSide",
-                                 "PlateLocHeight", "RelSpeed", "InducedVertBreak", "HorzBreak"), names(df))) {
-        if (is.list(df[[col_nm]])) {
-          df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
-            if (is.null(x) || length(x) == 0) NA_real_ else suppressWarnings(as.numeric(x[[1]]))
-          }, numeric(1))
-        } else {
-          df[[col_nm]] <- suppressWarnings(as.numeric(df[[col_nm]]))
-        }
-      }
       
       # Determine the column name based on split choice
       split_col_name <- switch(
@@ -20715,7 +20360,7 @@ server <- function(input, output, session) {
       if (!exists("visible_set_for")) {
         visible_set_for <- function(mode, custom) {
           base <- c("Pitch","#","Usage","BF","IP","FIP","WHIP","Velo","Max","IVB","HB","rTilt","bTilt","SpinEff","Spin",
-                    "Height","Side","VAA","HAA","Ext","InZone%","Comp%","Strike%","FPS%","E+A%",
+                    "Height","Side","VAA","HAA","Ext","InZone%","Comp%","Strike%","FPS%","E+A%","QP%",
                     "K%","BB%","Whiff%","EV","LA","Stuff+","Ctrl+","QP+","Pitching+",
                     # Results-specific common cols
                     "PA","AB","AVG","SLG","OBP","OPS","xWOBA","xISO","BABIP","GB%","Barrel%","Swing%","Whiff%","K%","BB%","EV","LA")
@@ -20727,66 +20372,12 @@ server <- function(input, output, session) {
       if (identical(mode, "Results")) {
         swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
         
-        # CRITICAL: Force-flatten all columns that will be used in sum() operations
-        # This prevents "invalid 'type' (list) of argument" errors
-        unlist_col <- function(x) {
-          if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
-          else as.character(x)
-        }
-        unlist_num <- function(x) {
-          if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
-          else suppressWarnings(as.numeric(x))
-        }
-        df$PlayResult <- unlist_col(df$PlayResult)
-        df$KorBB <- unlist_col(df$KorBB)
-        df$PitchCall <- unlist_col(df$PitchCall)
-        df$TaggedHitType <- unlist_col(df$TaggedHitType)
-        df$SessionType <- unlist_col(df$SessionType)
-        df$SplitColumn <- unlist_col(df$SplitColumn)
-        df$PlateLocSide <- unlist_num(df$PlateLocSide)
-        df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
-        df$ExitSpeed <- unlist_num(df$ExitSpeed)
-        df$Angle <- unlist_num(df$Angle)
-        df$Balls <- unlist_num(df$Balls)
-        df$Strikes <- unlist_num(df$Strikes)
-        if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
-        
-        # FINAL SAFETY: Force-flatten ANY remaining list columns in the entire dataframe
-        for (nm in names(df)) {
-          if (is.list(df[[nm]])) {
-            message("summaryTablePage Results: Found unexpected list column '", nm, "' - flattening")
-            df[[nm]] <- vapply(df[[nm]], function(v) {
-              if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-            }, character(1))
-          }
-        }
-        
         # Completed PA rows
         is_term <- (
           (!is.na(df$PlayResult) & df$PlayResult != "Undefined") |
             (!is.na(df$KorBB) & df$KorBB %in% c("Strikeout","Walk"))
         )
         term <- df[is_term, , drop = FALSE]
-        
-        # EXTRA SAFETY: Re-flatten term after subsetting (in case subset creates list columns)
-        term <- as.data.frame(term, stringsAsFactors = FALSE)
-        for (nm in names(term)) {
-          if (is.list(term[[nm]])) {
-            message("summaryTablePage Results term: Found list column '", nm, "' after subset - flattening")
-            term[[nm]] <- vapply(term[[nm]], function(v) {
-              if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-            }, character(1))
-          }
-        }
-        # Force PlayResult and KorBB to character explicitly
-        term$PlayResult <- as.character(term$PlayResult)
-        term$KorBB <- as.character(term$KorBB)
-        
-        # Verify no list columns before summarise
-        list_cols_in_term <- names(term)[vapply(term, is.list, logical(1))]
-        if (length(list_cols_in_term) > 0) {
-          message("WARNING: term still has list columns: ", paste(list_cols_in_term, collapse = ", "))
-        }
         
         # Per-split-type tallies (PA/AB/H/K/BB/HBP/Sac/HR)
         per_type <- term %>%
@@ -21558,46 +21149,6 @@ server <- function(input, output, session) {
       }
       
       # ---------- NON-Results modes (your original build) ----------
-      # CRITICAL: Force-flatten all columns before summarise operations
-      unlist_col <- function(x) {
-        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
-        else as.character(x)
-      }
-      unlist_num <- function(x) {
-        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
-        else suppressWarnings(as.numeric(x))
-      }
-      df$PlayResult <- unlist_col(df$PlayResult)
-      df$KorBB <- unlist_col(df$KorBB)
-      df$PitchCall <- unlist_col(df$PitchCall)
-      df$TaggedHitType <- unlist_col(df$TaggedHitType)
-      df$SessionType <- unlist_col(df$SessionType)
-      df$SplitColumn <- unlist_col(df$SplitColumn)
-      df$PlateLocSide <- unlist_num(df$PlateLocSide)
-      df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
-      df$ExitSpeed <- unlist_num(df$ExitSpeed)
-      df$Angle <- unlist_num(df$Angle)
-      df$Balls <- unlist_num(df$Balls)
-      df$Strikes <- unlist_num(df$Strikes)
-      df$RelSpeed <- unlist_num(df$RelSpeed)
-      df$InducedVertBreak <- unlist_num(df$InducedVertBreak)
-      df$HorzBreak <- unlist_num(df$HorzBreak)
-      df$SpinRate <- unlist_num(df$SpinRate)
-      df$RelHeight <- unlist_num(df$RelHeight)
-      df$RelSide <- unlist_num(df$RelSide)
-      df$Extension <- unlist_num(df$Extension)
-      if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
-      
-      # FINAL SAFETY: Force-flatten ANY remaining list columns
-      for (nm in names(df)) {
-        if (is.list(df[[nm]])) {
-          message("summaryTablePage NON-Results: Found unexpected list column '", nm, "' - flattening")
-          df[[nm]] <- vapply(df[[nm]], function(v) {
-            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-          }, character(1))
-        }
-      }
-      
       # QP+ per split type (scalar)
       qp_by_type <- df %>%
         dplyr::group_by(SplitColumn) %>%
@@ -21628,47 +21179,23 @@ server <- function(input, output, session) {
         for (state in c("Even", "Ahead", "Behind")) {
           state_df <- df %>% dplyr::filter(CountState == state)
           if (nrow(state_df) > 0) {
-            state_summary <- safe_make_summary(state_df, group_col = "SplitColumn")
-            if (nrow(state_summary) > 0) {
-              # Aggregate all counts in this state into one row
-              state_row <- state_summary %>%
-                dplyr::summarise(
-                  PitchType = state,
-                  PitchCount = sum(PitchCount, na.rm = TRUE),
-                  Usage = "",  # Will calculate later
-                  Overall = "",
-                  BF = sum(BF, na.rm = TRUE),
-                  Velo_Avg = round(nz_mean(rep(Velo_Avg, PitchCount)), 1),
-                  Velo_Max = round(max(Velo_Max, na.rm = TRUE), 1),
-                  IVB = round(nz_mean(rep(IVB, PitchCount)), 1),
-                  HB = round(nz_mean(rep(HB, PitchCount)), 1),
-                  ReleaseTilt = as.character(NA),
-                  BreakTilt = as.character(NA),
-                  SpinEff = nz_mean(rep(SpinEff, PitchCount)),
-                  SpinRate = round(nz_mean(rep(SpinRate, PitchCount)), 0),
-                  RelHeight = round(nz_mean(rep(RelHeight, PitchCount)), 1),
-                  RelSide = round(nz_mean(rep(RelSide, PitchCount)), 1),
-                  VertApprAngle = round(nz_mean(rep(VertApprAngle, PitchCount)), 1),
-                  HorzApprAngle = round(nz_mean(rep(HorzApprAngle, PitchCount)), 1),
-                  Extension = round(nz_mean(rep(Extension, PitchCount)), 1),
-                  InZonePercent = "",
-                  CompPercent = "",
-                  KPercent = "",
-                  BBPercent = "",
-                  FPSPercent = "",
-                  EAPercent = "",
-                  StrikePercent = "",
-                  SwingPercent = "",
-                  WhiffPercent = "",
-                  EV = round(nz_mean(rep(EV, PitchCount)), 1),
-                  LA = round(nz_mean(rep(LA, PitchCount)), 1),
-                  `Stuff+` = round(nz_mean(rep(`Stuff+`, PitchCount)), 1),
-                  `Ctrl+` = round(nz_mean(rep(`Ctrl+`, PitchCount)), 1),
-                  `QP+` = round(nz_mean(rep(`QP+`, PitchCount)), 1),
-                  `Pitching+` = round(nz_mean(rep(`Pitching+`, PitchCount)), 1)
-                )
-              count_state_summ <- dplyr::bind_rows(count_state_summ, state_row)
+            state_summary <- safe_make_summary(
+              state_df %>% dplyr::mutate(SplitColumn = state),
+              group_col = "SplitColumn"
+            )
+            if ("SplitColumn" %in% names(state_summary)) {
+              state_summary <- state_summary %>% dplyr::rename(PitchType = SplitColumn)
             }
+            if (!("PitchType" %in% names(state_summary))) {
+              state_summary$PitchType <- state
+            }
+            state_row <- state_summary %>%
+              dplyr::mutate(
+                PitchType = state,
+                Usage = "",  # Calculate after binding
+                Overall = ""
+              )
+            count_state_summ <- dplyr::bind_rows(count_state_summ, state_row)
           }
         }
         # Update Usage for count state rows
@@ -21698,6 +21225,7 @@ server <- function(input, output, session) {
           sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
           den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
           bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+          fps_opp <- bf_live
           k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
           bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
           fps_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0 &
@@ -21754,8 +21282,8 @@ server <- function(input, output, session) {
             safe_pct(sum(comp, na.rm=TRUE), sum(!is.na(comp))) },
             KPercent      = safe_pct(k_live, bf_live),
             BBPercent     = safe_pct(bb_live, bf_live),
-            FPSPercent    = safe_pct(fps_live, bf_live),
-            EAPercent     = safe_pct(ea_live, bf_live),
+            FPSPercent    = safe_pct(fps_live, fps_opp),
+            EAPercent     = safe_pct(ea_live, fps_opp),
             StrikePercent = if (has_pc) safe_pct(strikes, nrow(df)) else "",
             SwingPercent  = swing_pct_all,
             WhiffPercent  = safe_pct(sw, den),
@@ -21781,6 +21309,7 @@ server <- function(input, output, session) {
           `BB%`     = BBPercent,
           `FPS%`    = FPSPercent,
           `E+A%`    = EAPercent,
+          `QP%`     = QPPercent,
           `Strike%` = StrikePercent,
           `Swing%`  = SwingPercent,
           `Whiff%`  = WhiffPercent,
@@ -21793,7 +21322,7 @@ server <- function(input, output, session) {
           dplyr::any_of(c("0-0","Behind","Even","Ahead","<2K","2K")),
           BF,
           Velo, Max, IVB, HB, rTilt, bTilt, SpinEff, Spin, Height, Side, VAA, HAA, Ext,
-          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `K%`, `BB%`, `Whiff%`, EV, LA,
+          `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `QP%`, `K%`, `BB%`, `Whiff%`, EV, LA,
           `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
         ) %>%
         dplyr::mutate(
@@ -21813,6 +21342,7 @@ server <- function(input, output, session) {
           dplyr::mutate(!!split_col_name := as.character(.data[[split_col_name]]))
         df_table <- df_table %>% dplyr::left_join(extras, by = split_col_name)
       }
+      df_table <- fill_all_qp_pct(df_table, df)
       
       if (identical(mode, "Usage")) {
         usage_extras <- compute_usage_by_count(df)
@@ -21975,35 +21505,9 @@ server <- function(input, output, session) {
       ))
     }
     
-    # Flatten list columns before processing
-    df <- flatten_metrics_df(df)
-    
     # Apply Split By transformation
     split_choice <- if (!is.null(input$dpSplitBy)) input$dpSplitBy else "Pitch Types"
     df <- apply_split_by(df, split_choice)
-    
-    # Re-flatten after split transformation
-    df <- flatten_metrics_df(df)
-    
-    # Ensure critical columns are not lists
-    for (col_nm in intersect(c("PlayResult", "PitchCall", "KorBB", "TaggedHitType",
-                               "SessionType", "SplitColumn", "BatterSide", "Batter"), names(df))) {
-      if (is.list(df[[col_nm]])) {
-        df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
-          if (is.null(x) || length(x) == 0) NA_character_ else as.character(x[[1]])
-        }, character(1))
-      }
-    }
-    for (col_nm in intersect(c("Balls", "Strikes", "ExitSpeed", "Angle", "PlateLocSide",
-                               "PlateLocHeight", "RelSpeed", "InducedVertBreak", "HorzBreak"), names(df))) {
-      if (is.list(df[[col_nm]])) {
-        df[[col_nm]] <- vapply(df[[col_nm]], function(x) {
-          if (is.null(x) || length(x) == 0) NA_real_ else suppressWarnings(as.numeric(x[[1]]))
-        }, numeric(1))
-      } else {
-        df[[col_nm]] <- suppressWarnings(as.numeric(df[[col_nm]]))
-      }
-    }
     
     # Determine the column name based on split choice
     split_col_name <- switch(
@@ -22052,7 +21556,7 @@ server <- function(input, output, session) {
     if (!exists("visible_set_for")) {
       visible_set_for <- function(mode, custom) {
         base <- c("Pitch","#","Usage","BF","IP","FIP","WHIP","Velo","Max","IVB","HB","rTilt","bTilt","SpinEff","Spin",
-                  "Height","Side","VAA","HAA","Ext","InZone%","Comp%","Strike%","FPS%","E+A%",
+                  "Height","Side","VAA","HAA","Ext","InZone%","Comp%","Strike%","FPS%","E+A%","QP%",
                   "K%","BB%","Whiff%","EV","LA","Stuff+","Ctrl+","QP+","Pitching+",
                   # Results-specific
                   "PA","AB","AVG","SLG","OBP","OPS","xWOBA","xISO","BABIP","GB%","Barrel%","Swing%","Whiff%","K%","BB%","EV","LA"
@@ -22065,45 +21569,12 @@ server <- function(input, output, session) {
     if (identical(mode, "Results")) {
       swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
       
-      # CRITICAL: Force-flatten all columns before summarise operations
-      unlist_col <- function(x) {
-        if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
-        else as.character(x)
-      }
-      df$PlayResult <- unlist_col(df$PlayResult)
-      df$KorBB <- unlist_col(df$KorBB)
-      df$PitchCall <- unlist_col(df$PitchCall)
-      df$TaggedHitType <- unlist_col(df$TaggedHitType)
-      df$SessionType <- unlist_col(df$SessionType)
-      df$SplitColumn <- unlist_col(df$SplitColumn)
-      
-      # Final safety: flatten any remaining list columns
-      for (nm in names(df)) {
-        if (is.list(df[[nm]])) {
-          df[[nm]] <- vapply(df[[nm]], function(v) {
-            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-          }, character(1))
-        }
-      }
-      
       # Terminal rows = completed PA
       is_term <- (
         (!is.na(df$PlayResult) & df$PlayResult != "Undefined") |
           (!is.na(df$KorBB) & df$KorBB %in% c("Strikeout","Walk"))
       )
       term <- df[is_term, , drop = FALSE]
-      
-      # Extra safety: re-flatten term after subset
-      term <- as.data.frame(term, stringsAsFactors = FALSE)
-      for (nm in names(term)) {
-        if (is.list(term[[nm]])) {
-          term[[nm]] <- vapply(term[[nm]], function(v) {
-            if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-          }, character(1))
-        }
-      }
-      term$PlayResult <- as.character(term$PlayResult)
-      term$KorBB <- as.character(term$KorBB)
       
       # Per-split-type tallies (PA/AB/H/K/BB/HBP/Sac/HR)
       per_type <- term %>%
@@ -22319,12 +21790,48 @@ server <- function(input, output, session) {
         all_row$xISO      <- extras_all$xISO[1]
         all_row$BABIP     <- extras_all$BABIP[1]
         all_row$`Barrel%` <- extras_all$`Barrel%`[1]
-        all_row$`RV/100`  <- fmt_num2(extras_all$`RV/100`[1])
+        all_row$`RV/100`  <- extras_all$`RV/100`[1]
       }
       
       # Add Even/Ahead/Behind summary rows if splitting by Count (Data & Performance)
       dp_count_state_rows <- NULL
       if (split_choice == "Count" && "CountState" %in% names(df)) {
+        swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","FoulBall","InPlay")
+        calc_rv100 <- function(dfi) {
+          dfi_live <- dfi %>% dplyr::filter(SessionType == "Live")
+          dfi_use  <- if (nrow(dfi_live)) dfi_live else dfi
+          if (!nrow(dfi_use)) return(NA_real_)
+          run_val <- function(pitch_call, play_result, korbb = NA) {
+            pitch_call  <- as.character(pitch_call)
+            play_result <- as.character(play_result)
+            korbb       <- as.character(korbb)
+            if (!is.na(korbb) && nzchar(korbb) && korbb != "NA") {
+              if (korbb == "Strikeout") return(-0.27)
+              if (korbb == "Walk")     return(0.33)
+            }
+            if (pitch_call %in% c("BallCalled", "BallIntentional", "BallinDirt")) return(0.03)
+            if (pitch_call %in% c("StrikeCalled", "StrikeSwinging", "FoulBall",
+                                  "FoulBallFieldable", "FoulBallNotFieldable"))  return(-0.03)
+            if (pitch_call == "HitByPitch" || play_result %in% c("Walk","IntentionalWalk","HitByPitch")) return(0.33)
+            if (pitch_call == "InPlay") {
+              if (play_result == "Single")   return(0.47)
+              if (play_result == "Double")   return(0.78)
+              if (play_result == "Triple")   return(1.09)
+              if (play_result == "HomeRun")  return(1.40)
+              if (play_result == "Error")    return(0.33)
+              return(-0.27)
+            }
+            0
+          }
+          rv_vals <- mapply(
+            run_val,
+            dfi_use$PitchCall,
+            dfi_use$PlayResult,
+            if ("KorBB" %in% names(dfi_use)) dfi_use$KorBB else NA
+          )
+          rv_val <- ((sum(rv_vals, na.rm = TRUE) / nrow(dfi_use)) * 100) - 0.43
+          ifelse(is.finite(rv_val), rv_val, NA_real_)
+        }
         for (state in c("Even", "Ahead", "Behind")) {
           state_df <- df %>% dplyr::filter(CountState == state)
           state_term <- term %>% dplyr::filter(CountState == state)
@@ -22423,10 +21930,13 @@ server <- function(input, output, session) {
             state_CompPct <- safe_div(state_comp, nrow(state_df))
             
             state_pitches <- nrow(state_df)
+            state_rv100 <- calc_rv100(state_df)
+            pitching_plus <- if ("Pitching+" %in% names(state_df)) round(nz_mean(state_df$`Pitching+`), 1) else round(nz_mean(state_df$`Stuff+`), 1)
             state_row_data <- list(
               `#` = state_pitches,
               Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
               BF = state_PA,
+              `RV/100` = ifelse(is.finite(state_rv100), state_rv100, NA_real_),
               IP = ip_fmt(state_IP),
               FIP = state_FIP,
               WHIP = state_WHIP,
@@ -22451,7 +21961,7 @@ server <- function(input, output, session) {
               `Barrel%` = state_BarrelPct,
               EV = nz_mean(state_bbe$ExitSpeed),
               LA = nz_mean(state_bbe$Angle),
-              `Pitching+` = round(nz_mean(state_df$`Stuff+`), 1)
+              `Pitching+` = pitching_plus
             )
             state_row_data[[split_col_name]] <- state
             state_row <- tibble::as_tibble(state_row_data)
@@ -22488,6 +21998,10 @@ server <- function(input, output, session) {
       df_out$LA   <- ifelse(is.finite(df_out$LA),   round(df_out$LA, 1), "")
       df_out$FIP  <- ifelse(is.finite(df_out$FIP),  sprintf("%.2f", df_out$FIP), "")
       df_out$WHIP <- ifelse(is.finite(df_out$WHIP), sprintf("%.2f", df_out$WHIP), "")
+      df_out$`RV/100` <- {
+        z <- suppressWarnings(as.numeric(df_out$`RV/100`))
+        ifelse(is.finite(z), fmt_num2(z), "")
+      }
       
       # Sort by IVB/HB in descending order if applicable
       df_out <- sort_by_range(df_out, split_col_name, split_choice)
@@ -22867,46 +22381,6 @@ server <- function(input, output, session) {
     }
     
     # ---------- NON-Results modes (your original build) ----------
-    # CRITICAL: Force-flatten all columns before summarise operations
-    unlist_col <- function(x) {
-      if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]]), character(1))
-      else as.character(x)
-    }
-    unlist_num <- function(x) {
-      if (is.list(x)) vapply(x, function(v) if (is.null(v) || length(v) == 0) NA_real_ else suppressWarnings(as.numeric(v[[1]])), numeric(1))
-      else suppressWarnings(as.numeric(x))
-    }
-    df$PlayResult <- unlist_col(df$PlayResult)
-    df$KorBB <- unlist_col(df$KorBB)
-    df$PitchCall <- unlist_col(df$PitchCall)
-    df$TaggedHitType <- unlist_col(df$TaggedHitType)
-    df$SessionType <- unlist_col(df$SessionType)
-    df$SplitColumn <- unlist_col(df$SplitColumn)
-    df$PlateLocSide <- unlist_num(df$PlateLocSide)
-    df$PlateLocHeight <- unlist_num(df$PlateLocHeight)
-    df$ExitSpeed <- unlist_num(df$ExitSpeed)
-    df$Angle <- unlist_num(df$Angle)
-    df$Balls <- unlist_num(df$Balls)
-    df$Strikes <- unlist_num(df$Strikes)
-    df$RelSpeed <- unlist_num(df$RelSpeed)
-    df$InducedVertBreak <- unlist_num(df$InducedVertBreak)
-    df$HorzBreak <- unlist_num(df$HorzBreak)
-    df$SpinRate <- unlist_num(df$SpinRate)
-    df$RelHeight <- unlist_num(df$RelHeight)
-    df$RelSide <- unlist_num(df$RelSide)
-    df$Extension <- unlist_num(df$Extension)
-    if ("Stuff+" %in% names(df)) df$`Stuff+` <- unlist_num(df$`Stuff+`)
-    
-    # FINAL SAFETY: Force-flatten ANY remaining list columns
-    for (nm in names(df)) {
-      if (is.list(df[[nm]])) {
-        message("summaryTable (DP): Found unexpected list column '", nm, "' - flattening")
-        df[[nm]] <- vapply(df[[nm]], function(v) {
-          if (is.null(v) || length(v) == 0) NA_character_ else as.character(v[[1]])
-        }, character(1))
-      }
-    }
-    
     # QP+ per pitch type (scalar)
     qp_by_type <- df %>%
       dplyr::group_by(SplitColumn) %>%
@@ -22948,6 +22422,7 @@ server <- function(input, output, session) {
         den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
         # Use shared BF calculation function
         bf_live <- calculate_bf(df)
+        fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
         k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
         bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
         fps_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0 &
@@ -22999,8 +22474,8 @@ server <- function(input, output, session) {
           safe_pct(sum(comp, na.rm=TRUE), sum(!is.na(comp))) },
           KPercent      = safe_pct(k_live, bf_live),
           BBPercent     = safe_pct(bb_live, bf_live),
-          FPSPercent    = safe_pct(fps_live, bf_live),
-          EAPercent     = safe_pct(ea_live, bf_live),
+          FPSPercent    = safe_pct(fps_live, fps_opp),
+          EAPercent     = safe_pct(ea_live, fps_opp),
           StrikePercent = if (has_pc) safe_pct(strikes, nrow(df)) else "",
           SwingPercent  = safe_pct(sum(!is.na(df$PitchCall) & df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","FoulBall","InPlay"), na.rm = TRUE), nrow(df)),
           WhiffPercent  = safe_pct(sw, den),
@@ -23026,6 +22501,7 @@ server <- function(input, output, session) {
         `BB%`     = BBPercent,
         `FPS%`    = FPSPercent,
         `E+A%`    = EAPercent,
+        `QP%`     = QPPercent,
         `Strike%` = StrikePercent,
         `Swing%`  = SwingPercent,
         `Whiff%`  = WhiffPercent,
@@ -23038,7 +22514,7 @@ server <- function(input, output, session) {
         dplyr::any_of(c("0-0","Behind","Even","Ahead","<2K","2K")),
         BF,
         Velo, Max, IVB, HB, rTilt, bTilt, SpinEff, Spin, Height, Side, VAA, HAA, Ext,
-        `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `K%`, `BB%`, `Whiff%`, EV, LA,
+        `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `E+A%`, `QP%`, `K%`, `BB%`, `Whiff%`, EV, LA,
         `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
       ) %>%
       dplyr::mutate(
@@ -23057,6 +22533,7 @@ server <- function(input, output, session) {
         dplyr::mutate(!!split_col_name := as.character(.data[[split_col_name]]))
     }
     df_table <- df_table %>% dplyr::left_join(extras, by = split_col_name)
+    df_table <- fill_all_qp_pct(df_table, df)
     if (identical(mode, "Usage")) {
       usage_extras_raw <- compute_usage_by_count(df)
       if ("PitchType" %in% names(usage_extras_raw)) {
@@ -23174,17 +22651,17 @@ server <- function(input, output, session) {
   .abp_pretty_pitcher <- function(x) .abp_pretty_name(x)
   
   # Strike zone + dashed competitive box
-  .abp_geom_zone <- function() {
+  .abp_geom_zone <- function(color = "black") {
     home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75),
                        y=c(1.05, 1.05,1.15,1.25, 1.15)-0.5)
     cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     list(
-      geom_polygon(data = home, aes(x, y), fill = NA, color = "black"),
+      geom_polygon(data = home, aes(x, y), fill = NA, color = color),
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", linetype = "dashed"),
+                fill = NA, color = color, linetype = "dashed"),
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black")
+                fill = NA, color = color)
     )
   }
   
@@ -23220,31 +22697,34 @@ server <- function(input, output, session) {
       d <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit)
       intersect(names(all_colors), as.character(unique(d$TaggedPitchType)))
     }
+    dark_on <- isTRUE(input$dark_mode)
+    legend_cols <- if (exists("colors_for_mode")) colors_for_mode(dark_on) else all_colors
+    text_col <- if (dark_on) "#e5e7eb" else "black"
     
     shape_rows <- tagList(
-      tags$div("\u25CF Called Strike"),  # ●
-      tags$div("\u25CB Ball"),           # ○
-      tags$div("\u25B3 Foul"),           # △
-      tags$div("\u2605 Whiff"),          # ★
-      tags$div("\u25B2 In Play (Out)"),  # ▲
-      tags$div("\u25A0 In Play (Hit)"),  # ■
-      tags$div("\u25A1 Error")           # □
+      tags$div(style = paste0("color:", text_col), "\u25CF Called Strike"),  # ●
+      tags$div(style = paste0("color:", text_col), "\u25CB Ball"),           # ○
+      tags$div(style = paste0("color:", text_col), "\u25B3 Foul"),           # △
+      tags$div(style = paste0("color:", text_col), "\u2605 Whiff"),          # ★
+      tags$div(style = paste0("color:", text_col), "\u25B2 In Play (Out)"),  # ▲
+      tags$div(style = paste0("color:", text_col), "\u25A0 In Play (Hit)"),  # ■
+      tags$div(style = paste0("color:", text_col), "\u25A1 Error")           # □
     )
     
     tagList(
       selectInput(ns("abpGameDate"), "Select Game:", choices = choices, selected = sel),
       tags$hr(),
-      tags$div(tags$strong("Pitch Result")),
+      tags$div(tags$strong(style = paste0("color:", text_col), "Pitch Result")),
       shape_rows,
       tags$br(),
-      tags$div(tags$strong("Pitch Types")),
+      tags$div(tags$strong(style = paste0("color:", text_col), "Pitch Types")),
       tags$div(lapply(types_for_legend, function(tt) {
-        col <- all_colors[[as.character(tt)]]; if (is.null(col)) col <- "gray"
+        col <- legend_cols[[as.character(tt)]]; if (is.null(col)) col <- "gray"
         tags$div(style="display:flex;align-items:center;margin:2px 0;",
                  tags$span(style=paste0("display:inline-block;width:12px;height:12px;",
                                         "background:", col, ";margin-right:6px;",
                                         "border:1px solid rgba(0,0,0,.25);border-radius:2px;")),
-                 tags$span(as.character(tt))
+                 tags$span(style = paste0("color:", text_col), as.character(tt))
         )
       }))
     )
@@ -23296,8 +22776,10 @@ server <- function(input, output, session) {
       side <- as.character(dplyr::coalesce(dB$BatterSide[which.max(seq_len(nrow(dB)))], NA))
       lr   <- ifelse(is.na(side), "", ifelse(grepl("^L", side, ignore.case = TRUE), "L", "R"))
       is_left <- identical(lr, "L")
+      dark_on <- isTRUE(input$dark_mode)
+      name_col <- if (is_left) "#d32f2f" else if (dark_on) "#e5e7eb" else "#000000"
       name_html <- tags$div(
-        style = paste0("font-weight:700; color:", if (is_left) "#d32f2f" else "#000000", ";"),
+        style = paste0("font-weight:700; color:", name_col, ";"),
         paste0(.abp_pretty_name(bat), " (", lr, ")")
       )
       
@@ -23348,9 +22830,13 @@ server <- function(input, output, session) {
           dat_local    <- dat
           out_id_local <- ns(paste0("abpPlot_", pid))
           output[[out_id_local]] <- ggiraph::renderGirafe({
+            dark_on <- isTRUE(input$dark_mode)
+            axis_col <- if (dark_on) "#e5e7eb" else "black"
+            line_col <- if (dark_on) "#ffffff" else "black"
+            cols <- if (exists("colors_for_mode")) colors_for_mode(dark_on) else all_colors
             types <- as.character(intersect(names(all_colors), unique(dat_local$TaggedPitchType)))
             p <- ggplot() +
-              .abp_geom_zone() +
+              .abp_geom_zone(color = line_col) +
               ggiraph::geom_point_interactive(
                 data = dat_local,
                 aes(PlateLocSide, PlateLocHeight,
@@ -23368,13 +22854,14 @@ server <- function(input, output, session) {
                 aes(PlateLocSide, PlateLocHeight, tooltip = tt, data_id = pitch_idx, fill = I(tt_fill)),
                 shape = 21, size = 7, alpha = 0.001, stroke = 0, inherit.aes = FALSE
               ) +
-              scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
-              scale_fill_manual(values  = all_colors[types], limits = types, name = NULL) +
+              scale_color_manual(values = cols[types], limits = types, name = NULL) +
+              scale_fill_manual(values  = cols[types], limits = types, name = NULL) +
               scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
               coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
-              theme_void() + theme(legend.position = "none")
+              theme_void() + theme(legend.position = "none",
+                                   plot.title = element_text(color = axis_col))
             
-            ggiraph::girafe(
+            girafe_transparent(
               ggobj = p,
               options = list(
                 ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
@@ -23421,6 +22908,9 @@ server <- function(input, output, session) {
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
     sess_lbl <- session_label_from(df)
+    dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     # Get display option
     display_opt <- input$releaseComboDisplay
@@ -23476,8 +22966,8 @@ server <- function(input, output, session) {
     p1 <- ggplot() +
       geom_polygon(data = mound_df, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = -0.5, xmax = 0.5, ymin = rp_h - 0.05, ymax = rp_h + 0.05, fill = "white") +
-      geom_vline(xintercept = 0, color = "black", size = 0.7) +
-      geom_hline(yintercept = 0, color = "black", size = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, size = 0.7) +
+      geom_hline(yintercept = 0, color = line_col, size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -23500,8 +22990,13 @@ server <- function(input, output, session) {
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
-      theme_minimal() + axis_theme + labs(x = NULL, y = NULL) +
-      theme(panel.grid = element_blank(), axis.ticks = element_blank())
+      theme_minimal() + axis_theme + grid_theme(dark_on) + labs(x = NULL, y = NULL) +
+      theme(
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(color = axis_col),
+        axis.text.y = element_text(color = axis_col)
+      )
     
     # --- (B) Extension vs Height averages
     re_w <- 7; re_h <- 0.83
@@ -23532,8 +23027,7 @@ server <- function(input, output, session) {
     p2 <- ggplot() +
       geom_polygon(data = ext_bg, aes(x, y), fill = "tan", color = "tan") +
       annotate("rect", xmin = 0, xmax = 0.2, ymin = re_h - 0.05, ymax = re_h + 0.05, fill = "white") +
-      geom_vline(xintercept = 0, color = "black", size = 0.7) +
-      geom_hline(yintercept = 0, color = "black", size = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, size = 0.7) +
       # Individual pitches layer
       { if (show_pitches) {
         ggiraph::geom_point_interactive(
@@ -23557,17 +23051,22 @@ server <- function(input, output, session) {
       scale_y_continuous(limits = c(0, y_max), breaks = seq(0, ceiling(y_max), by = 1)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme + labs(x = NULL, y = NULL) +
-      theme(panel.grid = element_blank(), axis.ticks = element_blank())
+      theme_minimal() + axis_theme + grid_theme(dark_on) + labs(x = NULL, y = NULL) +
+      theme(
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(color = axis_col),
+        axis.text.y = element_text(color = axis_col)
+      )
     
     # --- stack + single legend at bottom; enlarge legend text a bit
     p <- (p1 / p2) + patchwork::plot_layout(guides = "collect")
     p <- p & theme(
       legend.position = "bottom",
-      legend.text = element_text(size = 14)
+      legend.text = element_text(size = 14, color = axis_col)
     )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       width_svg = 9, height_svg = 12,
       options = list(
@@ -23585,12 +23084,14 @@ server <- function(input, output, session) {
   output$movementPlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
+    dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     # Add reactive dependency on target shapes
     target_shapes_version()
     
     avg_mov <- df %>% dplyr::group_by(TaggedPitchType) %>%
-      dplyr::slice_tail(n = 25) %>%
       dplyr::summarise(
         avg_HorzBreak        = mean(HorzBreak, na.rm = TRUE),
         avg_InducedVertBreak = mean(InducedVertBreak, na.rm = TRUE),
@@ -23727,19 +23228,22 @@ server <- function(input, output, session) {
           )
         )
       } } +
-      geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+      geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
       coord_cartesian(xlim = c(-25, 25), ylim = c(-25, 25)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       theme(
         legend.position = "bottom",
-        legend.text = element_text(size = 14),
+        legend.text = element_text(size = 14, color = axis_col),
         panel.grid = element_blank(),
-        axis.ticks = element_blank()
+        axis.ticks = element_blank(),
+        axis.text.x = element_text(color = axis_col),
+        axis.text.y = element_text(color = axis_col)
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       options = list(
         ggiraph::opts_tooltip(
@@ -24200,7 +23704,7 @@ server <- function(input, output, session) {
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
     dark_on <- isTRUE(input$dark_mode)
-    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
     
     df2 <- df %>% dplyr::arrange(Date, dplyr::row_number()) %>% dplyr::mutate(
       PitchCount = dplyr::row_number(),
@@ -24238,12 +23742,14 @@ server <- function(input, output, session) {
       scale_y_continuous(limits = c(y_min, y_max), breaks = seq(y_min, y_max, 5)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       theme(
         legend.position = "bottom",
-        legend.text = element_text(size = 14),
-        panel.grid.major = element_line(color = grid_col),
-        panel.grid.minor = element_blank()
+        legend.text = element_text(size = 14, color = axis_col),
+        axis.text.x = element_text(color = axis_col),
+        axis.text.y = element_text(color = axis_col),
+        axis.title.x = element_text(color = axis_col),
+        axis.title.y = element_text(color = axis_col)
       ) +
       labs(title = "Velocity Chart (Game/Inning)", x = "Pitch Count", y = "Velocity (MPH)")
     
@@ -24265,7 +23771,7 @@ server <- function(input, output, session) {
       }
     }
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, css = tooltip_css),
@@ -24287,7 +23793,7 @@ server <- function(input, output, session) {
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
     dark_on <- isTRUE(input$dark_mode)
-    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
     
     ivb_nm <- .pick_col(df, IVB_CANDIDATES)
     hb_nm  <- .pick_col(df, HB_CANDIDATES)
@@ -24328,7 +23834,7 @@ server <- function(input, output, session) {
       if (y_min == y_max) y_max <- y_min + 5
     }
     
-    # Evenly spaced x-axis: use an ordered factor of dates instead of scale_x_date
+    # Evenly spaced x-axis using ordered factor of dates
     date_levels <- format(sort(unique(dfG$Date)), "%m/%d/%y")
     dfG <- dfG %>%
       dplyr::mutate(date_fac = factor(format(Date, "%m/%d/%y"), levels = date_levels))
@@ -24343,18 +23849,19 @@ server <- function(input, output, session) {
       scale_y_continuous(limits = c(y_min, y_max), breaks = seq(y_min, y_max, 5)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       theme(
         legend.position = "bottom",
-        legend.text = element_text(size = 14),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        panel.grid.major = element_line(color = grid_col),
-        panel.grid.minor = element_blank()
+        legend.text = element_text(size = 14, color = axis_col),
+        axis.text.x = element_text(angle = 45, hjust = 1, color = axis_col),
+        axis.text.y = element_text(color = axis_col),
+        axis.title.x = element_text(color = axis_col),
+        axis.title.y = element_text(color = axis_col)
       ) +
       labs(title = "Average Velocity by Game",
            x = "Game Date", y = "Velocity (MPH)")
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p2,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, css = tooltip_css),
@@ -24377,7 +23884,7 @@ server <- function(input, output, session) {
     df <- filtered_data(); if (!nrow(df)) return(NULL)
     types <- ordered_types(); types_chr <- as.character(types)
     dark_on <- isTRUE(input$dark_mode)
-    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
     if (!("SessionType" %in% names(df)) || !"Inning" %in% names(df)) return(NULL)
     
     df_live <- df %>% dplyr::filter(SessionType == "Live", !is.na(RelSpeed), !is.na(Inning))
@@ -24446,17 +23953,19 @@ server <- function(input, output, session) {
       scale_y_continuous(limits = c(y_min, y_max), breaks = seq(y_min, y_max, 5)) +
       scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
       scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       theme(
         legend.position = "bottom",
-        legend.text = element_text(size = 14),
-        panel.grid.major = element_line(color = grid_col),
-        panel.grid.minor = element_blank()
+        legend.text = element_text(size = 14, color = axis_col),
+        axis.text.x = element_text(color = axis_col),
+        axis.text.y = element_text(color = axis_col),
+        axis.title.x = element_text(color = axis_col),
+        axis.title.y = element_text(color = axis_col)
       ) +
       labs(title = "Average Velocity by Inning ",
            x = "Inning of Appearance", y = "Velocity (MPH)")
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p3,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, css = tooltip_css),
@@ -24465,7 +23974,6 @@ server <- function(input, output, session) {
       )
     )
   })
-  
   
   # Velocity Trend Plot
   # Replace your existing output$veloTrendPlot with this:
@@ -24503,7 +24011,7 @@ server <- function(input, output, session) {
         axis.line.x    = element_line(color = "black"),
         axis.line.y    = element_line(color = "black")
       )
-  })
+  }, bg = "transparent")
   
   # Heatmap Plot (using modern KDE approach like other suites)
   output$heatmapPlot <- renderPlot({
@@ -24537,7 +24045,7 @@ server <- function(input, output, session) {
     return(draw_heat(grid, bins = HEAT_BINS, pal_fun = heat_pal_bwr, mark_max = FALSE,
                      show_scale = TRUE, scale_label = "Pitch Frequency",
                      scale_limits = c(0, 80)))
-  })
+  }, bg = "transparent")
   
   # Pitch Plot
   output$pitchPlot <- ggiraph::renderGirafe({
@@ -24602,7 +24110,7 @@ server <- function(input, output, session) {
         shape = 21, size = 6, alpha = 0.001, stroke = 0, inherit.aes = FALSE
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -24784,7 +24292,7 @@ server <- function(input, output, session) {
         shape = 21, size = 6, alpha = 0.001, stroke = 0, inherit.aes = FALSE
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -24855,7 +24363,7 @@ server <- function(input, output, session) {
     count_state <- fams_no_other[1]
     p <- create_qp_locations_plot(df, count_state, pitcher_hand, batter_hand)
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       width_svg = 12, height_svg = 5,
       options = list(
@@ -24903,6 +24411,7 @@ server <- function(input, output, session) {
            "Stuff+"            = ggiraph::girafeOutput("stuffTrendPlot",   height = "350px"),
            "Ctrl+"             = ggiraph::girafeOutput("commandTrendPlot", height = "350px"),
            "QP+"               = ggiraph::girafeOutput("qpTrendPlot",      height = "350px"),
+           "QP%"               = ggiraph::girafeOutput("qpPctTrendPlot",   height = "350px"),
            "Pitching+"         = ggiraph::girafeOutput("pitchingTrendPlot",height = "350px"),
            "IVB"               = ggiraph::girafeOutput("ivbTrendPlot",     height = "350px"),
            "HB"                = ggiraph::girafeOutput("hbTrendPlot",      height = "350px"),
@@ -25017,6 +24526,29 @@ server <- function(input, output, session) {
     
     validate(need(any(is.finite(df$qp_score)), "No QP+ values for current filters"))
     trend_plot(df, qp_score, "QP+", "QP+", mean, digits = 1)
+  })
+  
+  # ---------- QP% (percentage of pitches with QP+ >= 100) ----------
+  output$qpPctTrendPlot <- ggiraph::renderGirafe({
+    df <- filtered_data(); req(nrow(df) > 0)
+    df <- dplyr::ungroup(df)
+    
+    # Calculate QP+ values using compute_qp_points
+    qp_values <- compute_qp_points(df) * 200  # QP+ is QP points * 200
+    df <- df %>% dplyr::mutate(qp_plus = qp_values)
+    
+    # Create binary indicator: 1 if QP+ >= 100, 0 otherwise
+    df <- df %>% dplyr::mutate(quality_pitch = ifelse(qp_plus >= 100, 1, 0))
+    
+    # Use trend_plot with percentage calculation
+    trend_plot(
+      df, 
+      quality_pitch, 
+      "QP%", 
+      "Percentage",
+      function(x) mean(x, na.rm = TRUE) * 100,
+      digits = 1
+    )
   })
   
   # ---------- Pitching+ (prefer QP+; fallback to Ctrl+) ----------
@@ -25513,6 +25045,20 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
+    # Apply three-tier filtering for players (admins and coaches see all)
+    tryCatch({
+      if (!is_admin() && !is_coach()) {
+        ue <- user_email()
+        if (!is.na(ue) && "Email" %in% names(data)) {
+          data_before_user_filter <- nrow(data)
+          data <- data %>% dplyr::filter(norm_email(Email) == norm_email(ue))
+          cat("User email filter applied: ", data_before_user_filter, "->", nrow(data), "\n")
+        }
+      }
+    }, error = function(e) {
+      cat("Note: Could not apply user filtering:", e$message, "\n")
+    })
+    
     # Apply team filtering based on Team selector
     team_type <- input$corr_teamType %||% "All"
     if (team_type == "Campers") {
@@ -25836,7 +25382,7 @@ server <- function(input, output, session) {
       group_var <- player_col
       
       # For percentage metrics, we need special handling to calculate proper ratios
-      percentage_metrics <- c("FPS%", "E+A%", "Strike%", "Whiff%", "InZone%", "Comp%", "CSW%", "K%", "BB%")
+      percentage_metrics <- c("FPS%", "E+A%", "QP%", "Strike%", "Whiff%", "InZone%", "Comp%", "CSW%", "K%", "BB%")
       
       # Handle percentage metrics with proper ratio calculations
       agg_data <- data %>%
@@ -25858,6 +25404,11 @@ server <- function(input, output, session) {
                 (Balls == 1 & Strikes == 1 & PitchCall %in% c("InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable"))
             ), na.rm = TRUE)
             if (bf_live > 0) (ea_count / bf_live) * 100 else NA_real_
+          },
+          `QP%` = {
+            vals <- compute_qp_points(dplyr::cur_data_all())
+            qp_count <- sum((vals * 200) >= 100, na.rm = TRUE)
+            if (dplyr::n() > 0) (qp_count / dplyr::n()) * 100 else NA_real_
           },
           `Strike%` = {
             total_pitches <- n()
@@ -26164,11 +25715,13 @@ server <- function(input, output, session) {
         plot.title = element_text(size = 16, face = "bold"),
         plot.subtitle = element_text(size = 14),
         axis.title = element_text(size = 12),
-        axis.text = element_text(size = 10)
+        axis.text = element_text(size = 10),
+        panel.background = element_rect(fill = "transparent", colour = NA),
+        plot.background = element_rect(fill = "transparent", colour = NA)
       )
     
     return(p)
-  })
+  }, bg = "transparent")
   
   # Data table
   output$corr_data_table <- DT::renderDataTable({
@@ -26259,7 +25812,6 @@ server <- function(input, output, session) {
       df <- df[order(df$school_code == current_school()), , drop = FALSE]
     }
     if (!nrow(df)) return(list())
-    out <- lapply(df$payload, function(x) tryCatch(jsonlite::fromJSON(x, simplifyVector = TRUE), error = function(...) list()))
     out <- lapply(seq_len(nrow(df)), function(i) {
       pl <- tryCatch(jsonlite::fromJSON(df$payload[[i]], simplifyVector = TRUE), error = function(...) list())
       pl$school_code <- df$school_code[[i]] %||% current_school()
@@ -26511,15 +26063,14 @@ server <- function(input, output, session) {
     # Use the whitelist-filtered pitch_data_pitching for consistency with other modules
     players <- sort(unique(pitch_data_pitching$Pitcher))
     
-    # Filter by admin/user permissions - REMOVED: All users can now see all players
-    # Only admin status controls access to admin features, not data visibility
-    # if (!is_admin()) {
-    #   ue <- user_email()
-    #   if (!is.na(ue)) {
-    #     visible_players <- unique(pitch_data_pitching$Pitcher[norm_email(pitch_data_pitching$Email) == norm_email(ue)])
-    #     players <- intersect(players, visible_players)
-    #   }
-    # }
+    # Filter by user role: Coaches see all, Players see only themselves
+    if (!is_admin() && !is_coach()) {
+      ue <- user_email()
+      if (!is.na(ue)) {
+        visible_players <- unique(pitch_data_pitching$Pitcher[norm_email(pitch_data_pitching$Email) == norm_email(ue)])
+        players <- intersect(players, visible_players)
+      }
+    }
     
     updateSelectInput(session, "pp_player_select",
                       choices = players,
@@ -27307,6 +26858,14 @@ server <- function(input, output, session) {
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
                theme_void())
     }
+    dark_on <- FALSE
+    try({
+      dom <- shiny::getDefaultReactiveDomain()
+      if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
+    }, silent = TRUE)
+    line_col <- if (dark_on) "#ffffff" else "black"
+    grid_col <- if (dark_on) "#d1d5db" else "black"
+    cols <- colors_for_mode(dark_on)
     df <- df %>%
       dplyr::filter(is.finite(PlateLocSide), is.finite(PlateLocHeight)) %>%
       dplyr::mutate(
@@ -27314,14 +26873,14 @@ server <- function(input, output, session) {
         TaggedPitchType = as.character(TaggedPitchType),
         tt            = make_hover_tt(.),
         rid           = dplyr::row_number(),
-        tt_fill       = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray")
+        tt_fill       = dplyr::coalesce(cols[as.character(TaggedPitchType)], "gray")
       )
     if (!nrow(df)) {
       return(ggplot() +
                annotate("text", x = 0.5, y = 0.5, label = "No location data available") +
                theme_void())
     }
-    types_chr <- intersect(names(all_colors), unique(df$TaggedPitchType))
+    types_chr <- intersect(names(cols), unique(df$TaggedPitchType))
     home <- data.frame(x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
                        y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5)
     cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
@@ -27330,11 +26889,11 @@ server <- function(input, output, session) {
     df_other <- dplyr::filter(df,  is.na(Result))
     
     p <- ggplot() +
-      geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+      geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", linetype = "dashed", inherit.aes = FALSE) +
+                fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", inherit.aes = FALSE) +
+                fill = NA, color = line_col, inherit.aes = FALSE) +
       
       ggiraph::geom_point_interactive(
         data = df_other,
@@ -27352,18 +26911,20 @@ server <- function(input, output, session) {
         position = "identity",
         size = 4.0, alpha = 0.95, stroke = 0.8
       ) +
-      scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-      scale_fill_manual(values  = all_colors[types_chr], limits = types_chr, name = NULL) +
+      scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+      scale_fill_manual(values  = cols[types_chr], limits = types_chr, name = NULL) +
       scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
       coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
-      theme_void() + theme(legend.position = "none") +
+      theme_void() + theme(legend.position = "none",
+                           panel.grid.major = element_blank(),
+                           panel.grid.minor = element_blank()) +
       ggiraph::geom_point_interactive(
         data = df,
         aes(PlateLocSide, PlateLocHeight, tooltip = tt, data_id = rid, fill = I(tt_fill)),
         shape = 21, size = 6, alpha = 0.001, stroke = 0, inherit.aes = FALSE
       )
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       options = list(
         ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE, css = tooltip_css),
@@ -27380,7 +26941,17 @@ server <- function(input, output, session) {
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
                theme_void())
     }
-    types_chr <- intersect(names(all_colors), unique(as.character(df$TaggedPitchType)))
+    dark_on <- FALSE
+    try({
+      dom <- shiny::getDefaultReactiveDomain()
+      if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
+    }, silent = TRUE)
+    axis_col <- if (dark_on) "#e5e7eb" else "black"
+    line_col <- if (dark_on) "#ffffff" else "gray"
+    grid_col <- adjustcolor(if (dark_on) "white" else "black",
+                            alpha.f = if (dark_on) 0.18 else 0.12)
+    cols <- colors_for_mode(dark_on)
+    types_chr <- intersect(names(cols), unique(as.character(df$TaggedPitchType)))
     df_mv <- df %>%
       dplyr::filter(is.finite(InducedVertBreak), is.finite(HorzBreak)) %>%
       dplyr::mutate(
@@ -27425,10 +26996,9 @@ server <- function(input, output, session) {
       })
       target_df <- dplyr::bind_rows(target_data)
     }
-    # last-25 averages per type (match summary)
+    # Averages per type (respect filters)
     avg_mov <- df_mv %>%
       dplyr::group_by(TaggedPitchType) %>%
-      dplyr::slice_tail(n = 25) %>%
       dplyr::summarise(
         avg_HorzBreak = mean(HB_adj, na.rm = TRUE),
         avg_IVB       = mean(InducedVertBreak, na.rm = TRUE),
@@ -27436,8 +27006,8 @@ server <- function(input, output, session) {
       )
     
     p <- ggplot() +
-      geom_hline(yintercept = 0, color = "gray", size = 0.5) +
-      geom_vline(xintercept = 0, color = "gray", size = 0.5) +
+      geom_hline(yintercept = 0, color = line_col, linewidth = 0.7) +
+      geom_vline(xintercept = 0, color = line_col, linewidth = 0.7) +
       { if (show_averages) ggiraph::geom_point_interactive(
         data = avg_mov %>% dplyr::filter(TaggedPitchType %in% types_chr),
         aes(x = avg_HorzBreak, y = avg_IVB, color = TaggedPitchType,
@@ -27466,17 +27036,21 @@ server <- function(input, output, session) {
           )
         )
       } } +
-      scale_color_manual(values = all_colors[types_chr], limits = types_chr, name = NULL) +
-      theme_minimal() + axis_theme +
+      scale_color_manual(values = cols[types_chr], limits = types_chr, name = NULL) +
+      theme_minimal() + axis_theme + grid_theme(dark_on) +
       labs(x = NULL, y = NULL, title = "Movement Plot") +
       theme(
         legend.position = "none",
         plot.title = element_text(hjust = 0.5, face = "bold"),
-        axis.text.x = element_text(size = 15, face = "bold"),
-        axis.text.y = element_text(size = 15, face = "bold")
-      )
+        axis.text.x = element_text(size = 15, face = "bold", color = axis_col),
+        axis.text.y = element_text(size = 15, face = "bold", color = axis_col),
+        panel.grid.major = element_line(color = grid_col),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank()
+      ) +
+      coord_cartesian(xlim = c(-25, 25), ylim = c(-25, 25))
     
-    ggiraph::girafe(
+    girafe_transparent(
       ggobj = p,
       width_svg = 8, height_svg = 6.5,
       options = list(
@@ -27658,6 +27232,22 @@ server <- function(input, output, session) {
                    .groups = 'drop'
                  ) %>%
                  dplyr::arrange(Date))
+      } else if (stat == "QP%") {
+        # QP% = Share of pitches with QP+ >= 100 (using compute_qp_points)
+        return(df %>%
+                 dplyr::group_by(Date, SessionType) %>%
+                 dplyr::summarise(
+                   qp_vals  = list(compute_qp_points(dplyr::cur_data_all())),
+                   qp_count = {
+                     vals <- unlist(qp_vals)
+                     sum((vals * 200) >= 100, na.rm = TRUE)
+                   },
+                   total_pitches = dplyr::n(),
+                   value = ifelse(total_pitches > 0, round(100 * qp_count / total_pitches, 1), 0),
+                   .groups = 'drop'
+                 ) %>%
+                 dplyr::select(-qp_vals) %>%
+                 dplyr::arrange(Date))
       } else if (stat == "Whiff%") {
         # Whiff% = Swinging strikes / Total swings
         return(df %>%
@@ -27765,8 +27355,6 @@ server <- function(input, output, session) {
   # Helper function to create plots
   create_pp_goal_plot <- function(goal_num) {
     df <- filter_goal_data(goal_num)
-    dark_on <- isTRUE(input$dark_mode)
-    grid_col <- adjustcolor(if (dark_on) "white" else "black", alpha.f = if (dark_on) 0.18 else 0.12)
     if (is.null(df)) {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
@@ -27898,16 +27486,18 @@ server <- function(input, output, session) {
       x = "Date",
       y = y_label,
       color = "Session Type"
-    ) +
+    )
+    
+    dark_on <- isTRUE(input$dark_mode)
+    p <- p +
       theme_minimal() +
+      transparent_bg_theme +
       theme(
         plot.title = element_text(hjust = 0.5, face = "bold"),
         axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom",
-        panel.background = element_rect(fill = "transparent", color = NA),
-        plot.background  = element_rect(fill = "transparent", color = NA),
-        panel.grid.major = element_line(color = grid_col),
-        panel.grid.minor = element_blank()
+        panel.grid.minor = if (dark_on) element_blank() else NULL,
+        panel.grid.major = if (dark_on) element_line(color = "gray40", linewidth = 0.3) else NULL
       )
     
     return(p)
@@ -27988,24 +27578,21 @@ server <- function(input, output, session) {
   output$pp_goal1_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(1)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
-                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(girafe_transparent(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
   output$pp_goal2_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(2)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
-                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(girafe_transparent(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
   output$pp_goal3_plot <- ggiraph::renderGirafe({
     p <- create_pp_goal_plot(3)
     if (inherits(p, "girafe")) return(p)
-    if (inherits(p, "ggplot")) return(ggiraph::girafe(ggobj = p, bg = "transparent",
-                                                      options = list(ggiraph::opts_sizing(rescale = TRUE))))
+    if (inherits(p, "ggplot")) return(girafe_transparent(ggobj = p, options = list(ggiraph::opts_sizing(rescale = TRUE))))
     NULL
   })
   
@@ -28308,7 +27895,7 @@ server <- function(input, output, session) {
       
       p <- create_qp_locations_plot(df, "Behind", pitcher_hand, batter_hand)
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         width_svg = 12, height_svg = 4,
         options = list(
@@ -28338,7 +27925,7 @@ server <- function(input, output, session) {
       
       p <- create_qp_locations_plot(df, "Even", pitcher_hand, batter_hand)
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         width_svg = 12, height_svg = 4,
         options = list(
@@ -28368,7 +27955,7 @@ server <- function(input, output, session) {
       
       p <- create_qp_locations_plot(df, "Ahead", pitcher_hand, batter_hand)
       
-      ggiraph::girafe(
+      girafe_transparent(
         ggobj = p,
         width_svg = 12, height_svg = 4,
         options = list(
