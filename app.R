@@ -2216,7 +2216,7 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     dt <- build_dt(df)
     
-    color_modes <- c("Process","Live","Results","Bullpen","Banny")
+    color_modes <- c("Process","Live","Results","Bullpen")
     if (identical(mode, "Usage")) {
       color_modes <- setdiff(color_modes, "Usage")
     }
@@ -2244,7 +2244,6 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
         "Live"    = c("InZone%","Strike%","FPS%","E+A%","QP+","Ctrl+","Pitching+","K%","BB%","Whiff%"),
         "Results" = c("Whiff%","K%","BB%","CSW%","GB%","Barrel%","EV"),
         "Bullpen" = c("InZone%","Comp%","Ctrl+","Stuff+"),
-        "Banny"   = c("Strike%","QP%","InZone%","Comp%","Stuff+","QP+","Pitching+"),
         character(0)
       )
       available_cols <- intersect(color_cols, names(df))
@@ -2325,11 +2324,10 @@ results_cols_live <- c("Pitch","#","BF","K%","BB%","GB%","Whiff%","CSW%","EV","L
 bullpen_cols      <- c("Pitch","#","Velo","Max","IVB","HB","Spin","bTilt","Height","Side","Ext","InZone%","Comp%","Ctrl+","Stuff+")
 live_cols         <- c("Pitch","#","Velo","Max","IVB","HB","FPS%","E+A%","InZone%","Strike%","Whiff%","K%","BB%","QP+")
 usage_cols        <- c("Pitch","#","Usage","0-0","Behind","Even","Ahead","<2K","2K")
-banny_cols        <- c("Pitch","Usage","Strike%","QP%","InZone%","Comp%","Velo","Max","IVB","HB","Stuff+","QP+","Pitching+")
 perf_cols         <- c("Pitch","#","BF","RV/100","InZone%","Comp%","Strike%","FPS%","E+A%","K%","BB%","Whiff%","CSW%","EV","LA","Ctrl+","QP+","Pitching+")
 
 # ---- unified list for the pickers + a helper to compute visibility
-all_table_cols <- unique(c(stuff_cols, process_cols, results_cols, results_cols_live, bullpen_cols, live_cols, usage_cols, banny_cols, perf_cols, "Overall"))
+all_table_cols <- unique(c(stuff_cols, process_cols, results_cols, results_cols_live, bullpen_cols, live_cols, usage_cols, perf_cols, "Overall"))
 
 visible_set_for <- function(mode, custom = character(0), session_type = NULL) {
   if (identical(mode, "Process")) return(process_cols)
@@ -2337,7 +2335,6 @@ visible_set_for <- function(mode, custom = character(0), session_type = NULL) {
   if (identical(mode, "Bullpen")) return(bullpen_cols)
   if (identical(mode, "Live"))    return(live_cols)
   if (identical(mode, "Usage"))   return(usage_cols)
-  if (identical(mode, "Banny"))   return(banny_cols)
   if (identical(mode, "Raw Data")) return(c("Pitch","IP","P","BF","P/IP","P/BF","H","XBH","Barrels","BB","HBP","K","Whiffs"))
   if (identical(mode, "Custom"))  return(c("Pitch", custom[!duplicated(custom)]))
   stuff_cols
@@ -2379,7 +2376,7 @@ custom_tables(load_custom_tables())
 
 update_custom_table_choices <- function(session) {
   nms <- names(custom_tables())
-  base_modes <- c("Stuff","Process","Results","Swing Decisions","Bullpen","Live","Usage","Banny","Raw Data","Batted Ball Data")
+  base_modes <- c("Stuff","Process","Results","Swing Decisions","Bullpen","Live","Usage","Raw Data","Batted Ball Data")
   pitch_modes <- setdiff(base_modes, "Swing Decisions")
   safe_update <- function(id) {
     try(updateSelectInput(session, id, choices = c("", nms)), silent = TRUE)
@@ -10309,7 +10306,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         div(style = "display: flex; align-items: center; gap: 15px;",
             div(style = "flex: 0 0 auto;",
                 selectInput(ns("campSummaryMode"), label = NULL,
-                            choices = c("Stuff","Process","Results","Banny","Raw Data","Custom"),
+                            choices = c("Stuff","Process","Results","Raw Data","Custom"),
                             selected = sel, width = "120px")
             ),
             div(style = "flex: 0 0 auto;",
@@ -10404,10 +10401,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       df_table <- fill_all_qp_pct(df_table, df)
       
       # Column reordering (same as main Pitching Summary)
-      if (!identical(mode, "Banny")) {
-        df_table <- enforce_process_order(df_table)
-        df_table <- enforce_stuff_order(df_table)
-      }
+      df_table <- enforce_process_order(df_table)
+      df_table <- enforce_stuff_order(df_table)
       
       visible_set <- visible_set_for(mode, custom)
       datatable_with_colvis(
@@ -11371,7 +11366,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         div(style = "display: flex; align-items: center; gap: 15px;",
             div(style = "flex: 0 0 auto;",
                 selectInput(ns("lbMode"), label = NULL,
-                            choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data", ct_names, "Custom"),
+                            choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", ct_names, "Custom"),
                             selected = sel, width = "120px")
             ),
             div(style = "flex: 0 0 auto;",
@@ -15098,11 +15093,11 @@ custom_reports_server <- function(id) {
                         sprintf("input['%s'] == 'Summary Table'", ns(paste0("cell_type_", cell_id))),
                         tagList(
                           selectInput(ns(paste0("cell_table_mode_", cell_id)), "Table:", 
-                                      choices = if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data",
+                                      choices = if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data",
                                                                                                                                    names(custom_tables()), "Custom"),
                                       selected = {
-                                        ch <- if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data",
-                                                                                                                                 names(custom_tables()), "Custom")
+                                        ch <- if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data",
+                                                                                                                                names(custom_tables()), "Custom")
                                         if (!is.null(sel$table_mode) && sel$table_mode %in% ch) sel$table_mode else ch[[1]]
                                       }),
                           selectInput(ns(paste0("cell_filter_", cell_id)), "Split By:", 
@@ -19091,7 +19086,7 @@ server <- function(input, output, session) {
               div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
               selectInput(
                 "summaryTableMode", label = NULL,
-                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data", ct_names, "Batted Ball Data", "Custom"),
+                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", ct_names, "Batted Ball Data", "Custom"),
                 selected = sel,
                 width = "120px"
               )
@@ -19152,7 +19147,7 @@ server <- function(input, output, session) {
               div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
               selectInput(
                 "dpTableMode", label = NULL,
-                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data", ct_names, "Batted Ball Data", "Custom"),
+                choices = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", ct_names, "Batted Ball Data", "Custom"),
                 selected = sel,
                 width = "120px"
               )
@@ -19206,7 +19201,7 @@ server <- function(input, output, session) {
     tagList(
       radioButtons(
         "leaderboardMode", label = NULL,
-        choices  = c("Stuff","Process","Results","Bullpen","Live","Usage","Banny","Raw Data","Custom"),
+        choices  = c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data","Custom"),
         selected = sel,
         inline   = TRUE
       ),
@@ -21384,11 +21379,8 @@ server <- function(input, output, session) {
         df_table <- df_table %>% dplyr::relocate(`Pitching+`, .after = dplyr::last_col())
       }
       
-      # Skip column reordering for Banny mode to preserve exact order
-      if (!identical(mode, "Banny")) {
-        df_table <- enforce_process_order(df_table)
-        df_table <- enforce_stuff_order(df_table)
-      }
+      df_table <- enforce_process_order(df_table)
+      df_table <- enforce_stuff_order(df_table)
       
       # Hide RV/100 in Results mode (keep it for Process/Performance only)
       if (identical(mode, "Results") && "RV/100" %in% names(df_table)) {
@@ -22573,11 +22565,8 @@ server <- function(input, output, session) {
       df_table <- df_table %>% dplyr::relocate(`Pitching+`, .after = dplyr::last_col())
     }
     
-    # Skip column reordering for Banny mode to preserve exact order
-    if (!identical(mode, "Banny")) {
-      df_table <- enforce_process_order(df_table)
-      df_table <- enforce_stuff_order(df_table)
-    }
+    df_table <- enforce_process_order(df_table)
+    df_table <- enforce_stuff_order(df_table)
     # Hide RV/100 in Results mode (Summary)
     if (identical(mode, "Results") && "RV/100" %in% names(df_table)) {
       df_table <- dplyr::select(df_table, -`RV/100`)
