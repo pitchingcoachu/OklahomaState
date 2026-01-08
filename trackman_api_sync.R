@@ -408,9 +408,10 @@ main <- function() {
     if (grepl("timeout|timed out", e$message, ignore.case = TRUE)) {
       message("Session discovery timed out - likely no sessions exist for this date range")
       message("This commonly happens when no camera was used during practice sessions")
-      quit(status = 0)
+      return(tibble())
     } else {
-      cli_abort(glue("Failed to discover sessions: {e$message}"))
+      message(glue("Failed to discover sessions: {e$message}"))
+      return(tibble())
     }
   })
   
