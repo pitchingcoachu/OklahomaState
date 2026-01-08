@@ -66,7 +66,7 @@ ensure_env <- function(name) {
 parse_args_dates <- function() {
   args <- commandArgs(trailingOnly = TRUE)
   if (length(args) == 0) {
-    lookback <- suppressWarnings(as.integer(Sys.getenv("TM_LOOKBACK_DAYS", unset = "0")))
+    lookback <- suppressWarnings(as.integer(Sys.getenv("TM_LOOKBACK_DAYS", unset = "1")))
     if (is.na(lookback) || lookback < 0) lookback <- 0L
     d_to <- Sys.Date()
     d_from <- d_to - lookback
@@ -366,7 +366,15 @@ load_video_map <- function(path) {
     )
   } else {
     df <- suppressMessages(read_csv(path, show_col_types = FALSE))
-    # Ensure uploaded_at is character for consistency
+    # Force video map columns to character so bind_rows() never sees mixed types.
+    str_cols <- c("session_id", "play_id", "camera_slot", "camera_name",
+                  "camera_target", "video_type", "azure_blob", "azure_md5",
+                  "cloudinary_url", "cloudinary_public_id", "uploaded_at")
+    existing <- intersect(names(df), str_cols)
+    if (length(existing)) {
+      df <- df %>% mutate(across(all_of(existing), as.character))
+    }
+    # Ensure uploaded_at stays character for consistency.
     if ("uploaded_at" %in% names(df)) {
       df$uploaded_at <- as.character(df$uploaded_at)
     }
