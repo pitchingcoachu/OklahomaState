@@ -4,7 +4,7 @@ school_config <- list(
   team_code = "OSU",
   # Player filters
   allowed_pitchers = c(
-     "Wentworth, TP",
+  "Wentworth, TP",
   "LeBlanc, Bryce",
   "Lund, Ethan",
   "Fyke, Kai",
@@ -49,7 +49,7 @@ school_config <- list(
   "Kennedy, Jacob"
   ),
   allowed_hitters = c(
-     "Wentworth, TP",
+  "Wentworth, TP",
   "LeBlanc, Bryce",
   "Lund, Ethan",
   "Fyke, Kai",
