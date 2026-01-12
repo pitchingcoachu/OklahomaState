@@ -126,11 +126,11 @@ school_config <- list(
     "Moseman, Cody"
   ),
   colors = list(
-    primary             = "#e35205",   # deep navy used in the dark-mode radial gradient (gcu/app.R:17666-17674)
-    accent              = "#ff8c1a",   # start of the active-tab/btn gradient (gcu/app.R:17464-17515)
-    accent_secondary    = "#f5f7fa",   # end of that same gradient
-    background          = "#ffffff",   # light page background (gcu/app.R:17135)
-    background_secondary= "#e8ecf1"   # the matching secondary background tone
+    primary             = "#231f20",   # deep charcoal from OSU logo
+    accent              = "#fe5c00",   # bright orange highlight from logo
+    accent_secondary    = "#e15404",   # warmer orange ensuring logo accuracy
+    background          = "#ffffff",   # clean white page base
+    background_secondary= "#f4f4f4"    # soft grey for panels
     
   ),
   logo = "OSUlogo.png",
