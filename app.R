@@ -2286,19 +2286,20 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
                          "Velocity", "Batter")
     has_split_column <- any(split_col_names %in% names(df))
     
+    color_mode <- if (identical(mode, "Custom")) "Process" else mode
     enable_color_mode <- tryCatch({
       !is.null(enable_colors) && 
         !is.na(enable_colors) && 
         isTRUE(enable_colors) &&
-        !is.null(mode) &&
-        !is.na(mode) &&
-        mode %in% color_modes && 
+        !is.null(color_mode) &&
+        !is.na(color_mode) &&
+        color_mode %in% color_modes && 
         ("Pitch" %in% names(df) || "Player" %in% names(df) || has_split_column)
     }, error = function(e) FALSE)
     
     if (enable_color_mode) {
       color_cols <- switch(
-        mode,
+        color_mode,
         "Process" = c("InZone%","Comp%","Strike%","Swing%","FPS%","E+A%","1-1W%","QP%","Ctrl+","QP+","Pitching+","RV/100"),
         "Live"    = c("InZone%","Strike%","FPS%","E+A%","QP+","Ctrl+","Pitching+","K%","BB%","Whiff%"),
         "Results" = c("Whiff%","K%","BB%","CSW%","GB%","Barrel%","EV"),
