@@ -7018,3 +7018,21 @@ practice_2026_02_04_Pitching_2026-02-04T193159_verified.csv
 20260208-WarriorField-1.csv
 # Auto-pruned non-team data
 20260209-PioneerPark-1_unverified.csv
+# Auto-pruned non-team data
+practice_2025_01_11_Pitching_2025-01-11T185450_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_16_Pitching_2025-01-16T210206_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_16_Pitching_2025-01-16T212413_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_16_Pitching_2025-01-16T212610_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_16_Pitching_2025-01-16T214734_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_18_Pitching_2025-01-18T181224_verified.csv
+# Auto-pruned non-team data
+practice_2025_01_24_Pitching_2025-01-24T180228_verified.csv
+# Auto-pruned non-team data
+practice_2025_04_11_Pitching_2025-04-11T143326_verified.csv
+# Auto-pruned non-team data
+practice_2025_08_14_Pitching_2025-08-14T145232_verified.csv
