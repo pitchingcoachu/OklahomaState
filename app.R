@@ -166,18 +166,31 @@ terminal_for_woba <- function(df) {
     (!is.na(pc)   & pc    == "HitByPitch")
 }
 
+# Resolve dark-mode state from reactive domain, including module root scope.
+resolve_dark_mode_from_domain <- function(dom = shiny::getDefaultReactiveDomain()) {
+  dm <- NULL
+  try({
+    if (!is.null(dom)) {
+      if (!is.null(dom$input$dark_mode)) {
+        dm <- dom$input$dark_mode
+      } else if (!is.null(dom$rootScope)) {
+        rs <- dom$rootScope()
+        if (!is.null(rs) && !is.null(rs$input$dark_mode)) dm <- rs$input$dark_mode
+      }
+    }
+  }, silent = TRUE)
+  isTRUE(dm)
+}
+
 # Draw heatmap function with optional color scale legend
 draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
                       title = NULL, mark_max = TRUE, breaks = NULL,
                       show_scale = FALSE, scale_label = NULL, scale_limits = NULL,
                       scale_breaks = NULL, scale_labels = NULL) {
   if (!nrow(grid)) return(ggplot() + theme_void())
-  dark_on <- FALSE
-  try({
-    dom <- shiny::getDefaultReactiveDomain()
-    if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
-  }, silent = TRUE)
+  dark_on <- resolve_dark_mode_from_domain()
   line_col <- if (dark_on) "#ffffff" else "black"
+  text_col <- if (dark_on) "#ffffff" else "black"
   bg_transparent <- element_rect(fill = "transparent", color = NA)
   
   home <- data.frame(
@@ -195,6 +208,9 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
   }
   
   n_bins <- if (is.null(breaks)) bins else max(1, length(breaks) - 1)
+  fill_vals <- pal_fun(n_bins)
+  # Keep lowest-density band transparent so the page background shows through.
+  if (length(fill_vals) >= 1) fill_vals[1] <- "#00000000"
   
   # Main heatmap plot
   p_heat <- ggplot(grid, aes(x, y, z = z)) +
@@ -204,7 +220,7 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
       else
         geom_contour_filled(aes(fill = after_stat(level)), breaks = breaks, show.legend = FALSE)
     } +
-    scale_fill_manual(values = pal_fun(n_bins), guide = "none") +
+    scale_fill_manual(values = fill_vals, guide = "none") +
     geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
               fill = NA, color = line_col, inherit.aes = FALSE) +
@@ -260,8 +276,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
       theme_void() +
       theme(
         legend.position = "none",
-        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
-        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
+        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3), color = text_col),
+        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8), color = text_col),
         plot.margin = margin(5, 0, 10, 0),
         plot.background = element_rect(fill = "transparent", color = NA),
         panel.background = element_rect(fill = "transparent", color = NA),
@@ -269,8 +285,14 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
       ) +
       labs(x = scale_label)
     
-    # Combine scale bar on top of heatmap with tighter layout
-    return(p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width)))
+    # Combine scale bar on top of heatmap with transparent patchwork background.
+    return(
+      (p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width))) &
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+    )
   }
   
   p_heat
@@ -282,20 +304,25 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
                              title = NULL, breaks = NULL,
                              show_scale = FALSE, scale_label = NULL, scale_limits = NULL) {
   if (!nrow(grid)) return(ggplot() + theme_void())
+  dark_on <- resolve_dark_mode_from_domain()
+  line_col <- if (dark_on) "#ffffff" else "black"
+  text_col <- if (dark_on) "#ffffff" else "black"
   
   home <- data.frame(
     x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
     y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5
   )
   sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
+  grad_vals <- pal_fun(100)
+  if (length(grad_vals) >= 1) grad_vals[1] <- "#00000000"
   
   # Use geom_tile to show actual bins
   p_heat <- ggplot(grid, aes(x = x, y = y, fill = z)) +
     geom_tile(width = bin_size, height = bin_size, color = NA) +
-    scale_fill_gradientn(colors = pal_fun(100), limits = scale_limits, na.value = "white") +
-    geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+    scale_fill_gradientn(colors = grad_vals, limits = scale_limits, na.value = "#00000000") +
+    geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = "black", inherit.aes = FALSE) +
+              fill = NA, color = line_col, inherit.aes = FALSE) +
     coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
     theme_void() + 
     theme(legend.position = "none",
@@ -334,8 +361,8 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
       theme_void() +
       theme(
         legend.position = "none",
-        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
-        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
+        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3), color = text_col),
+        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8), color = text_col),
         plot.margin = margin(5, 0, 10, 0),
         plot.background = element_rect(fill = "transparent", color = NA),
         panel.background = element_rect(fill = "transparent", color = NA),
@@ -343,7 +370,13 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
       ) +
       labs(x = scale_label)
     
-    return(p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width)))
+    return(
+      (p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width))) &
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+    )
   }
   
   p_heat
@@ -3404,6 +3437,8 @@ hit_shape_map <- c(
 
 compute_result <- function(pitch_call, play_result) {
   dplyr::case_when(
+    # Display HBP as Ball icon (hollow circle) on location charts.
+    pitch_call == "HitByPitch" | play_result == "HitByPitch" ~ "Ball",
     pitch_call == "StrikeCalled" ~ "Called Strike",
     pitch_call == "BallCalled"   ~ "Ball",
     pitch_call %in% c("FoulBallNotFieldable","FoulBallFieldable") ~ "Foul",
@@ -3659,6 +3694,7 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
         pitch_type = pt
       )
     }))
+    line_col <- if (resolve_dark_mode_from_domain()) "#ffffff" else "black"
     
     # Create the plot with QP+ heatmap and colored pitches
     p <- ggplot() +
@@ -3676,11 +3712,11 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
       # Add home plate
       geom_polygon(data = home_plate_all, 
                    aes(x = x, y = y, group = pitch_type), 
-                   fill = NA, color = "black", linewidth = 1) +
+                   fill = NA, color = line_col, linewidth = 1) +
       # Add strike zone
       geom_rect(data = strike_zone_all, 
                 aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", linewidth = 1) +
+                fill = NA, color = line_col, linewidth = 1) +
       # Add pitched balls with interactive tooltips and pitch type colors
       {if (nrow(state_data_with_result) > 0) {
         ggiraph::geom_point_interactive(
@@ -4849,6 +4885,10 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
                       show_scale = FALSE, scale_label = NULL, scale_limits = NULL,
                       scale_breaks = NULL, scale_labels = NULL) {
   if (!nrow(grid)) return(ggplot() + theme_void())
+  dark_on <- resolve_dark_mode_from_domain()
+  line_col <- if (dark_on) "#ffffff" else "black"
+  text_col <- if (dark_on) "#ffffff" else "black"
+  bg_transparent <- element_rect(fill = "transparent", color = NA)
   
   home <- data.frame(
     x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
@@ -4865,6 +4905,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
   }
   
   n_bins <- if (is.null(breaks)) bins else max(1, length(breaks) - 1)
+  fill_vals <- pal_fun(n_bins)
+  if (length(fill_vals) >= 1) fill_vals[1] <- "#00000000"
   
   # Main heatmap plot
   p_heat <- ggplot(grid, aes(x, y, z = z)) +
@@ -4874,10 +4916,10 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
       else
         geom_contour_filled(aes(fill = after_stat(level)), breaks = breaks, show.legend = FALSE)
     } +
-    scale_fill_manual(values = pal_fun(n_bins), guide = "none") +
-    geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+    scale_fill_manual(values = fill_vals, guide = "none") +
+    geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = "black", inherit.aes = FALSE) +
+              fill = NA, color = line_col, inherit.aes = FALSE) +
     { if (!is.null(peak_df))
       geom_point(data = peak_df, aes(x = px, y = py), inherit.aes = FALSE,
                  size = 3.8, shape = 21, fill = "red", color = "black", stroke = 0.5)
@@ -4886,8 +4928,8 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     theme_void() + 
     theme(legend.position = "none",
           plot.title = element_text(face = "bold", hjust = 0.5),
-          plot.background = element_rect(fill = "transparent", color = NA),
-          panel.background = element_rect(fill = "transparent", color = NA)) +
+          plot.background = bg_transparent,
+          panel.background = bg_transparent) +
     labs(title = title)
   
   # If show_scale, add gradient bar on top
@@ -4930,17 +4972,23 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
       theme_void() +
       theme(
         legend.position = "none",
-        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3)),
-        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8)),
+        axis.text.x = element_text(size = 10, face = "bold", margin = margin(t = 3), color = text_col),
+        axis.title.x = element_text(face = "bold", size = 11, margin = margin(t = 8), color = text_col),
         plot.margin = margin(5, 0, 10, 0),
-        plot.background = element_rect(fill = "transparent", color = NA),
-        panel.background = element_rect(fill = "transparent", color = NA),
+        plot.background = bg_transparent,
+        panel.background = bg_transparent,
         aspect.ratio = 0.15  # Make scale bar much narrower
       ) +
       labs(x = scale_label)
     
-    # Combine scale bar on top of heatmap with tighter layout
-    return(p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width)))
+    # Combine scale bar on top of heatmap with transparent patchwork background
+    return(
+      (p_scale / p_heat + plot_layout(heights = c(0.08, 1), widths = c(sz_width))) &
+        theme(
+          plot.background = bg_transparent,
+          panel.background = bg_transparent
+        )
+    )
   }
   
   p_heat
@@ -7291,6 +7339,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       })
     }
     ns <- session$ns
+    is_dark_mode_local <- reactive({
+      dm <- tryCatch({
+        rs <- session$rootScope()
+        if (!is.null(rs) && !is.null(rs$input$dark_mode)) rs$input$dark_mode else NULL
+      }, error = function(...) NULL)
+      if (is.null(dm) && !is.null(input$dark_mode)) dm <- input$dark_mode
+      isTRUE(dm)
+    })
     
     # ----- TEAM FILTER (GCU/Campers/Opponents) -----
     pd_team <- reactive({
@@ -9855,6 +9911,14 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       })
     }
     ns <- session$ns
+    is_dark_mode_local <- reactive({
+      dm <- tryCatch({
+        rs <- session$rootScope()
+        if (!is.null(rs) && !is.null(rs$input$dark_mode)) rs$input$dark_mode else NULL
+      }, error = function(...) NULL)
+      if (is.null(dm) && !is.null(input$dark_mode)) dm <- input$dark_mode
+      isTRUE(dm)
+    })
     
     MIN_THROW_MPH <- 70  # only count throws at/above this speed
     
@@ -10562,6 +10626,8 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
     # ---- HeatMaps: Heat (Called-Strike% per taken opportunity, smooth; alpha = opportunity) ----
     output$heatPlot <- renderPlot({
       df <- filtered_catch(); if (!nrow(df)) return()
+      dark_on <- is_dark_mode_local()
+      line_col <- if (dark_on) "#ffffff" else "black"
       # NEW: filter by selected pitch results (matches pitching suite behavior)
       res_sel <- input$hmResults
       if (!is.null(res_sel) && length(res_sel)) {
@@ -10594,11 +10660,11 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         geom_raster(data = surf, aes(x, y, fill = p, alpha = a), interpolate = TRUE) +
         scale_fill_gradientn(colors = cols, limits = c(0, 1), name = "CS%") +
         scale_alpha(range = c(0.25, 1), guide = "none") +
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "black", linewidth = 0.6) +
+        geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, linewidth = 0.6) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black", linetype = "dashed", linewidth = 0.6) +
+                  fill = NA, color = line_col, linetype = "dashed", linewidth = 0.6) +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = "black", linewidth = 0.8) +
+                  fill = NA, color = line_col, linewidth = 0.8) +
         coord_fixed(ratio = 1, xlim = c(lims[1], lims[2]), ylim = c(lims[3], lims[4])) +
         labs(title = "Called-Strike%", x = NULL, y = NULL) +
         theme_void() +
@@ -10610,6 +10676,8 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
     output$pitchPlot <- ggiraph::renderGirafe({
       req(input$hmChartType == "Pitch")
       df <- filtered_catch(); if (!nrow(df)) return(NULL)
+      dark_on <- is_dark_mode_local()
+      line_col <- if (dark_on) "#ffffff" else "black"
       # NEW: filter by selected pitch results
       res_sel <- input$hmResults
       if (!is.null(res_sel) && length(res_sel)) {
@@ -10631,9 +10699,9 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       df_other <- dplyr::filter(df_i,  is.na(Result))
       
       p <- ggplot() +
-        geom_polygon(data = home, aes(x, y), fill = NA, color = "black") +
-        geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = "black", linetype = "dashed") +
-        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = "black") +
+        geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
+        geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col, linetype = "dashed") +
+        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight, color = TaggedPitchType, fill = TaggedPitchType, tooltip = tt, data_id = rid),
@@ -17424,11 +17492,11 @@ custom_reports_server <- function(id) {
             cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
             sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
             p <- ggplot() +
-              geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+              geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
               geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                        fill = NA, color = "black", linetype = "dashed", inherit.aes = FALSE) +
+                        fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
               geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                        fill = NA, color = "black", inherit.aes = FALSE) +
+                        fill = NA, color = line_col, inherit.aes = FALSE) +
               ggiraph::geom_point_interactive(
                 data = df_other,
                 aes(PlateLocSide, PlateLocHeight,
@@ -18844,6 +18912,37 @@ biomech_newtforce_ui <- function() {
                   h4("Weight-Normalized Values by Pitch Type"),
                   tags$p("Values normalized by dividing by Player Weight"),
                   DT::dataTableOutput("newtforce_normalized_table")
+          ),
+          tabPanel("Graphs",
+                  br(),
+                  h4("Newtforce Graphs"),
+                  fluidRow(
+                    column(
+                      width = 3,
+                      selectInput(
+                        "newtforce_graph_data_mode",
+                        "Plot Mode",
+                        choices = c("Averages by Pitch Type", "Individual Pitches"),
+                        selected = "Averages by Pitch Type"
+                      )
+                    ),
+                    column(
+                      width = 3,
+                      selectInput(
+                        "newtforce_graph_value_mode",
+                        "Value Type",
+                        choices = c("Raw Values", "Normalized by Weight"),
+                        selected = "Raw Values"
+                      )
+                    ),
+                    column(width = 3, uiOutput("newtforce_graph_x_ui")),
+                    column(width = 3, uiOutput("newtforce_graph_y_ui"))
+                  ),
+                  tags$p(
+                    style = "margin-top:8px; color:#64748b;",
+                    "Select any two variables from the chosen mode and value type."
+                  ),
+                  plotOutput("newtforce_graph_plot", height = "560px")
           )
         )
       )
@@ -18886,6 +18985,123 @@ biomech_server <- function(input, output, session, app_id_fn) {
   
   # Reactive to store current data
   newtforce_data <- reactiveVal(NULL)
+  
+  # Keep pitch type order consistent with the rest of the app, with All always last.
+  order_newtforce_pitch_rows <- function(df, pitch_col = "Pitch Type") {
+    if (is.null(df) || !nrow(df) || !(pitch_col %in% names(df))) return(df)
+    base_order <- c("Fastball", "Sinker", "Cutter", "Slider", "Sweeper", "Curveball", "ChangeUp", "Splitter")
+    pitch_vals <- as.character(df[[pitch_col]])
+    extras <- sort(unique(setdiff(pitch_vals, c(base_order, "All"))))
+    final_levels <- c(base_order, extras, "All")
+    df %>%
+      dplyr::mutate(.pitch_order = factor(.data[[pitch_col]], levels = final_levels)) %>%
+      dplyr::arrange(.pitch_order) %>%
+      dplyr::select(-.pitch_order)
+  }
+  
+  newtforce_norm_specs <- c(
+    "Accel Impulse (Norm)" = "Accel Impulse (lb*s)",
+    "Decel Impulse (Norm)" = "Decel Impulse (lb*s)",
+    "Y Back (Norm)" = "Y Back (lb)",
+    "Y Front (Norm)" = "Y Front (lb)",
+    "Z Back (Norm)" = "Z Back (lb)",
+    "Z Front (Norm)" = "Z Front (lb)"
+  )
+  
+  build_newtforce_avg_by_pitch <- function(data) {
+    data %>%
+      group_by(`Pitch Type`) %>%
+      summarise(
+        Count = n(),
+        `Accel Impulse (lb*s)` = mean(`Accel Impulse (lb*s)`, na.rm = TRUE),
+        `Clawback (sec)` = mean(`Clawback (sec)`, na.rm = TRUE),
+        `Decel Impulse (lb*s)` = mean(`Decel Impulse (lb*s)`, na.rm = TRUE),
+        `Impulse Ratio (ratio)` = mean(`Impulse Ratio (ratio)`, na.rm = TRUE),
+        `Player Velo (mph)` = mean(`Player Velo (mph)`, na.rm = TRUE),
+        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
+        `Stride (in)` = mean(`Stride (in)`, na.rm = TRUE),
+        `Stride Angle (deg)` = mean(`Stride Angle (deg)`, na.rm = TRUE),
+        `Stride Ratio (%)` = mean(`Stride Ratio (%)`, na.rm = TRUE),
+        `Y Back (lb)` = mean(`Y Back (lb)`, na.rm = TRUE),
+        `Y Front (lb)` = mean(`Y Front (lb)`, na.rm = TRUE),
+        `Y Transfer (sec)` = mean(`Y Transfer (sec)`, na.rm = TRUE),
+        `Z Back (lb)` = mean(`Z Back (lb)`, na.rm = TRUE),
+        `Z Front (lb)` = mean(`Z Front (lb)`, na.rm = TRUE),
+        `Z Transfer (sec)` = mean(`Z Transfer (sec)`, na.rm = TRUE),
+        `X-Y Back (lb)` = mean(`X-Y Back (lb)`, na.rm = TRUE),
+        `X-Y Front (lb)` = mean(`X-Y Front (lb)`, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  build_newtforce_avg_all_row <- function(data) {
+    data %>%
+      summarise(
+        `Pitch Type` = "All",
+        Count = n(),
+        `Accel Impulse (lb*s)` = mean(`Accel Impulse (lb*s)`, na.rm = TRUE),
+        `Clawback (sec)` = mean(`Clawback (sec)`, na.rm = TRUE),
+        `Decel Impulse (lb*s)` = mean(`Decel Impulse (lb*s)`, na.rm = TRUE),
+        `Impulse Ratio (ratio)` = mean(`Impulse Ratio (ratio)`, na.rm = TRUE),
+        `Player Velo (mph)` = mean(`Player Velo (mph)`, na.rm = TRUE),
+        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
+        `Stride (in)` = mean(`Stride (in)`, na.rm = TRUE),
+        `Stride Angle (deg)` = mean(`Stride Angle (deg)`, na.rm = TRUE),
+        `Stride Ratio (%)` = mean(`Stride Ratio (%)`, na.rm = TRUE),
+        `Y Back (lb)` = mean(`Y Back (lb)`, na.rm = TRUE),
+        `Y Front (lb)` = mean(`Y Front (lb)`, na.rm = TRUE),
+        `Y Transfer (sec)` = mean(`Y Transfer (sec)`, na.rm = TRUE),
+        `Z Back (lb)` = mean(`Z Back (lb)`, na.rm = TRUE),
+        `Z Front (lb)` = mean(`Z Front (lb)`, na.rm = TRUE),
+        `Z Transfer (sec)` = mean(`Z Transfer (sec)`, na.rm = TRUE),
+        `X-Y Back (lb)` = mean(`X-Y Back (lb)`, na.rm = TRUE),
+        `X-Y Front (lb)` = mean(`X-Y Front (lb)`, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  build_newtforce_norm_by_pitch <- function(data) {
+    data %>%
+      group_by(`Pitch Type`) %>%
+      summarise(
+        Count = n(),
+        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
+        `Accel Impulse (Norm)` = mean(`Accel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Decel Impulse (Norm)` = mean(`Decel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Y Back (Norm)` = mean(`Y Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Y Front (Norm)` = mean(`Y Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Z Back (Norm)` = mean(`Z Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Z Front (Norm)` = mean(`Z Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  build_newtforce_norm_all_row <- function(data) {
+    data %>%
+      summarise(
+        `Pitch Type` = "All",
+        Count = n(),
+        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
+        `Accel Impulse (Norm)` = mean(`Accel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Decel Impulse (Norm)` = mean(`Decel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Y Back (Norm)` = mean(`Y Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Y Front (Norm)` = mean(`Y Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Z Back (Norm)` = mean(`Z Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        `Z Front (Norm)` = mean(`Z Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
+  
+  build_newtforce_individual_norm <- function(data) {
+    out <- data
+    for (nm in names(newtforce_norm_specs)) {
+      src <- unname(newtforce_norm_specs[[nm]])
+      out[[nm]] <- suppressWarnings(as.numeric(out[[src]]) / as.numeric(out[["Player Weight (lb)"]]))
+    }
+    keep_cols <- c("Date", "First Name", "Last Name", "Pitch Type", "Player Weight (lb)", names(newtforce_norm_specs))
+    keep_cols <- intersect(keep_cols, names(out))
+    out %>% dplyr::select(dplyr::all_of(keep_cols))
+  }
   
   # Load data on startup
   observe({
@@ -19063,57 +19279,10 @@ biomech_server <- function(input, output, session, app_id_fn) {
       return(DT::datatable(data.frame(Message = "No data available.")))
     }
     
-    # Calculate averages by pitch type
-    avg_data <- data %>%
-      group_by(`Pitch Type`) %>%
-      summarise(
-        Count = n(),
-        `Accel Impulse (lb*s)` = mean(`Accel Impulse (lb*s)`, na.rm = TRUE),
-        `Clawback (sec)` = mean(`Clawback (sec)`, na.rm = TRUE),
-        `Decel Impulse (lb*s)` = mean(`Decel Impulse (lb*s)`, na.rm = TRUE),
-        `Impulse Ratio (ratio)` = mean(`Impulse Ratio (ratio)`, na.rm = TRUE),
-        `Player Velo (mph)` = mean(`Player Velo (mph)`, na.rm = TRUE),
-        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
-        `Stride (in)` = mean(`Stride (in)`, na.rm = TRUE),
-        `Stride Angle (deg)` = mean(`Stride Angle (deg)`, na.rm = TRUE),
-        `Stride Ratio (%)` = mean(`Stride Ratio (%)`, na.rm = TRUE),
-        `Y Back (lb)` = mean(`Y Back (lb)`, na.rm = TRUE),
-        `Y Front (lb)` = mean(`Y Front (lb)`, na.rm = TRUE),
-        `Y Transfer (sec)` = mean(`Y Transfer (sec)`, na.rm = TRUE),
-        `Z Back (lb)` = mean(`Z Back (lb)`, na.rm = TRUE),
-        `Z Front (lb)` = mean(`Z Front (lb)`, na.rm = TRUE),
-        `Z Transfer (sec)` = mean(`Z Transfer (sec)`, na.rm = TRUE),
-        `X-Y Back (lb)` = mean(`X-Y Back (lb)`, na.rm = TRUE),
-        `X-Y Front (lb)` = mean(`X-Y Front (lb)`, na.rm = TRUE),
-        .groups = 'drop'
-      )
-    
-    # Add "All" row
-    all_row <- data %>%
-      summarise(
-        `Pitch Type` = "All",
-        Count = n(),
-        `Accel Impulse (lb*s)` = mean(`Accel Impulse (lb*s)`, na.rm = TRUE),
-        `Clawback (sec)` = mean(`Clawback (sec)`, na.rm = TRUE),
-        `Decel Impulse (lb*s)` = mean(`Decel Impulse (lb*s)`, na.rm = TRUE),
-        `Impulse Ratio (ratio)` = mean(`Impulse Ratio (ratio)`, na.rm = TRUE),
-        `Player Velo (mph)` = mean(`Player Velo (mph)`, na.rm = TRUE),
-        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
-        `Stride (in)` = mean(`Stride (in)`, na.rm = TRUE),
-        `Stride Angle (deg)` = mean(`Stride Angle (deg)`, na.rm = TRUE),
-        `Stride Ratio (%)` = mean(`Stride Ratio (%)`, na.rm = TRUE),
-        `Y Back (lb)` = mean(`Y Back (lb)`, na.rm = TRUE),
-        `Y Front (lb)` = mean(`Y Front (lb)`, na.rm = TRUE),
-        `Y Transfer (sec)` = mean(`Y Transfer (sec)`, na.rm = TRUE),
-        `Z Back (lb)` = mean(`Z Back (lb)`, na.rm = TRUE),
-        `Z Front (lb)` = mean(`Z Front (lb)`, na.rm = TRUE),
-        `Z Transfer (sec)` = mean(`Z Transfer (sec)`, na.rm = TRUE),
-        `X-Y Back (lb)` = mean(`X-Y Back (lb)`, na.rm = TRUE),
-        `X-Y Front (lb)` = mean(`X-Y Front (lb)`, na.rm = TRUE),
-        .groups = 'drop'
-      )
-    
-    avg_data <- bind_rows(all_row, avg_data)
+    avg_data <- build_newtforce_avg_by_pitch(data)
+    all_row <- build_newtforce_avg_all_row(data)
+    avg_data <- bind_rows(avg_data, all_row) %>%
+      order_newtforce_pitch_rows(pitch_col = "Pitch Type")
     
     dt <- DT::datatable(
       avg_data,
@@ -19157,37 +19326,10 @@ biomech_server <- function(input, output, session, app_id_fn) {
       return(DT::datatable(data.frame(Message = "No data available.")))
     }
     
-    # Calculate normalized averages by pitch type
-    norm_data <- data %>%
-      group_by(`Pitch Type`) %>%
-      summarise(
-        Count = n(),
-        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
-        `Accel Impulse (Norm)` = mean(`Accel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Decel Impulse (Norm)` = mean(`Decel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Y Back (Norm)` = mean(`Y Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Y Front (Norm)` = mean(`Y Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Z Back (Norm)` = mean(`Z Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Z Front (Norm)` = mean(`Z Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        .groups = 'drop'
-      )
-    
-    # Add "All" row
-    all_row <- data %>%
-      summarise(
-        `Pitch Type` = "All",
-        Count = n(),
-        `Player Weight (lb)` = mean(`Player Weight (lb)`, na.rm = TRUE),
-        `Accel Impulse (Norm)` = mean(`Accel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Decel Impulse (Norm)` = mean(`Decel Impulse (lb*s)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Y Back (Norm)` = mean(`Y Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Y Front (Norm)` = mean(`Y Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Z Back (Norm)` = mean(`Z Back (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        `Z Front (Norm)` = mean(`Z Front (lb)` / `Player Weight (lb)`, na.rm = TRUE),
-        .groups = 'drop'
-      )
-    
-    norm_data <- bind_rows(all_row, norm_data)
+    norm_data <- build_newtforce_norm_by_pitch(data)
+    all_row <- build_newtforce_norm_all_row(data)
+    norm_data <- bind_rows(norm_data, all_row) %>%
+      order_newtforce_pitch_rows(pitch_col = "Pitch Type")
     
     dt <- DT::datatable(
       norm_data,
@@ -19215,6 +19357,130 @@ biomech_server <- function(input, output, session, app_id_fn) {
     
     dt
   })
+  
+  newtforce_graph_data <- reactive({
+    data <- newtforce_filtered()
+    if (is.null(data) || nrow(data) == 0) return(NULL)
+    mode <- input$newtforce_graph_data_mode %||% "Averages by Pitch Type"
+    value_mode <- input$newtforce_graph_value_mode %||% "Raw Values"
+    
+    if (identical(mode, "Averages by Pitch Type")) {
+      out <- if (identical(value_mode, "Normalized by Weight")) {
+        bind_rows(build_newtforce_norm_by_pitch(data), build_newtforce_norm_all_row(data))
+      } else {
+        bind_rows(build_newtforce_avg_by_pitch(data), build_newtforce_avg_all_row(data))
+      }
+      return(order_newtforce_pitch_rows(out, pitch_col = "Pitch Type"))
+    }
+    
+    # Individual pitches
+    if (identical(value_mode, "Normalized by Weight")) {
+      return(build_newtforce_individual_norm(data))
+    }
+    data
+  })
+  
+  newtforce_graph_numeric_choices <- reactive({
+    df <- newtforce_graph_data()
+    if (is.null(df) || !nrow(df)) return(character(0))
+    nms <- names(df)[vapply(df, is.numeric, logical(1))]
+    setNames(nms, nms)
+  })
+  
+  output$newtforce_graph_x_ui <- renderUI({
+    ch <- newtforce_graph_numeric_choices()
+    selectInput(
+      "newtforce_graph_x",
+      "X Axis",
+      choices = ch,
+      selected = if (length(ch)) ch[[1]] else character(0)
+    )
+  })
+  
+  output$newtforce_graph_y_ui <- renderUI({
+    ch <- newtforce_graph_numeric_choices()
+    sel <- if (length(ch) >= 2) ch[[2]] else if (length(ch)) ch[[1]] else character(0)
+    selectInput(
+      "newtforce_graph_y",
+      "Y Axis",
+      choices = ch,
+      selected = sel
+    )
+  })
+  
+  output$newtforce_graph_plot <- renderPlot({
+    df <- newtforce_graph_data()
+    req(!is.null(df), nrow(df) > 0)
+    dark_on <- isTRUE(input$dark_mode)
+    axis_col <- if (dark_on) "#ffffff" else "#111827"
+    grid_col_major <- if (dark_on) "#FFFFFF8C" else "#d1d5db"
+    grid_col_minor <- if (dark_on) "#FFFFFF47" else "#e5e7eb"
+    zero_line_col <- if (dark_on) "#ffffff" else "#000000"
+    x_var <- input$newtforce_graph_x
+    y_var <- input$newtforce_graph_y
+    
+    validate(
+      need(!is.null(x_var) && nzchar(x_var) && x_var %in% names(df), "Select a valid X-axis variable."),
+      need(!is.null(y_var) && nzchar(y_var) && y_var %in% names(df), "Select a valid Y-axis variable.")
+    )
+    
+    df <- df %>%
+      dplyr::filter(is.finite(.data[[x_var]]), is.finite(.data[[y_var]]))
+    validate(need(nrow(df) > 0, "No rows available after applying filters and variable selection."))
+    
+    if (!("Pitch Type" %in% names(df))) {
+      df$`Pitch Type` <- "All"
+    }
+    
+    pitch_levels <- c("Fastball", "Sinker", "Cutter", "Slider", "Sweeper", "Curveball", "ChangeUp", "Splitter", "All")
+    present_levels <- unique(as.character(df$`Pitch Type`))
+    present_levels <- present_levels[!is.na(present_levels) & nzchar(present_levels)]
+    present_levels <- c(intersect(pitch_levels, present_levels), setdiff(present_levels, pitch_levels))
+    df$`Pitch Type` <- factor(df$`Pitch Type`, levels = present_levels)
+    
+    pal <- if (exists("all_colors")) unlist(all_colors) else c()
+    pal <- c(pal, "All" = "#111827")
+    if (dark_on && "Fastball" %in% names(pal)) pal["Fastball"] <- "#ffffff"
+    pal <- pal[names(pal) %in% present_levels]
+    
+    mode <- input$newtforce_graph_data_mode %||% "Averages by Pitch Type"
+    p <- ggplot(df, aes(x = .data[[x_var]], y = .data[[y_var]], color = .data[["Pitch Type"]])) +
+      {
+        if (identical(mode, "Averages by Pitch Type")) {
+          geom_point(size = 4.2, alpha = 0.95)
+        } else {
+          geom_point(size = 2.8, alpha = 0.75)
+        }
+      } +
+      geom_hline(yintercept = 0, color = zero_line_col, linewidth = 1.2) +
+      geom_vline(xintercept = 0, color = zero_line_col, linewidth = 1.2) +
+      labs(
+        x = x_var,
+        y = y_var,
+        color = "Pitch Type",
+        title = paste(mode, "-", (input$newtforce_graph_value_mode %||% "Raw Values"))
+      ) +
+      theme_minimal(base_size = 13) +
+      theme(
+        plot.title = element_text(face = "bold", color = axis_col),
+        axis.title = element_text(face = "bold", color = axis_col),
+        axis.text = element_text(color = axis_col),
+        legend.title = element_text(color = axis_col, face = "bold"),
+        legend.text = element_text(color = axis_col),
+        panel.grid.major = element_line(color = grid_col_major, linewidth = 0.45),
+        panel.grid.minor = element_line(color = grid_col_minor, linewidth = 0.3),
+        plot.background = element_rect(fill = "transparent", color = NA),
+        panel.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        legend.key = element_rect(fill = "transparent", color = NA)
+      )
+    
+    if (length(pal) > 0) {
+      p <- p + scale_color_manual(values = pal, drop = FALSE)
+    }
+    
+    p
+  }, bg = "transparent")
 }
 
 video_upload_ui <- function() {
@@ -20172,13 +20438,13 @@ ui <- tagList(
       }
       body.theme-dark .well,
       body.theme-dark .panel {
-        background: rgba(15,23,42,0.9) !important;
-        border: 1px solid #1f2937 !important;
+        background: rgba(0,0,0,0.92) !important;
+        border: 1px solid #2a2a2a !important;
         box-shadow: 0 6px 24px rgba(0,0,0,0.45);
         color: #e5e7eb !important;
       }
       body.theme-dark .panel-default > .panel-heading {
-        background: linear-gradient(135deg, #111827 0%, #0b1220 100%) !important;
+        background: linear-gradient(135deg, #000000 0%, #101010 100%) !important;
         color: #e5e7eb !important;
         border: none !important;
       }
@@ -20302,8 +20568,8 @@ ui <- tagList(
         border-radius: 6px;
       }
       body.theme-dark .creport-cell {
-        background: rgba(15,23,42,0.9) !important;
-        border: 1px solid #1f2937 !important;
+        background: rgba(0,0,0,0.92) !important;
+        border: 1px solid #2a2a2a !important;
         box-shadow: 0 4px 18px rgba(0,0,0,0.35);
         color: #e5e7eb;
       }
@@ -20348,13 +20614,13 @@ ui <- tagList(
       }
       body.theme-dark #creports-sidebar_column .well,
       body.theme-dark #creports-main_column .well {
-        background: radial-gradient(circle at top left, #1f2937 0%, #0f172a 60%, #0b0f19 100%) !important;
+        background: radial-gradient(circle at top left, #1a1a1a 0%, #050505 60%, #000000 100%) !important;
         border-left: 4px solid #ff8c1a !important;
         color: #e5e7eb !important;
       }
       body.theme-dark #creports-main_column .panel,
       body.theme-dark #creports-sidebar_column .panel {
-        background: #0f172a !important;
+        background: #000000 !important;
         color: #e5e7eb !important;
         box-shadow: 0 2px 12px rgba(0,0,0,0.35);
       }
@@ -20364,19 +20630,19 @@ ui <- tagList(
         background: transparent !important;
       }
       body.theme-dark .pp-root .goal-container {
-        background: rgba(15,23,42,0.85) !important;
-        border: 1px solid #1f2937 !important;
+        background: rgba(0,0,0,0.9) !important;
+        border: 1px solid #2a2a2a !important;
         box-shadow: 0 4px 20px rgba(0,0,0,0.35);
         color: #e5e7eb;
       }
       body.theme-dark .pp-root .goal-description {
-        background: rgba(17,24,39,0.9) !important;
-        border-color: #1f2937 !important;
+        background: rgba(8,8,8,0.95) !important;
+        border-color: #2a2a2a !important;
         color: #e5e7eb !important;
       }
       body.theme-dark .pp-root .panel,
       body.theme-dark .pp-root .well {
-        background: rgba(15,23,42,0.9) !important;
+        background: rgba(0,0,0,0.92) !important;
         color: #e5e7eb !important;
         box-shadow: 0 2px 12px rgba(0,0,0,0.35);
       }
@@ -20479,6 +20745,72 @@ ui <- tagList(
       Shiny.setInputValue('open_media', {url: url, type: typ, nonce: Math.random()}, {priority:'event'});
     });
   ")),
+  tags$script(HTML("
+    // Centralized logout handler for shinyapps.io authenticated deployments.
+    // Performs both app logout and shinyapps identity logout.
+    (function() {
+      function appBasePath() {
+        var p = window.location.pathname || '/';
+        if (!p.endsWith('/')) p = p + '/';
+        return p;
+      }
+
+      function forceLoginRedirect() {
+        var nonce = Date.now();
+        var loginRoot = appBasePath() + '__login__';
+        var loginUrl = loginRoot + '?prompt=login&select_account=1&_=' + nonce;
+        var fallbackLoginUrl = '/__login__?prompt=login&select_account=1&_=' + nonce;
+        window.location.href = loginUrl;
+        setTimeout(function() {
+          window.location.href = fallbackLoginUrl;
+        }, 700);
+      }
+
+      Shiny.addCustomMessageHandler('pcu_logout', function(_) {
+        var basePath = appBasePath();
+        var localLogout = basePath + '__logout__';
+        var nonce = Date.now();
+        var appLoginAbs = window.location.origin + basePath + '__login__?prompt=login&select_account=1&_=' + nonce;
+        var svcLogoutBase = 'https://login.shinyapps.io/logout';
+        var svcLogout = svcLogoutBase +
+          '?redirect=' + encodeURIComponent(appLoginAbs) +
+          '&return_to=' + encodeURIComponent(appLoginAbs) +
+          '&continue=' + encodeURIComponent(appLoginAbs) +
+          '&next=' + encodeURIComponent(appLoginAbs);
+
+        // 1) Clear app-level auth cookie without leaving the page context.
+        fetch(localLogout, { method: 'GET', credentials: 'include' })
+          .catch(function() {})
+          .finally(function() {
+            // 2) Clear shinyapps identity session in a popup (top-level context).
+            var popup = null;
+            try {
+              popup = window.open(
+                svcLogout,
+                'pcu_svc_logout',
+                'noopener,noreferrer,width=560,height=680'
+              );
+            } catch (e) {}
+
+            // If popup is blocked, navigate current tab to service logout.
+            if (!popup) {
+              window.location.href = svcLogout;
+              return;
+            }
+
+            // 3) Return this tab to explicit login chooser.
+            setTimeout(function() {
+              forceLoginRedirect();
+            }, 450);
+
+            // Best effort: close helper window after identity logout completes.
+            setTimeout(function() {
+              try { popup.close(); } catch (e) {}
+            }, 2200);
+          });
+      });
+    })();
+  ")),
   
   shinyjs::useShinyjs(),
   
@@ -20513,7 +20845,7 @@ ui <- tagList(
     style = "background:transparent; border:none; box-shadow:none; z-index:2000;",
     actionButton("openNote", label = NULL, icon = icon("sticky-note"),
                  class = "btn btn-note", title = "Add Note"),
-    top = 60, right = 12, width = 50, fixed = TRUE, draggable = FALSE
+    bottom = 16, right = 12, width = 50, fixed = TRUE, draggable = FALSE
   ),
   uiOutput("spin_visual_assets"),
   navbarPage(
@@ -20539,7 +20871,8 @@ ui <- tagList(
                br(),
                DT::dataTableOutput("notesTable")
              )
-    )
+    ),
+    tabPanel("Logout", value = "Logout", fluidPage())
   )
 )
 
@@ -20593,6 +20926,21 @@ server <- function(input, output, session) {
     } else {
       shinyjs::removeClass(selector = "body", class = "theme-dark")
     }
+  }, ignoreInit = TRUE)
+  
+  last_non_logout_tab <- reactiveVal("Pitching")
+  observeEvent(input$top, {
+    cur_tab <- input$top %||% "Pitching"
+    if (!identical(cur_tab, "Logout")) {
+      last_non_logout_tab(cur_tab)
+      return()
+    }
+    session$sendCustomMessage("pcu_logout", list())
+    updateNavbarPage(session, "top", selected = last_non_logout_tab())
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$logout_btn, {
+    session$sendCustomMessage("pcu_logout", list())
   }, ignoreInit = TRUE)
   
   # Helper to resolve table mode (supports saved custom tables)
@@ -21715,6 +22063,62 @@ deg_to_clock <- function(x) {
       )
     )
   }
+
+  build_modal_zone_plot <- function(row, dark_on = FALSE) {
+    line_col <- if (isTRUE(dark_on)) "#ffffff" else "black"
+    home <- data.frame(
+      x = c(-0.75, 0.75, 0.75, 0, -0.75),
+      y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5
+    )
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
+
+    p <- ggplot() +
+      geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
+      geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
+      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                inherit.aes = FALSE, fill = NA, color = line_col) +
+      coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
+      theme_void() +
+      theme(
+        plot.background = element_rect(fill = "transparent", color = NA),
+        panel.background = element_rect(fill = "transparent", color = NA)
+      )
+
+    row_df <- tryCatch(as.data.frame(row, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(row_df) || !nrow(row_df)) return(p)
+
+    x <- suppressWarnings(as.numeric(row_df$PlateLocSide[1]))
+    y <- suppressWarnings(as.numeric(row_df$PlateLocHeight[1]))
+    if (!is.finite(x) || !is.finite(y)) return(p)
+
+    pt <- as.character(row_df$TaggedPitchType[1] %||% "")
+    pal <- if (exists("colors_for_mode")) colors_for_mode(isTRUE(dark_on)) else all_colors
+    pt_col <- pal[[pt]]
+    if (is.null(pt_col) || !nzchar(pt_col)) pt_col <- "gray"
+
+    result_val <- as.character(row_df$Result[1] %||% "")
+    if (!nzchar(trimws(result_val))) {
+      pitch_call <- as.character(row_df$PitchCall[1] %||% "")
+      play_result <- as.character(row_df$PlayResult[1] %||% "")
+      result_val <- compute_result(pitch_call, play_result) %||% ""
+    }
+    point_shape <- if (!nzchar(result_val) || !(result_val %in% names(shape_map))) 16 else shape_map[[result_val]]
+
+    point_df <- data.frame(x = x, y = y)
+    p + geom_point(
+      data = point_df,
+      aes(x = x, y = y),
+      inherit.aes = FALSE,
+      shape = point_shape,
+      size = 4.3,
+      alpha = 0.95,
+      color = pt_col,
+      fill = pt_col,
+      stroke = 0.9
+    )
+  }
   
   show_pitch_video_modal_multi <- function(row, right_ui = NULL, dataset = NULL, dataset_idx = NA_integer_) {
     data_full <- dataset
@@ -21806,7 +22210,7 @@ deg_to_clock <- function(x) {
     modal_css <- tags$style(HTML(
       ".modal-dialog.pseq-wide{width:96%;max-width:1400px;}"
     ))
-    showModal(tagList(modal_css, modalDialog(body, easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide")))
+    showModal(tagList(modal_css, modalDialog(body, easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide media-modal")))
   }
   
   # Normalize ggiraph selection to a single integer (use the MOST RECENT click)
@@ -21962,7 +22366,7 @@ deg_to_clock <- function(x) {
       urls[vapply(urls, nzchar, logical(1))]
     }
     
-    metrics_block <- function(content) {
+    metrics_block <- function(content, zone_output_id = NULL) {
       if (is.null(content)) return(NULL)
       tags$div(
         style = paste(
@@ -21971,6 +22375,12 @@ deg_to_clock <- function(x) {
           "text-align:center;padding:0;"
         ),
         tags$div(style = "overflow:auto;flex:1 1 auto;padding:0 0 4px 0;", content),
+        if (!is.null(zone_output_id)) {
+          tags$div(
+            style = "padding: 2px 0 0 0; margin-top: -8px;",
+            plotOutput(zone_output_id, height = "190px", width = "100%")
+          )
+        },
         tags$img(
           src = "PCUlogo.png", alt = "PCU",
           style = paste(
@@ -22019,17 +22429,9 @@ deg_to_clock <- function(x) {
     sync_pause_id      <- paste0(uid_base, "_pause_sync")
     download_single_id <- paste0(uid_base, "_download_single")
     download_all_id    <- paste0(uid_base, "_download_all")
+    primary_zone_id    <- paste0(uid_base, "_zone_primary")
+    secondary_zone_id  <- paste0(uid_base, "_zone_secondary")
     
-    observeEvent(input[[next_id]], {
-      cur <- idx()
-      if (is.finite(cur) && cur < n_total) idx(cur + 1L)
-    }, ignoreNULL = TRUE)
-
-    observeEvent(input[[prev_id]], {
-      cur <- idx()
-      if (is.finite(cur) && cur > 1L) idx(cur - 1L)
-    }, ignoreNULL = TRUE)
-
     current_row <- reactive({
       i <- idx()
       if (!is.finite(i)) i <- 1L
@@ -22063,6 +22465,14 @@ deg_to_clock <- function(x) {
     })
     
     cmp_urls <- reactive(collect_urls(cmp_current_row()))
+    
+    output[[primary_zone_id]] <- renderPlot({
+      build_modal_zone_plot(current_row(), dark_on = isTRUE(input$dark_mode))
+    }, bg = "transparent")
+    
+    output[[secondary_zone_id]] <- renderPlot({
+      build_modal_zone_plot(cmp_current_row(), dark_on = isTRUE(input$dark_mode))
+    }, bg = "transparent")
     
     cam_names <- camera_display_labels
     
@@ -22400,7 +22810,7 @@ deg_to_clock <- function(x) {
       } else character(0)
       
       if (!isTRUE(compare_mode())) {
-        right_pane <- metrics_block(right)
+        right_pane <- metrics_block(right, primary_zone_id)
         main_layout <- if (is.null(right_pane)) {
           video_core
         } else {
@@ -22467,8 +22877,8 @@ deg_to_clock <- function(x) {
           tags$div("Select a pitch", style = placeholder_style)
         }
         
-        left_metrics_block <- metrics_block(right)
-        right_metrics_block <- metrics_block(if (!is.null(cmp_row)) build_metrics_panel(cmp_row) else NULL)
+        left_metrics_block <- metrics_block(right, primary_zone_id)
+        right_metrics_block <- metrics_block(if (!is.null(cmp_row)) build_metrics_panel(cmp_row) else NULL, secondary_zone_id)
         
         primary_selected_val <- primary_pool_idx_reactive()
         secondary_selected_val <- secondary_idx()
@@ -22606,7 +23016,7 @@ deg_to_clock <- function(x) {
     modal_css <- tags$style(HTML(
       ".modal-dialog.pseq-wide{width:96%;max-width:1400px;}"
     ))
-    showModal(tagList(modal_css, modalDialog(uiOutput(video_id), easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide")))
+    showModal(tagList(modal_css, modalDialog(uiOutput(video_id), easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide media-modal")))
     invisible(TRUE)
   }
 
@@ -22625,9 +23035,9 @@ deg_to_clock <- function(x) {
       .spin-stage {
         width:100%;
         aspect-ratio:1 / 1;
-        padding:12px;
+        padding:0;
         border-radius:50%;
-        background: transparent;
+        background:#e0e3e8;
         box-shadow: none;
         position:relative;
         overflow:hidden;
@@ -22645,7 +23055,7 @@ deg_to_clock <- function(x) {
       }
       .spin-stage::before {
         z-index:0;
-        background:#e0e3e8;
+        background:transparent;
       }
       .spin-stage::after {
         z-index:1;
@@ -22658,7 +23068,8 @@ deg_to_clock <- function(x) {
         height:100%;
         border-radius:50%;
         background:transparent;
-        position:relative;
+        position:absolute;
+        inset:0;
         z-index:2;
       }
     .spin-canvas {
@@ -22768,6 +23179,15 @@ deg_to_clock <- function(x) {
       margin-top:4px;
       text-transform:uppercase;
     }
+    .spin-legend {
+      margin-top:10px;
+      padding:10px;
+      border-radius:8px;
+      font-size:0.85rem;
+      background:#f8f9fa;
+      color:#1f2937;
+      border:1px solid rgba(0,0,0,0.08);
+    }
     .spin-placeholder {
       width:100%;
       min-height:360px;
@@ -22781,6 +23201,131 @@ deg_to_clock <- function(x) {
       padding:40px;
       text-align:center;
       box-shadow: inset 0 0 30px rgba(255,255,255,0.04);
+    }
+    body.theme-dark .spin-modal .modal-content {
+      background: #0b1020;
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #e5e7eb;
+    }
+    body.theme-dark .spin-modal .modal-header,
+    body.theme-dark .spin-modal .modal-body {
+      background: transparent;
+      color: #e5e7eb;
+    }
+    body.theme-dark .spin-modal .close {
+      color: #e5e7eb;
+      opacity: 0.9;
+      text-shadow: none;
+    }
+    body.theme-dark .spin-modal .btn-light {
+      background: #1f2937;
+      border-color: #374151;
+      color: #e5e7eb;
+    }
+    body.theme-dark .spin-modal .btn-light:hover,
+    body.theme-dark .spin-modal .btn-light:focus {
+      background: #273244;
+      border-color: #4b5563;
+      color: #ffffff;
+    }
+    body.theme-dark .spin-modal .spin-stage {
+      background: #111827;
+    }
+    body.theme-dark .spin-modal .spin-stage::after {
+      background: #0f172a;
+    }
+    body.theme-dark .spin-modal .spin-canvas-card .spin-info,
+    body.theme-dark .spin-modal .spin-canvas-card .spin-canvas-label,
+    body.theme-dark .spin-modal .spin-caption,
+    body.theme-dark .spin-modal .spin-orientation-title {
+      color: #e5e7eb;
+    }
+    body.theme-dark .spin-modal .spin-orientation-button {
+      background: #0f172a;
+      color: #e5e7eb;
+      border-color: rgba(255,255,255,0.22);
+    }
+    body.theme-dark .spin-modal .spin-orientation-button.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+    body.theme-dark .spin-modal .spin-legend {
+      background: #0f172a;
+      color: #e5e7eb;
+      border-color: rgba(255,255,255,0.14);
+    }
+    body.theme-dark .media-modal .modal-content {
+      background: #0b1020 !important;
+      border: 1px solid rgba(255,255,255,0.12) !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .media-modal .modal-header,
+    body.theme-dark .media-modal .modal-body,
+    body.theme-dark .media-modal .modal-title {
+      background: transparent !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .media-modal .close {
+      color: #e5e7eb !important;
+      opacity: 0.9;
+      text-shadow: none;
+    }
+    body.theme-dark .media-modal .btn-light {
+      background: #1f2937 !important;
+      border-color: #374151 !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .media-modal .btn-light:hover,
+    body.theme-dark .media-modal .btn-light:focus {
+      background: #273244 !important;
+      border-color: #4b5563 !important;
+      color: #ffffff !important;
+    }
+    body.theme-dark .config-modal .modal-content {
+      background: #0b1020 !important;
+      border: 1px solid rgba(255,255,255,0.12) !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .modal-header,
+    body.theme-dark .config-modal .modal-body,
+    body.theme-dark .config-modal .modal-title,
+    body.theme-dark .config-modal .modal-body p,
+    body.theme-dark .config-modal .modal-body strong,
+    body.theme-dark .config-modal .modal-body h4,
+    body.theme-dark .config-modal .modal-body span,
+    body.theme-dark .config-modal .modal-body div {
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .form-control,
+    body.theme-dark .config-modal .selectize-input {
+      background: #0f172a !important;
+      border-color: rgba(255,255,255,0.22) !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .selectize-dropdown {
+      background: #111827 !important;
+      border-color: rgba(255,255,255,0.22) !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .selectize-dropdown .option {
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .selectize-dropdown .option.active,
+    body.theme-dark .config-modal .selectize-dropdown .option:hover {
+      background: #1f2937 !important;
+      color: #ffffff !important;
+    }
+    body.theme-dark .config-modal .btn-default {
+      background: #1f2937 !important;
+      border-color: #374151 !important;
+      color: #e5e7eb !important;
+    }
+    body.theme-dark .config-modal .btn-default:hover,
+    body.theme-dark .config-modal .btn-default:focus {
+      background: #273244 !important;
+      border-color: #4b5563 !important;
+      color: #ffffff !important;
     }
   ")))
 
@@ -22924,17 +23469,19 @@ deg_to_clock <- function(x) {
         });
       }
 
-      function drawClockNumbers(ctx, radius) {
+      function drawClockNumbers(ctx, ringInnerRadius, ringOuterRadius) {
         ctx.save();
         ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-        var fontSize = Math.max(8, radius * 0.064);
+        var ringThickness = Math.max(1, ringOuterRadius - ringInnerRadius);
+        var fontSize = Math.max(8, Math.min(ringThickness * 0.42, ringOuterRadius * 0.055));
         ctx.font = fontSize + 'px \"Inter\", \"Helvetica Neue\", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        var clockRadius = radius - Math.max(2, fontSize * 0.2);
-        if (clockRadius < radius * 0.95) {
-          clockRadius = radius * 0.95;
-        }
+        var minRadius = ringInnerRadius + (fontSize * 0.6);
+        var maxRadius = ringOuterRadius - (fontSize * 0.6);
+        var clockRadius = ringInnerRadius + (ringThickness * 0.58);
+        if (!isFinite(clockRadius)) clockRadius = ringInnerRadius + (ringThickness * 0.5);
+        clockRadius = Math.min(maxRadius, Math.max(minRadius, clockRadius));
         
         // Draw all 12 numbers - 12 is at top (90 degrees), going clockwise
         for (var hour = 1; hour <= 12; hour++) {
@@ -22986,18 +23533,23 @@ deg_to_clock <- function(x) {
         var pauseBtn = cfg.pauseBtnId ? document.getElementById(cfg.pauseBtnId) : null;
         var running = cfg.autoplay !== false;
         var angle = 0;
-        var baseSpeed = (spinRate / 60) * 2 * Math.PI;
+        // Keep animation speed constant across pitch types by decoupling from spinRate.
+        var referenceSpinRate = 1800;
+        var baseSpeed = (referenceSpinRate / 60) * 2 * Math.PI;
         
         // Fixed slow speed
         var multiplier = Number(cfg.spinSpeedMultiplier) || 0.008;
         var speed = baseSpeed * multiplier;
         var lastTs = null;
         var sliderUpdating = false;
+        var sizeCache = 0;
 
         function ensureSize() {
           var parent = canvas.parentElement;
           var width = parent ? parent.clientWidth : canvas.clientWidth;
-          var size = Math.max(220, width);
+          var height = parent ? parent.clientHeight : canvas.clientHeight;
+          var base = Math.min(width, height || width);
+          var size = Math.max(220, base);
           if (canvas.width !== size) {
             canvas.width = size;
             canvas.height = size;
@@ -23031,11 +23583,11 @@ deg_to_clock <- function(x) {
         function drawBall(cx, cy, radius, stageRadius, rotation) {
           // Create more transparent/glass-like baseball
           var grad = ctx.createRadialGradient(cx - radius * 0.3, cy - radius * 0.3, radius * 0.1, cx, cy, radius * 1.1);
-          grad.addColorStop(0, 'rgba(255, 255, 255, 0.4)');
-          grad.addColorStop(0.25, 'rgba(253, 251, 247, 0.35)');
-          grad.addColorStop(0.5, 'rgba(245, 240, 230, 0.3)');
-          grad.addColorStop(0.75, 'rgba(232, 220, 200, 0.25)');
-          grad.addColorStop(1, 'rgba(212, 196, 168, 0.2)');
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+          grad.addColorStop(0.25, 'rgba(253, 251, 247, 0.27)');
+          grad.addColorStop(0.5, 'rgba(245, 240, 230, 0.23)');
+          grad.addColorStop(0.75, 'rgba(232, 220, 200, 0.19)');
+          grad.addColorStop(1, 'rgba(212, 196, 168, 0.15)');
           ctx.fillStyle = grad;
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -23043,7 +23595,7 @@ deg_to_clock <- function(x) {
           
           // Subtle outer edge with transparency
           ctx.lineWidth = 1.5;
-          ctx.strokeStyle = 'rgba(150,130,100,0.4)';
+          ctx.strokeStyle = 'rgba(150,130,100,0.28)';
           ctx.stroke();
           
           // Enhanced highlight for glass-like 3D appearance
@@ -23052,8 +23604,8 @@ deg_to_clock <- function(x) {
             cx - radius * 0.3, cy - radius * 0.3, 0,
             cx - radius * 0.3, cy - radius * 0.3, radius * 0.5
           );
-          highlightGrad.addColorStop(0, 'rgba(255,255,255,0.8)');
-          highlightGrad.addColorStop(0.5, 'rgba(255,255,255,0.4)');
+          highlightGrad.addColorStop(0, 'rgba(255,255,255,0.65)');
+          highlightGrad.addColorStop(0.5, 'rgba(255,255,255,0.28)');
           highlightGrad.addColorStop(1, 'rgba(255,255,255,0)');
           ctx.fillStyle = highlightGrad;
           ctx.beginPath();
@@ -23061,7 +23613,7 @@ deg_to_clock <- function(x) {
           ctx.fill();
           
           // Secondary smaller highlight for more glass effect
-          ctx.fillStyle = 'rgba(255,255,255,0.6)';
+          ctx.fillStyle = 'rgba(255,255,255,0.45)';
           ctx.beginPath();
           ctx.ellipse(cx - radius * 0.35, cy - radius * 0.35, radius * 0.15, radius * 0.1, -Math.PI / 4, 0, Math.PI * 2);
           ctx.fill();
@@ -23083,10 +23635,9 @@ deg_to_clock <- function(x) {
         function drawSeam(cx, cy, radius, stageRadius, rotation) {
           ctx.save();
           ctx.translate(cx, cy);
-          var ringCenterRadius = stageRadius + 10;
-          var numbersRadius = Math.max(radius + 32, ringCenterRadius);
-          drawClockNumbers(ctx, numbersRadius);
-          drawTiltArrows(ctx, 0, 0, radius, releaseTiltVal, breakTiltVal);
+          var ringOuterRadius = sizeCache > 0 ? (sizeCache / 2) : (stageRadius + 38);
+          drawClockNumbers(ctx, stageRadius, ringOuterRadius);
+          drawTiltArrows(ctx, 0, 0, radius, stageRadius, releaseTiltVal, breakTiltVal);
           drawRotatingTiltLine(ctx, 0, 0, radius, stageRadius, releaseTiltVal, rotation);
           ctx.restore();
         }
@@ -23116,13 +23667,13 @@ deg_to_clock <- function(x) {
           return eff;
         }
 
-        function drawTiltArrow(ctx, cx, cy, radius, deg, color, dashed) {
+        function drawTiltArrow(ctx, cx, cy, radius, stageRadius, deg, color, dashed) {
           var vec = tiltDegreesToVector(deg);
           if (!vec) return;
           
           // Position arrow between ball edge and clock numbers
-          var startRadius = radius * 1.02; // Just outside ball
-          var endRadius = radius * 1.18; // Just inside clock numbers
+          var startRadius = radius * 1.01; // Just outside ball
+          var endRadius = Math.max(radius * 1.18, (stageRadius || radius * 1.2) - 2); // Reach inner border edge
           
           var startX = cx + vec.x * startRadius;
           var startY = cy + vec.y * startRadius;
@@ -23132,7 +23683,7 @@ deg_to_clock <- function(x) {
           ctx.save();
           ctx.strokeStyle = color;
           ctx.fillStyle = color;
-          ctx.lineWidth = 5; // Thicker
+          ctx.lineWidth = 5.8; // Thicker/larger
           ctx.lineCap = 'round';
           ctx.setLineDash(dashed ? [6, 5] : []);
           ctx.beginPath();
@@ -23141,7 +23692,7 @@ deg_to_clock <- function(x) {
           ctx.stroke();
           
           // Calculate arrowhead based on the tilt direction
-          var headLen = radius * 0.12;
+          var headLen = radius * 0.14;
           var tiltAngle = Math.atan2(vec.y, vec.x);
           var perpAngle = tiltAngle + Math.PI / 2;
           var perpX = Math.cos(perpAngle);
@@ -23160,12 +23711,12 @@ deg_to_clock <- function(x) {
           ctx.restore();
         }
 
-        function drawTiltArrows(ctx, cx, cy, radius, releaseAngle, breakAngle) {
+        function drawTiltArrows(ctx, cx, cy, radius, stageRadius, releaseAngle, breakAngle) {
           if (releaseAngle !== null && isFinite(releaseAngle)) {
-            drawTiltArrow(ctx, cx, cy, radius, releaseAngle, '#ffb300', true);
+            drawTiltArrow(ctx, cx, cy, radius, stageRadius, releaseAngle, '#ffb300', true);
           }
           if (breakAngle !== null && isFinite(breakAngle)) {
-            drawTiltArrow(ctx, cx, cy, radius, breakAngle, '#4caf50', false);
+            drawTiltArrow(ctx, cx, cy, radius, stageRadius, breakAngle, '#4caf50', false);
           }
         }
 
@@ -23182,147 +23733,261 @@ deg_to_clock <- function(x) {
             y: tiltDir.y * (1 - efficiency) + releaseDir.y * efficiency
           }) || tiltDir;
 
-          var axisDir = normalizeVec2D(blended) || tiltDir;
+          var axisDir = normalizeVec2D(releaseDir) || normalizeVec2D(blended) || tiltDir;
           var axisPerp = { x: -axisDir.y, y: axisDir.x };
           var rodDir = normalizeVec2D({ x: -tiltDir.y, y: tiltDir.x }) || axisDir;
           var rodPerp = { x: -rodDir.y, y: rodDir.x };
           var safeStageRadius = Math.max(stageRadius || radius * 2, radius + 20);
-          var axisLength = Math.min(safeStageRadius - 14, radius * 1.05);
-          axisLength = Math.max(radius * 0.65, axisLength);
-          var bandWidth = radius * 0.045;
-          var axisLineStart = { x: -axisDir.x * axisLength, y: -axisDir.y * axisLength };
-          var axisLineEnd = { x: axisDir.x * axisLength, y: axisDir.y * axisLength };
+          var visiblePenetration = (1 - efficiency) * radius; // 100% -> 0, 0% -> edge to center
+          var shiftAmount = visiblePenetration;
+          var centerShift = { x: axisDir.x * shiftAmount, y: axisDir.y * shiftAmount };
+          var axisLen = radius;
+          var pitcherHand = (cfg.pitcherHand || '').toString().toUpperCase();
 
-          drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency);
-          drawOrbitingArrows(ctx, cx, cy, axisDir, axisPerp, radius, rotation, efficiency);
+          drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, stageRadius, safeStageRadius, efficiency, axisDir, pitcherHand);
+          drawOrbitingArrows(ctx, cx, cy, axisDir, axisPerp, radius, rotation, efficiency, centerShift, axisLen);
         }
 
-function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
-          var baseOffset = radius * (0.25 + efficiency * 0.45);
-          var rodLength = radius * (0.6 + efficiency * 0.25);
-          var positiveBase = {
-            x: rodDir.x * baseOffset,
-            y: rodDir.y * baseOffset
-          };
-          var negativeBase = {
-            x: -rodDir.x * baseOffset,
-            y: -rodDir.y * baseOffset
-          };
-          var positiveTip = {
-            x: positiveBase.x + rodDir.x * rodLength,
-            y: positiveBase.y + rodDir.y * rodLength
-          };
-          var negativeTip = {
-            x: negativeBase.x - rodDir.x * rodLength,
-            y: negativeBase.y - rodDir.y * rodLength
-          };
-          drawRodSegment(ctx, cx, cy, positiveBase, positiveTip, rodPerp, radius);
-          drawRodSegment(ctx, cx, cy, negativeBase, negativeTip, rodPerp, radius);
-          drawRodCap(ctx, cx, cy, positiveTip, rodDir, rodPerp, radius, false);
-          drawRodCap(ctx, cx, cy, negativeTip, rodDir, rodPerp, radius, true);
+        function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, ringRadius, stageRadius, efficiency, releaseDir, pitcherHand) {
+          var outerLimit = Math.max(radius + 6, stageRadius - 2); // Stop at inner edge of gray border
+          var ballLimit = Math.max(2, radius);
+          var rodWidth = Math.max(radius * 0.018, 1.2); // Thinner rod
+          
+          // Calculate how far the rod penetrates from edge toward center based on efficiency
+          // 100% efficiency (1.0) -> 0 penetration (rod goes to ball edge on both sides)
+          // 0% efficiency (0.0) -> full penetration (rod fully visible to center on one side)
+          var penetrationDistance = (1 - efficiency) * ballLimit;
+          
+          // Determine visible side by handedness:
+          // LHP = release tilt +3 hours (clockwise 90deg), RHP = release tilt -3 hours (counterclockwise 90deg)
+          var fullSideSign;
+          if (pitcherHand.indexOf('L') === 0 || pitcherHand.indexOf('R') === 0) {
+            var handSign = (pitcherHand.indexOf('L') === 0) ? -1 : 1; // flipped per user request
+            var sideVec = {
+              x: releaseDir.y * handSign,
+              y: -releaseDir.x * handSign
+            };
+            fullSideSign = ((rodDir.x * sideVec.x + rodDir.y * sideVec.y) >= 0) ? 1 : -1;
+          } else {
+            fullSideSign = ((rodDir.x * releaseDir.x + rodDir.y * releaseDir.y) >= 0) ? 1 : -1;
+          }
+          
+          // Base rod style:
+          // - inside baseball: dashed low-transparency gray
+          // - outside baseball to border: solid low-transparency gray
+          drawRodSegment(ctx, cx, cy, -outerLimit, -ballLimit, rodDir, rodPerp, rodWidth, 0.32);
+          drawRodSegment(ctx, cx, cy, ballLimit, outerLimit, rodDir, rodPerp, rodWidth, 0.32);
+          drawDashedRodLine(ctx, cx, cy, -ballLimit, ballLimit, rodDir, rodWidth, 0.32, radius);
+
+          // Black visibility segment: from outer border to efficiency endpoint on chosen side only.
+          var visibilityEnd = Math.max(0, ballLimit - penetrationDistance); // 100%->ball edge, 0%->center
+          if (fullSideSign > 0) {
+            drawBlackRodSegment(ctx, cx, cy, visibilityEnd, outerLimit, rodDir, rodPerp, rodWidth * 1.05, 0.98);
+          } else {
+            drawBlackRodSegment(ctx, cx, cy, -outerLimit, -visibilityEnd, rodDir, rodPerp, rodWidth * 1.05, 0.98);
+          }
         }
 
-        function drawRodSegment(ctx, cx, cy, start, end, axisPerp, radius) {
+        function drawRodSegment(ctx, cx, cy, startDist, endDist, axisDir, axisPerp, halfWidth, alpha) {
+          var start = { x: axisDir.x * startDist, y: axisDir.y * startDist };
+          var end = { x: axisDir.x * endDist, y: axisDir.y * endDist };
           ctx.save();
-          var rodWidth = Math.max(radius * 0.045, 3);
           var grad = ctx.createLinearGradient(
             cx + start.x, cy + start.y,
             cx + end.x, cy + end.y
           );
-          grad.addColorStop(0, 'rgba(236, 232, 225, 0.9)');
-          grad.addColorStop(0.4, 'rgba(210, 205, 198, 0.95)');
-          grad.addColorStop(0.7, 'rgba(190, 180, 165, 0.95)');
-          grad.addColorStop(1, 'rgba(160, 140, 115, 0.9)');
+          grad.addColorStop(0, 'rgba(236, 232, 225,' + (0.88 * alpha) + ')');
+          grad.addColorStop(0.4, 'rgba(210, 205, 198,' + (0.92 * alpha) + ')');
+          grad.addColorStop(0.7, 'rgba(190, 180, 165,' + (0.92 * alpha) + ')');
+          grad.addColorStop(1, 'rgba(160, 140, 115,' + (0.88 * alpha) + ')');
           ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.moveTo(cx + start.x + axisPerp.x * rodWidth, cy + start.y + axisPerp.y * rodWidth);
-          ctx.lineTo(cx + start.x - axisPerp.x * rodWidth, cy + start.y - axisPerp.y * rodWidth);
-          ctx.lineTo(cx + end.x - axisPerp.x * rodWidth, cy + end.y - axisPerp.y * rodWidth);
-          ctx.lineTo(cx + end.x + axisPerp.x * rodWidth, cy + end.y + axisPerp.y * rodWidth);
+          ctx.moveTo(cx + start.x + axisPerp.x * halfWidth, cy + start.y + axisPerp.y * halfWidth);
+          ctx.lineTo(cx + start.x - axisPerp.x * halfWidth, cy + start.y - axisPerp.y * halfWidth);
+          ctx.lineTo(cx + end.x - axisPerp.x * halfWidth, cy + end.y - axisPerp.y * halfWidth);
+          ctx.lineTo(cx + end.x + axisPerp.x * halfWidth, cy + end.y + axisPerp.y * halfWidth);
           ctx.closePath();
           ctx.fill();
-          ctx.strokeStyle = 'rgba(35, 50, 70, 0.4)';
-          ctx.lineWidth = Math.max(1, radius * 0.01);
+          ctx.strokeStyle = 'rgba(35, 50, 70,' + (0.32 * alpha) + ')';
+          ctx.lineWidth = Math.max(0.8, halfWidth * 0.42);
           ctx.stroke();
           ctx.restore();
         }
 
-        function drawRodCap(ctx, cx, cy, point, axisDir, axisPerp, radius, isStart) {
+        function drawBlackRodSegment(ctx, cx, cy, startDist, endDist, axisDir, axisPerp, halfWidth, alpha) {
+          var start = { x: axisDir.x * startDist, y: axisDir.y * startDist };
+          var end = { x: axisDir.x * endDist, y: axisDir.y * endDist };
           ctx.save();
-          var capLength = Math.max(radius * 0.32, 10);
-          var capWidth = Math.max(radius * 0.045, 3);
-          var direction = isStart ? -1 : 1;
-          var outerPoint = {
-            x: point.x + axisDir.x * capLength * direction,
-            y: point.y + axisDir.y * capLength * direction
-          };
-          var innerPoint = {
-            x: point.x - axisDir.x * capLength * 0.3 * direction,
-            y: point.y - axisDir.y * capLength * 0.3 * direction
-          };
-          var capGrad = ctx.createLinearGradient(
-            cx + innerPoint.x, cy + innerPoint.y,
-            cx + outerPoint.x, cy + outerPoint.y
-          );
-          capGrad.addColorStop(0, 'rgba(235, 219, 178, 0.9)');
-          capGrad.addColorStop(0.6, 'rgba(160, 136, 98, 0.9)');
-          capGrad.addColorStop(1, 'rgba(125, 95, 52, 0.9)');
-          ctx.fillStyle = capGrad;
+          ctx.fillStyle = 'rgba(0, 0, 0,' + alpha + ')';
           ctx.beginPath();
-          ctx.moveTo(cx + innerPoint.x + axisPerp.x * capWidth, cy + innerPoint.y + axisPerp.y * capWidth);
-          ctx.lineTo(cx + innerPoint.x - axisPerp.x * capWidth, cy + innerPoint.y - axisPerp.y * capWidth);
-          ctx.lineTo(cx + outerPoint.x - axisPerp.x * capWidth, cy + outerPoint.y - axisPerp.y * capWidth);
-          ctx.lineTo(cx + outerPoint.x + axisPerp.x * capWidth, cy + outerPoint.y + axisPerp.y * capWidth);
+          ctx.moveTo(cx + start.x + axisPerp.x * halfWidth, cy + start.y + axisPerp.y * halfWidth);
+          ctx.lineTo(cx + start.x - axisPerp.x * halfWidth, cy + start.y - axisPerp.y * halfWidth);
+          ctx.lineTo(cx + end.x - axisPerp.x * halfWidth, cy + end.y - axisPerp.y * halfWidth);
+          ctx.lineTo(cx + end.x + axisPerp.x * halfWidth, cy + end.y + axisPerp.y * halfWidth);
           ctx.closePath();
           ctx.fill();
-          ctx.strokeStyle = 'rgba(95, 65, 32, 0.6)';
-          ctx.lineWidth = Math.max(1, radius * 0.02);
-          ctx.stroke();
           ctx.restore();
         }
 
-        function drawOrbitingArrows(ctx, cx, cy, axisDir, axisPerp, radius, rotation, efficiency) {
+        function drawDashedRodLine(ctx, cx, cy, startDist, endDist, axisDir, rodWidth, alpha, radius) {
+          var startX = cx + axisDir.x * startDist;
+          var startY = cy + axisDir.y * startDist;
+          var endX = cx + axisDir.x * endDist;
+          var endY = cy + axisDir.y * endDist;
+          var dashLen = Math.max(6, radius * 0.08);
+          var gapLen = Math.max(4, radius * 0.055);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(165, 155, 142,' + (0.9 * alpha) + ')';
+          ctx.lineWidth = Math.max(1.2, rodWidth * 1.7);
+          ctx.lineCap = 'butt';
+          ctx.setLineDash([dashLen, gapLen]);
+          ctx.beginPath();
+          ctx.moveTo(startX, startY);
+          ctx.lineTo(endX, endY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+
+        function drawOrbitingArrows(ctx, cx, cy, axisDir, axisPerp, radius, rotation, efficiency, centerShift, axisLenOverride) {
           if (!axisDir) return;
           ctx.save();
+          // Keep all arrow rendering strictly inside the baseball edge.
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(1, radius), 0, Math.PI * 2);
+          ctx.clip();
           var arrowCount = 10;
-          var axisLen = radius * (0.8 + efficiency * 0.2);
+          var axisLen = Number(axisLenOverride);
+          if (!isFinite(axisLen)) axisLen = radius;
           var arrowLen = radius * 0.18;
           var arrowWidth = radius * 0.045;
-          var travel = -(rotation / (Math.PI * 2)) * 1.2;
+          
+          // curveMix: 0 = 100% efficiency (straight line), 1 = 0% efficiency (full circle)
+          var curveMixRaw = Math.max(0, Math.min(1, 1 - efficiency));
+          // Delay circular pull so medium efficiencies still reach the opposite edge first.
+          var curveMix = Math.pow(curveMixRaw, 1.35);
+          var axisAngle = Math.atan2(axisDir.y, axisDir.x);
+          var travel = (rotation / (Math.PI * 2)) * 1.2;
+          var fullCircleThreshold = 0.985;
+          
+          // For circular path (0% efficiency), arrows orbit around the entire ball edge
+          var circleRadius = radius * 0.995; // Ride the edge so low-eff looks like top-edge spin
+
+          function sampleBlendedPath(phase) {
+            var p = phase;
+            while (p < 0) p += 1;
+            while (p >= 1) p -= 1;
+            
+            // Straight baseline: release edge -> opposite edge.
+            var lineProgress = 1 - (p * 2); // +1 (release) to -1 (opposite)
+            var lineX = cx + Math.cos(axisAngle) * lineProgress * axisLen;
+            var lineY = cy + Math.sin(axisAngle) * lineProgress * axisLen;
+            var lineTanX = -Math.cos(axisAngle);
+            var lineTanY = -Math.sin(axisAngle);
+
+            // At true 0% efficiency, use full circular orbit around the edge.
+            if (curveMixRaw >= fullCircleThreshold) {
+              var fullAngle = axisAngle + (p * Math.PI * 2);
+              var fullX = cx + Math.cos(fullAngle) * circleRadius;
+              var fullY = cy + Math.sin(fullAngle) * circleRadius;
+              var fullTan = normalizeVec2D({ x: -Math.sin(fullAngle), y: Math.cos(fullAngle) }) || axisDir;
+              return { x: fullX, y: fullY, lineFade: 1.0, tangent: fullTan };
+            }
+
+            // Curved arc that still ends at the opposite edge (release -> opposite).
+            var arcAngle = axisAngle + (p * Math.PI);
+            var arcX = cx + Math.cos(arcAngle) * circleRadius;
+            var arcY = cy + Math.sin(arcAngle) * circleRadius;
+            var arcTanX = -Math.sin(arcAngle);
+            var arcTanY = Math.cos(arcAngle);
+
+            var finalX = lineX * (1 - curveMix) + arcX * curveMix;
+            var finalY = lineY * (1 - curveMix) + arcY * curveMix;
+            var tanX = lineTanX * (1 - curveMix) + arcTanX * curveMix;
+            var tanY = lineTanY * (1 - curveMix) + arcTanY * curveMix;
+            var tan = normalizeVec2D({ x: tanX, y: tanY }) || { x: lineTanX, y: lineTanY };
+
+            return { x: finalX, y: finalY, lineFade: 1.0, tangent: tan };
+          }
+
           for (var i = 0; i < arrowCount; i++) {
             var phase = (i / arrowCount + travel) % 1;
             if (phase < 0) phase += 1;
-            var scaled = phase * 2 - 1;
-            var centerX = cx + axisDir.x * scaled * axisLen;
-            var centerY = cy + axisDir.y * scaled * axisLen;
-            var fadeFactor = Math.max(0, 1 - Math.abs(scaled));
+            var pt = sampleBlendedPath(phase);
+            var tangent = pt.tangent || axisDir;
+            var normal = { x: -tangent.y, y: tangent.x };
+            var centerX = pt.x;
+            var centerY = pt.y;
+            var fadeFactor = pt.lineFade * (1 - curveMix) + curveMix;
             var localLen = arrowLen * (0.3 + 0.7 * fadeFactor);
-            var tipX = centerX - axisDir.x * localLen * 0.55;
-            var tipY = centerY - axisDir.y * localLen * 0.55;
-            var baseX = centerX + axisDir.x * localLen * 0.35;
-            var baseY = centerY + axisDir.y * localLen * 0.35;
-            var headInnerX = tipX + axisDir.x * localLen * 0.2;
-            var headInnerY = tipY + axisDir.y * localLen * 0.2;
-            var normal = { x: -axisDir.y, y: axisDir.x };
+            // Reveal logic: at entry, keep tip on the edge and progressively add forward lead.
+            var startFeather = 0.10;
+            var startReveal = 1;
+            if (curveMixRaw < fullCircleThreshold) {
+              startReveal = Math.max(0, Math.min(1, phase / startFeather));
+              startReveal = startReveal * startReveal * (3 - 2 * startReveal); // smoothstep
+            }
+            var tipLead = 0.55 * startReveal;
+            var fullTipX = centerX + tangent.x * localLen * tipLead;
+            var fullTipY = centerY + tangent.y * localLen * tipLead;
+            var fullBaseX = centerX - tangent.x * localLen * 0.35;
+            var fullBaseY = centerY - tangent.y * localLen * 0.35;
+            var fullHeadInnerX = fullTipX - tangent.x * localLen * 0.2;
+            var fullHeadInnerY = fullTipY - tangent.y * localLen * 0.2;
+
+            var tipX = fullTipX;
+            var tipY = fullTipY;
+            var baseX = fullBaseX;
+            var baseY = fullBaseY;
+            var headInnerX = fullHeadInnerX;
+            var headInnerY = fullHeadInnerY;
+            var localWidth = arrowWidth;
 
             var arrowGrad = ctx.createLinearGradient(baseX, baseY, tipX, tipY);
             arrowGrad.addColorStop(0, 'rgba(170, 125, 48, 1)');
             arrowGrad.addColorStop(0.6, 'rgba(215, 185, 120, 1)');
             arrowGrad.addColorStop(1, 'rgba(255, 255, 255, 1)');
 
+            ctx.save();
+            // Fade logic (mirrors reveal): shrink visible arrow toward the tip at the end.
+            var endReveal = 1;
+            if (curveMixRaw < fullCircleThreshold) {
+              var endFeather = 0.095;
+              var endFade = Math.max(0, Math.min(1, (1 - phase) / endFeather));
+              endFade = endFade * endFade * (3 - 2 * endFade); // smoothstep
+              endReveal = endFade;
+            }
+            if (endReveal <= 0.001) {
+              ctx.restore();
+              continue;
+            }
+            if (curveMixRaw < fullCircleThreshold && endReveal < 0.999) {
+              var keepLen = Math.max(localLen * 0.01, localLen * endReveal);
+              var clipHalfWidth = localWidth * 2.6;
+              var clipEndX = tipX - tangent.x * keepLen;
+              var clipEndY = tipY - tangent.y * keepLen;
+              ctx.beginPath();
+              ctx.moveTo(tipX + normal.x * clipHalfWidth, tipY + normal.y * clipHalfWidth);
+              ctx.lineTo(tipX - normal.x * clipHalfWidth, tipY - normal.y * clipHalfWidth);
+              ctx.lineTo(clipEndX - normal.x * clipHalfWidth, clipEndY - normal.y * clipHalfWidth);
+              ctx.lineTo(clipEndX + normal.x * clipHalfWidth, clipEndY + normal.y * clipHalfWidth);
+              ctx.closePath();
+              ctx.clip();
+            }
             ctx.globalAlpha = 1;
             ctx.fillStyle = arrowGrad;
             ctx.beginPath();
             ctx.moveTo(tipX, tipY);
-            ctx.lineTo(headInnerX + normal.x * arrowWidth, headInnerY + normal.y * arrowWidth);
-            ctx.lineTo(baseX + normal.x * arrowWidth, baseY + normal.y * arrowWidth);
-            ctx.lineTo(baseX - normal.x * arrowWidth, baseY - normal.y * arrowWidth);
-            ctx.lineTo(headInnerX - normal.x * arrowWidth, headInnerY - normal.y * arrowWidth);
+            ctx.lineTo(headInnerX + normal.x * localWidth, headInnerY + normal.y * localWidth);
+            ctx.lineTo(baseX + normal.x * localWidth, baseY + normal.y * localWidth);
+            ctx.lineTo(baseX - normal.x * localWidth, baseY - normal.y * localWidth);
+            ctx.lineTo(headInnerX - normal.x * localWidth, headInnerY - normal.y * localWidth);
             ctx.closePath();
             ctx.fill();
             ctx.strokeStyle = 'rgba(112, 72, 34, 1)';
             ctx.lineWidth = Math.max(1, radius * 0.02);
             ctx.stroke();
+            ctx.restore();
           }
           ctx.restore();
         }
@@ -23489,10 +24154,12 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
             updateSliderValue();
           }
           var size = ensureSize();
+          sizeCache = size;
           var cx = size / 2;
           var cy = size / 2;
-          var radius = size * 0.3;
-          var stageRadius = Math.max(size / 2 - 38, radius + 16);
+          var stageRadius = size / 2 - 38;
+          var ballGap = Math.max(18, size * 0.035);
+          var radius = Math.min(size * 0.3, stageRadius - ballGap);
           ctx.clearRect(0, 0, size, size);
           drawBall(cx, cy, radius, stageRadius, angle);
           requestAnimationFrame(step);
@@ -23526,6 +24193,30 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       if (is.null(val)) return(NA_real_)
       suppressWarnings(as.numeric(val))
     }
+    get_col_first <- function(names_vec) {
+      for (nm in names_vec) {
+        val <- row[[nm]]
+        if (is.null(val) || length(val) == 0 || is.na(val)) next
+        num <- suppressWarnings(as.numeric(val))
+        if (is.finite(num)) return(num)
+        chr <- trimws(as.character(val))
+        if (!nzchar(chr)) next
+        chr <- gsub("%", "", chr, fixed = TRUE)
+        num <- suppressWarnings(as.numeric(chr))
+        if (is.finite(num)) return(num)
+      }
+      NA_real_
+    }
+    get_chr_first <- function(names_vec) {
+      for (nm in names_vec) {
+        val <- row[[nm]]
+        if (is.null(val) || length(val) == 0 || is.na(val)) next
+        chr <- toupper(trimws(as.character(val)))
+        if (!nzchar(chr)) next
+        return(chr)
+      }
+      ""
+    }
 
     axis_vec <- c(
       get_col("SpinAxis3dVectorX"),
@@ -23535,7 +24226,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
     axis_vec <- vapply(axis_vec, function(v) if (is.finite(v)) v else 0, numeric(1))
     spin_rate_val <- get_col("SpinAxis3dActiveSpinRate")
     if (!is.finite(spin_rate_val) || spin_rate_val <= 0) spin_rate_val <- 1800
-    spin_eff_val <- get_col("SpinAxis3dSpinEfficiency")
+    spin_eff_val <- get_col_first(c("SpinAxis3dSpinEfficiency", "SpinEfficiency", "SpinEff", "SpinEffPct"))
     tilt_val <- get_col("SpinAxis3dTilt")
     rtilt_val <- get_col("ReleaseTilt")
     if (!is.finite(rtilt_val)) rtilt_val <- get_col("rTilt")
@@ -23557,6 +24248,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
     if (!is.finite(break_tilt_deg)) {
       break_tilt_deg <- get_col("bTilt")
     }
+    pitcher_hand_val <- get_chr_first(c("PitcherThrows", "PitcherHand", "Throws", "Hand"))
     
     # Get all three seam orientation rotation angles (in radians from TrackMan)
     seam_rot_x <- get_col("SpinAxis3dSeamOrientationRotationX")
@@ -23597,6 +24289,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       seamRotationZ = ifelse(is.finite(seam_rot_z), seam_rot_z, 0),
       releaseTilt = ifelse(is.finite(release_tilt_deg), release_tilt_deg, NA_real_),
       breakTilt = ifelse(is.finite(break_tilt_deg), break_tilt_deg, NA_real_),
+      pitcherHand = pitcher_hand_val,
       spinSpeedMultiplier = spin_speed_multiplier,
       autoplay = TRUE
     )
@@ -23636,7 +24329,6 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       ),
       tags$div(
         class = "spin-legend",
-        style = "margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-size: 0.85rem;",
         HTML(paste(
           "<span style='color: #ffb300; font-weight:700;'>↗ Dashed gold arrow:</span> Release tilt direction (rTilt)",
           "<span style='color: #4caf50; font-weight:700;'>↘ Solid green arrow:</span> Break tilt direction (bTilt)",
@@ -23683,13 +24375,19 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       i <- max(1L, min(n_total, i))
       pool_df[i, , drop = FALSE]
     })
+    zone_id <- paste0(uid_base, "_zone")
+    
+    output[[zone_id]] <- renderPlot({
+      build_modal_zone_plot(current_row(), dark_on = isTRUE(input$dark_mode))
+    }, bg = "transparent")
+    
     output[[modal_id]] <- renderUI({
       cur_idx <- idx()
       if (!is.finite(cur_idx)) cur_idx <- 1L
       cur_idx <- max(1L, min(n_total, cur_idx))
       seq_txt <- sprintf("%d of %d", cur_idx, n_total)
 
-      metrics_block <- function(content) {
+      metrics_block <- function(content, zone_output_id = NULL) {
         if (is.null(content)) return(NULL)
         tags$div(
           style = paste(
@@ -23698,6 +24396,12 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
             "text-align:center;padding:0;"
           ),
           tags$div(style = "overflow:auto;flex:1 1 auto;padding:0 0 4px 0;", content),
+          if (!is.null(zone_output_id)) {
+            tags$div(
+              style = "padding: 2px 0 0 0; margin-top: -8px;",
+              plotOutput(zone_output_id, height = "190px", width = "100%")
+            )
+          },
           tags$img(
             src = "PCUlogo.png", alt = "PCU",
             style = paste(
@@ -23734,7 +24438,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       )
 
       left_block <- make_spin_card(current_row(), label %||% "Spin Visual", paste0(uid_base, "_primary"))
-      left_metrics <- metrics_block(build_metrics_panel(current_row()))
+      left_metrics <- metrics_block(build_metrics_panel(current_row()), zone_id)
       main_layout <- tags$div(
         style = "display:grid;grid-template-columns:4fr 1fr;gap:24px;align-items:start;",
         left_block,
@@ -23746,10 +24450,22 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
       )
     })
 
+    observeEvent(input[[next_id]], {
+      cur <- idx()
+      if (!is.finite(cur)) cur <- 1L
+      if (cur < n_total) idx(cur + 1L)
+    }, ignoreNULL = TRUE)
+
+    observeEvent(input[[prev_id]], {
+      cur <- idx()
+      if (!is.finite(cur)) cur <- 1L
+      if (cur > 1L) idx(cur - 1L)
+    }, ignoreNULL = TRUE)
+
     modal_css <- tags$style(HTML(
       ".modal-dialog.pseq-wide{width:96%;max-width:1400px;}"
     ))
-    showModal(tagList(modal_css, modalDialog(uiOutput(modal_id), easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide")))
+    showModal(tagList(modal_css, modalDialog(uiOutput(modal_id), easyClose = TRUE, footer = NULL, size = "l", class = "pseq-wide spin-modal")))
     invisible(TRUE)
   }
   
@@ -23788,7 +24504,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
         actionButton("delete_selected_pitches", "Delete Selected Pitches", class = "btn-danger"),
         actionButton("confirm_pitch_edit", "Save Changes", class = "btn-primary")
       ),
-      easyClose = FALSE
+      easyClose = FALSE,
+      class = "config-modal"
     ))
     
     session$userData$selected_for_edit <- selected_pitches
@@ -29346,7 +30063,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
         modalButton("Cancel"),
         actionButton("confirm_pitch_edit", "Save Changes", class = "btn-primary")
       ),
-      easyClose = FALSE
+      easyClose = FALSE,
+      class = "config-modal"
     ))
     
     # Store selected data for use in confirm handler
@@ -29511,7 +30229,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
         modalButton("Cancel"),
         actionButton("save_target_shapes_btn", "Save Target Shapes", class = "btn-primary")
       ),
-      easyClose = FALSE
+      easyClose = FALSE,
+      class = "config-modal"
     ))
     
     session$userData$current_pitcher_for_targets <- pitcher_name
@@ -29709,7 +30428,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
         actionButton("delete_selected_pitches_summary", "Delete Selected Pitches", class = "btn-danger"),
         actionButton("confirm_pitch_edit_summary", "Save Changes", class = "btn-primary")
       ),
-      easyClose = FALSE
+      easyClose = FALSE,
+      class = "config-modal"
     ))
     
     # Store selected data for use in confirm handler
@@ -30490,6 +31210,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
   # Pitch Plot
   output$pitchPlot <- ggiraph::renderGirafe({
     df <- filtered_data(); if (!nrow(df)) return(NULL)
+    dark_on <- isTRUE(input$dark_mode)
+    line_col <- if (dark_on) "#ffffff" else "black"
     types <- ordered_types(); types_chr <- as.character(types)
     
     sel <- sel_results()
@@ -30513,11 +31235,11 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
     df_other <- dplyr::filter(df_i,  is.na(Result))
     
     p <- ggplot() +
-      geom_polygon(data = home, aes(x, y), fill = NA, color = "black", inherit.aes = FALSE) +
+      geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", linetype = "dashed", inherit.aes = FALSE) +
+                fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = "black", inherit.aes = FALSE) +
+                fill = NA, color = line_col, inherit.aes = FALSE) +
       
       ggiraph::geom_point_interactive(
         data = df_other,
@@ -30667,6 +31389,8 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
   output$heatmapsPitchPlot <- ggiraph::renderGirafe({
     req(input$hmChartType == "Pitch")
     df <- filtered_data(); if (!nrow(df)) return(NULL)
+    dark_on <- isTRUE(input$dark_mode)
+    line_col <- if (dark_on) "#ffffff" else "black"
     
     # Ensure Result for filtering + shapes
     if (!("Result" %in% names(df))) {
@@ -30695,11 +31419,11 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     
     p <- ggplot() +
-      geom_polygon(data = home, aes(x, y), fill = NA, color = "black") +
+      geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
       geom_rect(data = cz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
-                fill = NA, color = "black", linetype = "dashed") +
+                fill = NA, color = line_col, linetype = "dashed") +
       geom_rect(data = sz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
-                fill = NA, color = "black") +
+                fill = NA, color = line_col) +
       
       # visible points (unknown result as solid circle)
       ggiraph::geom_point_interactive(
@@ -32883,7 +33607,14 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
   # Add basic output renders for Player Plans
   output$pp_player_name <- renderText({
     req(input$pp_player_select)
-    input$pp_player_select
+    nm <- trimws(as.character(input$pp_player_select))
+    if (grepl(",", nm, fixed = TRUE)) {
+      parts <- trimws(strsplit(nm, ",", fixed = TRUE)[[1]])
+      if (length(parts) >= 2 && nzchar(parts[1]) && nzchar(parts[2])) {
+        return(paste(parts[2], parts[1]))
+      }
+    }
+    nm
   })
   
   output$pp_date_range_display <- renderText({
@@ -33298,11 +34029,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
                theme_void())
     }
-    dark_on <- FALSE
-    try({
-      dom <- shiny::getDefaultReactiveDomain()
-      if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
-    }, silent = TRUE)
+    dark_on <- resolve_dark_mode_from_domain()
     line_col <- if (dark_on) "#ffffff" else "black"
     grid_col <- if (dark_on) "#d1d5db" else "black"
     cols <- colors_for_mode(dark_on)
@@ -33381,11 +34108,7 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
                annotate("text", x = 0.5, y = 0.5, label = "No data available") +
                theme_void())
     }
-    dark_on <- FALSE
-    try({
-      dom <- shiny::getDefaultReactiveDomain()
-      if (!is.null(dom) && !is.null(dom$input$dark_mode)) dark_on <- isTRUE(dom$input$dark_mode)
-    }, silent = TRUE)
+    dark_on <- resolve_dark_mode_from_domain()
     axis_col <- if (dark_on) "#e5e7eb" else "black"
     line_col <- if (dark_on) "#ffffff" else "gray"
     grid_col <- adjustcolor(if (dark_on) "white" else "black",
@@ -33881,10 +34604,11 @@ function drawSpinRod(ctx, cx, cy, rodDir, rodPerp, radius, efficiency) {
         expand = expansion(mult = c(0.05, 0.05))
       )
     
+    target_line_col <- if (isTRUE(input$dark_mode)) "#ffffff" else "black"
     # Add target line if target is set and numeric
     if (!is.null(target_numeric) && is.finite(target_numeric)) {
       p <- p + geom_hline(yintercept = target_numeric, 
-                          color = "black", 
+                          color = target_line_col, 
                           linetype = "dashed", 
                           alpha = 0.6, 
                           size = 1.2)
