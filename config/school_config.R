@@ -4,7 +4,7 @@ school_config <- list(
   team_code = "OSU",
   # Additional school-code markers used in TrackMan team columns (optional).
   # These are checked alongside team_code during allowed-player verification.
-  team_code_markers = c("OKL_CPR", "OSU"),
+  team_code_markers = c("OKL_CPR", "OSU", "OKL_COW"),
   allowed_pitchers = c(
   "Wentworth, TP",
   "LeBlanc, Bryce",
