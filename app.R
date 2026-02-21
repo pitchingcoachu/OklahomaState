@@ -124,6 +124,41 @@ ZONE_RIGHT <- 0.83
 ZONE_BOTTOM <- 1.5
 ZONE_TOP <- 3.5
 
+zone_nine_square_layers <- function(color = "black", linewidth = 0.5, alpha = 1) {
+  dx <- (ZONE_RIGHT - ZONE_LEFT) / 3
+  dy <- (ZONE_TOP - ZONE_BOTTOM) / 3
+  grid_vertical <- data.frame(
+    x = c(ZONE_LEFT + dx, ZONE_LEFT + 2 * dx),
+    xend = c(ZONE_LEFT + dx, ZONE_LEFT + 2 * dx),
+    y = ZONE_BOTTOM,
+    yend = ZONE_TOP
+  )
+  grid_horizontal <- data.frame(
+    x = ZONE_LEFT,
+    xend = ZONE_RIGHT,
+    y = c(ZONE_BOTTOM + dy, ZONE_BOTTOM + 2 * dy),
+    yend = c(ZONE_BOTTOM + dy, ZONE_BOTTOM + 2 * dy)
+  )
+  list(
+    geom_segment(
+      data = grid_vertical,
+      aes(x = x, xend = xend, y = y, yend = yend),
+      inherit.aes = FALSE,
+      color = color,
+      linewidth = linewidth,
+      alpha = alpha
+    ),
+    geom_segment(
+      data = grid_horizontal,
+      aes(x = x, xend = xend, y = y, yend = yend),
+      inherit.aes = FALSE,
+      color = color,
+      linewidth = linewidth,
+      alpha = alpha
+    )
+  )
+}
+
 # Frequency (keep multi-color)
 heat_pal_freq <- function(n = HEAT_BINS) colorRampPalette(
   c("white","pink","red")
@@ -2616,6 +2651,24 @@ sanitize_for_dt <- function(dfx) {
   dfx
 }
 
+# Use half-up rounding for displayed metrics to avoid banker's rounding drift.
+round_half_up <- function(x, digits = 0) {
+  x <- suppressWarnings(as.numeric(x))
+  scale <- 10^digits
+  sign(x) * floor(abs(x) * scale + 0.5 + 1e-12) / scale
+}
+
+fmt_pct_ratio <- function(num, den, digits = 1) {
+  num <- suppressWarnings(as.numeric(num))
+  den <- suppressWarnings(as.numeric(den))
+  ok <- is.finite(num) & is.finite(den) & den > 0
+  out <- rep("", max(length(num), length(den)))
+  if (!any(ok)) return(out)
+  val <- 100 * num / den
+  out[ok] <- paste0(format(round_half_up(val[ok], digits), nsmall = digits, trim = TRUE), "%")
+  out
+}
+
 format_decimal_columns <- function(df) {
   if (!is.data.frame(df) || !nrow(df)) return(df)
 
@@ -2643,7 +2696,7 @@ format_decimal_columns <- function(df) {
     scale100 <- if (all(is.na(v) | v <= 1.5, na.rm = TRUE)) 100 else 1
     sapply(v, function(val) {
       if (!is.finite(val)) return("")
-      paste0(round(val * scale100, 1), "%")
+      paste0(format(round_half_up(val * scale100, 1), nsmall = 1, trim = TRUE), "%")
     }, USE.NAMES = FALSE)
   }
 
@@ -2774,7 +2827,7 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
   })
 }
 
-datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, default_visible = names(df), mode = NULL, enable_colors = TRUE) {
+datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, default_visible = names(df), mode = NULL, enable_colors = TRUE, pin_all_row = FALSE, pin_col = "Player") {
   # Enhanced error handling wrapper with validation
   tryCatch({
     # Validate input before processing
@@ -2784,6 +2837,11 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     df <- sanitize_for_dt(df)
     df <- format_decimal_columns(df)
+    
+    if (isTRUE(pin_all_row) && pin_col %in% names(df)) {
+      pin_vals <- toupper(trimws(as.character(df[[pin_col]])))
+      df[["..pin_all"]] <- ifelse(pin_vals == "ALL", 0L, 1L)
+    }
     
     # Wrap blank_ea_except_all in tryCatch to handle column mismatches gracefully
     df <- tryCatch({
@@ -2807,6 +2865,10 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     if (length(hide_idx)) {
       defs <- c(defs, list(list(visible = FALSE, targets = hide_idx)))
     }
+    pin_idx <- which(names(df) == "..pin_all") - 1
+    if (length(pin_idx)) {
+      defs <- c(defs, list(list(visible = FALSE, targets = pin_idx, searchable = FALSE)))
+    }
     idx_hash <- which(names(df) == "#") - 1
     if (length(idx_hash)) {
       defs <- c(defs, list(list(
@@ -2819,34 +2881,46 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     build_dt <- function(data) {
       data <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
+      opts <- list(
+        dom           = "Bfrtip",
+        buttons       = list(
+          "pageLength",
+          list(extend = "colvis", text = "Columns", columns = colvis_idx, postfixButtons = list("colvisRestore"))
+        ),
+        ordering      = TRUE,
+        orderMulti    = TRUE,
+        orderClasses  = TRUE,
+        colReorder    = TRUE,
+        fixedHeader   = TRUE,
+        stateSave     = remember,
+        stateDuration = -1,
+        pageLength    = 10,
+        autoWidth     = FALSE,    # Changed from TRUE - lets DataTables calculate proper widths
+        scrollX       = TRUE,      # Enable horizontal scrolling
+        scrollCollapse = TRUE,     # Allow scroll container to collapse
+        columnDefs    = defs
+      )
+      if (length(pin_idx)) {
+        opts$orderFixed <- list(pre = list(list(pin_idx[[1]], "asc")))
+      }
       DT::datatable(
         data,
         rownames   = FALSE,
         extensions = c("Buttons","ColReorder","FixedHeader"),
         escape     = FALSE,
-        options = list(
-          dom           = "Bfrtip",
-          buttons       = list(
-            "pageLength",
-            list(extend = "colvis", text = "Columns", columns = colvis_idx, postfixButtons = list("colvisRestore"))
-          ),
-          ordering      = TRUE,
-          orderMulti    = TRUE,
-          orderClasses  = TRUE,
-          colReorder    = TRUE,
-          fixedHeader   = TRUE,
-          stateSave     = remember,
-          stateDuration = -1,
-          pageLength    = 10,
-          autoWidth     = FALSE,    # Changed from TRUE - lets DataTables calculate proper widths
-          scrollX       = TRUE,      # Enable horizontal scrolling
-          scrollCollapse = TRUE,     # Allow scroll container to collapse
-          columnDefs    = defs
-        )
+        options = opts
       )
     }
     
     dt <- build_dt(df)
+    if (isTRUE(pin_all_row) && pin_col %in% names(df)) {
+      dt <- dt %>%
+        DT::formatStyle(
+          pin_col,
+          target = "row",
+          fontWeight = DT::styleEqual("All", "700")
+        )
+    }
     
     color_modes <- c("Process","Live","Results","Bullpen")
     if (identical(mode, "Usage")) {
@@ -3222,8 +3296,7 @@ get_process_thresholds <- function(column_name, pitch_type) {
   ifelse(is.finite(den) & den != 0, num/den, NA_real_)
 }
 .s_fmt_pct1 <- function(num, den) {
-  p <- .s_safe_div(num, den)
-  ifelse(is.finite(p), paste0(round(100*p, 1), "%"), "")
+  fmt_pct_ratio(num, den, digits = 1)
 }
 .s_ip_fmt <- function(ip_num) {
   if (!is.finite(ip_num)) return(NA_character_)
@@ -3476,7 +3549,7 @@ make_session_logs_table <- function(df) {
           d$PlateLocHeight>= zb  & d$PlateLocHeight<= zt, 1.47,
         ifelse(
           d$PlateLocSide >= -1.5 & d$PlateLocSide <= 1.5 &
-            d$PlateLocHeight>= (2.65 - 1.5) & d$PlateLocHeight <= (2.65 + 1.5),
+            d$PlateLocHeight>= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & d$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
           0.73, 0
         )
       )
@@ -3517,7 +3590,7 @@ make_session_logs_table <- function(df) {
         ),
         `Comp%`  = .s_safe_div(
           sum(d$PlateLocSide >= -1.5 & d$PlateLocSide <= 1.5 &
-                d$PlateLocHeight >= (2.65 - 1.5) & d$PlateLocHeight <= (2.65 + 1.5), na.rm = TRUE),
+                d$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & d$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5), na.rm = TRUE),
           nrow(d)
         ),
         `Strike%`= .s_safe_div(
@@ -3572,7 +3645,7 @@ assign_where <- function(vec, cond, value) {
 inzone_label <- function(side, height) {
   comp   <- !is.na(side) & !is.na(height) &
     side >= -1.5 & side <= 1.5 &
-    height >= (2.65 - 1.5) & height <= (2.65 + 1.5)
+    height >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & height <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
   inzone <- !is.na(side) & !is.na(height) &
     side >= ZONE_LEFT & side <= ZONE_RIGHT &
     height >= ZONE_BOTTOM & height <= ZONE_TOP
@@ -3589,7 +3662,8 @@ fmt_rate3 <- function(x) {
 fmt_num2  <- function(x) ifelse(is.finite(x), sprintf("%.2f", x), "")
 fmt_pct1  <- function(num, den) {
   num <- suppressWarnings(as.numeric(num)); den <- suppressWarnings(as.numeric(den))
-  if (is.finite(den) && den > 0 && is.finite(num)) paste0(round(100*num/den, 1), "%") else ""
+  out <- fmt_pct_ratio(num, den, digits = 1)
+  if (length(out)) out[[1]] else ""
 }
 
 make_hover_tt <- function(df) {
@@ -3898,6 +3972,26 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
         pitch_type = pt
       )
     }))
+    zone_dx <- (ZONE_RIGHT - ZONE_LEFT) / 3
+    zone_dy <- (ZONE_TOP - ZONE_BOTTOM) / 3
+    strike_zone_grid_all <- do.call(rbind, lapply(pitch_types, function(pt) {
+      rbind(
+        data.frame(
+          x = c(ZONE_LEFT + zone_dx, ZONE_LEFT + 2 * zone_dx),
+          xend = c(ZONE_LEFT + zone_dx, ZONE_LEFT + 2 * zone_dx),
+          y = ZONE_BOTTOM,
+          yend = ZONE_TOP,
+          pitch_type = pt
+        ),
+        data.frame(
+          x = ZONE_LEFT,
+          xend = ZONE_RIGHT,
+          y = c(ZONE_BOTTOM + zone_dy, ZONE_BOTTOM + 2 * zone_dy),
+          yend = c(ZONE_BOTTOM + zone_dy, ZONE_BOTTOM + 2 * zone_dy),
+          pitch_type = pt
+        )
+      )
+    }))
     
     home_plate_all <- do.call(rbind, lapply(pitch_types, function(pt) {
       data.frame(
@@ -3929,6 +4023,13 @@ create_qp_locations_plot <- function(data, count_state, pitcher_hand, batter_han
       geom_rect(data = strike_zone_all, 
                 aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = line_col, linewidth = 1) +
+      geom_segment(
+        data = strike_zone_grid_all,
+        aes(x = x, xend = xend, y = y, yend = yend),
+        inherit.aes = FALSE,
+        color = line_col,
+        linewidth = 0.5
+      ) +
       # Add pitched balls with interactive tooltips and pitch type colors
       {if (nrow(state_data_with_result) > 0) {
         ggiraph::geom_point_interactive(
@@ -4280,8 +4381,8 @@ ZONE_TOP    <-  3.6
 # Competitive rectangle (same as your dashed box)
 COMP_LEFT   <- -1.5
 COMP_RIGHT  <-  1.5
-COMP_BOTTOM <-  2.65 - 1.5   # 1.15
-COMP_TOP    <-  2.65 + 1.5   # 4.15
+COMP_BOTTOM <-  ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5
+COMP_TOP    <-  ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5
 
 # Map (Balls, Strikes) to Ahead / Even / Behind like your count filter
 count_state_vec <- function(b, s) {
@@ -4532,6 +4633,12 @@ session_cols_for_mode <- function(dark_on = FALSE) {
 # Filters
 # ---- Filters: Zone & In-Zone ----
 
+pitching_zone_location_choices <- c(
+  "All",
+  "Upper Half", "Bottom Half", "Glove Side Half", "Arm Side Half",
+  "Upper 3rd", "Bottom 3rd", "Glove Side 3rd", "Arm Side 3rd"
+)
+
 # Multi-select halves/thirds with INTERSECTION logic, bounded to the strike zone
 # ---- Filters: Zone bands that extend beyond the zone ----
 # Halves/Thirds act as threshold lines:
@@ -4539,10 +4646,10 @@ session_cols_for_mode <- function(dark_on = FALSE) {
 #   - Bottom Half     => y <= mid_y      (and below the zone)
 #   - Upper 3rd       => y >= B + 2*dy   (and above the zone)
 #   - Bottom 3rd      => y <= B + dy     (and below the zone)
-#   - Left Half       => x <= mid_x      (and left of the zone)
-#   - Right Half      => x >= mid_x      (and right of the zone)
-#   - Left 3rd        => x <= L + dx     (and left of the zone)
-#   - Right 3rd       => x >= L + 2*dx   (and right of the zone)
+#   - Glove Side Half => x <= mid_x for RHP, x >= mid_x for LHP
+#   - Arm Side Half   => x >= mid_x for RHP, x <= mid_x for LHP
+#   - Glove Side 3rd  => x <= L + dx for RHP, x >= L + 2*dx for LHP
+#   - Arm Side 3rd    => x >= L + 2*dx for RHP, x <= L + dx for LHP
 # Multiple selections are ANDed together (intersection).
 enforce_zone <- function(df, choice) {
   # Pass-through if nothing picked or "All"
@@ -4567,6 +4674,12 @@ enforce_zone <- function(df, choice) {
   mask_vert <- rep(TRUE, length(x))
   mask_horz <- rep(TRUE, length(x))
   
+  # Handedness per pitch for glove/arm-side mapping (default unknown to right-handed mapping)
+  throws_vec <- if ("PitcherThrows" %in% names(df)) as.character(df$PitcherThrows) else rep(NA_character_, length(x))
+  throws_norm <- toupper(substr(trimws(throws_vec), 1, 1))
+  is_lefty <- throws_norm == "L"
+  ifelse_hand <- function(left_cond, right_cond) ifelse(is_lefty, left_cond, right_cond)
+  
   # Apply each token as a threshold restriction
   for (tok in choice) {
     if (tok %in% c("Upper Half", "Bottom Half", "Upper 3rd", "Bottom 3rd")) {
@@ -4577,12 +4690,22 @@ enforce_zone <- function(df, choice) {
                      "Bottom 3rd"  = (y <= (B + dy))
       )
       mask_vert <- mask_vert & cond
-    } else if (tok %in% c("Left Half", "Right Half", "Left 3rd", "Right 3rd")) {
+    } else if (tok %in% c(
+      "Left Half", "Right Half", "Left 3rd", "Right 3rd",
+      "Glove Side Half", "Arm Side Half", "Glove Side 3rd", "Arm Side 3rd",
+      "Glove Side", "Arm Side"
+    )) {
       cond <- switch(tok,
                      "Left Half"  = (x <= mid_x),
                      "Right Half" = (x >= mid_x),
                      "Left 3rd"   = (x <= (L + dx)),
-                     "Right 3rd"  = (x >= (L + 2*dx))
+                     "Right 3rd"  = (x >= (L + 2*dx)),
+                     "Glove Side Half" = ifelse_hand(x >= mid_x, x <= mid_x),
+                     "Arm Side Half"   = ifelse_hand(x <= mid_x, x >= mid_x),
+                     "Glove Side 3rd"  = ifelse_hand(x >= (L + 2*dx), x <= (L + dx)),
+                     "Arm Side 3rd"    = ifelse_hand(x <= (L + dx), x >= (L + 2*dx)),
+                     "Glove Side"      = ifelse_hand(x >= mid_x, x <= mid_x),
+                     "Arm Side"        = ifelse_hand(x <= mid_x, x >= mid_x)
       )
       mask_horz <- mask_horz & cond
     } else {
@@ -4612,7 +4735,7 @@ enforce_inzone <- function(df, choice) {
     df[!in_zone, , drop = FALSE]
   } else if (identical(choice, "Competitive")) {
     comp <- (x >= -1.5 & x <= 1.5 &
-               y >= (2.65 - 1.5) & y <= (2.65 + 1.5))
+               y >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & y <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5))
     df[comp, , drop = FALSE]
   } else {
     df
@@ -4966,6 +5089,18 @@ usage_by_type <- function(df) {
 library(readr)
 library(stringr)   # explicit, even though tidyverse includes it
 
+# Startup timing checkpoints for deploy-time diagnostics.
+startup_time_origin <- Sys.time()
+startup_time_last <- startup_time_origin
+log_startup_timing <- function(label) {
+  now <- Sys.time()
+  step_secs <- as.numeric(difftime(now, startup_time_last, units = "secs"))
+  total_secs <- as.numeric(difftime(now, startup_time_origin, units = "secs"))
+  message(sprintf("⏱️ [startup] %s | step=%.2fs total=%.2fs", label, step_secs, total_secs))
+  startup_time_last <<- now
+}
+log_startup_timing("Begin data import")
+
 # Point to the app's local data folder (works locally & on shinyapps.io)
 data_parent <- normalizePath(file.path(getwd(), "data"), mustWork = TRUE)
 
@@ -4977,6 +5112,7 @@ all_csvs <- list.files(
   full.names = TRUE
 )
 all_csvs <- all_csvs[ grepl("([/\\\\]practice[/\\\\])|([/\\\\]v3[/\\\\])", tolower(all_csvs)) ]
+log_startup_timing(sprintf("Discovered %d practice/v3 CSV files", length(all_csvs)))
 
 if (!length(all_csvs)) stop("No CSVs found under: ", data_parent)
 
@@ -5253,6 +5389,7 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
 
 
 pitch_data <- purrr::map_dfr(all_csvs, read_one)
+log_startup_timing(sprintf("Read %d CSV files into pitch_data (%d rows)", length(all_csvs), nrow(pitch_data)))
 
 # Ensure required columns exist since downstream code expects them
 # ------ add to need_cols ------
@@ -5318,6 +5455,7 @@ pitch_data <- pitch_data %>%
   ) %>%
   dplyr::filter(!is.na(TaggedPitchType) & tolower(TaggedPitchType) != "undefined") %>%
   force_pitch_levels()
+log_startup_timing(sprintf("Completed type normalization/filtering (%d rows)", nrow(pitch_data)))
 
 # ---- Attach Cloudinary video URLs when available ----
 video_map_path <- file.path(data_parent, "video_map.csv")
@@ -5395,12 +5533,15 @@ if (length(video_maps) > 0) {
     }
   }
 }
+log_startup_timing("Completed video map merge/attachment")
 
 pitch_data <- ensure_pitch_keys(pitch_data)
+log_startup_timing("Computed/validated PitchKey values")
 rows_before_dedupe <- nrow(pitch_data)
 pitch_data <- deduplicate_pitch_rows(pitch_data)
 rows_after_dedupe <- nrow(pitch_data)
 rows_removed_dedupe <- rows_before_dedupe - rows_after_dedupe
+log_startup_timing(sprintf("Deduplicated pitch rows (removed=%d)", rows_removed_dedupe))
 
 # Friendly load message
 counts <- table(pitch_data$SessionType, useNA = "no")
@@ -5426,6 +5567,7 @@ lookup_table <- if (file.exists("lookup_table.csv")) {
 pitch_data <- dplyr::left_join(pitch_data, lookup_table, by = "Pitcher") %>%
   dplyr::mutate(Email = dplyr::coalesce(Email, Email_lookup)) %>%
   dplyr::select(-Email_lookup)
+log_startup_timing("Joined lookup_table and finalized Email")
 
 
 # (keep your name_map construction the same)
@@ -5596,48 +5738,14 @@ ALLOWED_CAMPERS <- school_setting("allowed_campers", c(
 # NEW: normalize for case, spaces, punctuation (so "D.J." == "DJ")
 norm_name_ci <- function(x) gsub("[^a-z]", "", tolower(trimws(as.character(x))))
 
-school_marker_tokens <- function() {
-  extra <- school_setting("team_code_markers", character(0))
-  toks <- unique(toupper(trimws(c(TEAM_CODE, school_display_name, extra))))
-  toks[nzchar(toks)]
-}
-
-row_matches_school_markers <- function(df, cols, tokens = school_marker_tokens()) {
-  cols <- intersect(cols, names(df))
-  if (!length(cols) || !length(tokens) || !nrow(df)) return(rep(FALSE, nrow(df)))
-  out <- rep(FALSE, nrow(df))
-  tokens <- toupper(trimws(as.character(tokens)))
-  tokens <- unique(tokens[nzchar(tokens)])
-  for (col in cols) {
-    vals <- toupper(trimws(as.character(df[[col]])))
-    hit <- vals %in% tokens
-    out <- out | hit
-  }
-  out
-}
-
 live_bp_mask <- function(df) {
   if (!nrow(df)) return(logical(0))
-  is_live <- as.character(df$SessionType) == "Live"
-  p_cols <- intersect(c("PitcherTeam", "PitcherTeamCode", "PitcherTeamForeignID"), names(df))
-  b_cols <- intersect(c("BatterTeam", "BatterTeamCode", "BatterTeamForeignID"), names(df))
-  if (!length(p_cols)) p_cols <- intersect(c("HomeTeam", "AwayTeam", "HomeTeamForeignID", "AwayTeamForeignID"), names(df))
-  if (!length(b_cols)) b_cols <- intersect(c("HomeTeam", "AwayTeam", "HomeTeamForeignID", "AwayTeamForeignID"), names(df))
-  p_mark <- row_matches_school_markers(df, p_cols)
-  b_mark <- row_matches_school_markers(df, b_cols)
-  is_live & p_mark & b_mark
+  as.character(df$SessionType) == "Live"
 }
 
 season_mask <- function(df) {
   if (!nrow(df)) return(logical(0))
-  is_live <- as.character(df$SessionType) == "Live"
-  p_cols <- intersect(c("PitcherTeam", "PitcherTeamCode", "PitcherTeamForeignID"), names(df))
-  b_cols <- intersect(c("BatterTeam", "BatterTeamCode", "BatterTeamForeignID"), names(df))
-  if (!length(p_cols)) p_cols <- intersect(c("HomeTeam", "AwayTeam", "HomeTeamForeignID", "AwayTeamForeignID"), names(df))
-  if (!length(b_cols)) b_cols <- intersect(c("HomeTeam", "AwayTeam", "HomeTeamForeignID", "AwayTeamForeignID"), names(df))
-  p_mark <- row_matches_school_markers(df, p_cols)
-  b_mark <- row_matches_school_markers(df, b_cols)
-  is_live & xor(p_mark, b_mark)
+  as.character(df$SessionType) == "Live"
 }
 
 normalize_session_filter_value <- function(session_value) {
@@ -5668,69 +5776,7 @@ session_type_choices <- function() {
   c("Season", "Bullpen", "Live BP" = "Live", "All")
 }
 
-verify_allowed_players_by_school <- function(df, player_col, allowed_names, label = "players") {
-  allowed_names <- unique(as.character(allowed_names))
-  allowed_names <- allowed_names[nzchar(trimws(allowed_names))]
-  if (!length(allowed_names)) return(allowed_names)
-  if (!player_col %in% names(df)) return(character(0))
-
-  marker_cols <- intersect(c(
-    "PitcherTeam", "BatterTeam", "CatcherTeam",
-    "HomeTeam", "AwayTeam",
-    "HomeTeamForeignID", "AwayTeamForeignID", "GameForeignID"
-  ), names(df))
-  if (!length(marker_cols)) {
-    message("No team marker columns found for ", label, " verification; keeping configured list as-is.")
-    return(allowed_names)
-  }
-
-  tokens <- school_marker_tokens()
-  if (!length(tokens)) {
-    message("No school marker tokens configured; keeping configured ", label, " list as-is.")
-    return(allowed_names)
-  }
-
-  allowed_norm <- unique(norm_name_ci(allowed_names))
-  dat <- df %>%
-    dplyr::mutate(.player_norm = norm_name_ci(.data[[player_col]])) %>%
-    dplyr::filter(.player_norm %in% allowed_norm)
-  if (!nrow(dat)) return(character(0))
-
-  row_has_school <- rep(FALSE, nrow(dat))
-  tokens <- toupper(trimws(as.character(tokens)))
-  tokens <- unique(tokens[nzchar(tokens)])
-  for (col in marker_cols) {
-    vals <- toupper(trimws(as.character(dat[[col]])))
-    col_has <- vals %in% tokens
-    row_has_school <- row_has_school | col_has
-  }
-
-  verified_norm <- unique(dat$.player_norm[row_has_school])
-  verified <- allowed_names[norm_name_ci(allowed_names) %in% verified_norm]
-  verified <- unique(verified)
-
-  dropped <- setdiff(allowed_names, verified)
-  if (length(dropped)) {
-    message(
-      "School-code verification removed ", length(dropped),
-      " configured ", label, " with no matching school marker rows."
-    )
-  }
-  verified
-}
-
-# Enforce team-code evidence for configured school player lists.
-verification_pool_v3 <- pitch_data %>%
-  dplyr::filter(
-    SessionType == "Live" |
-      grepl("[/\\\\]v3[/\\\\]", tolower(as.character(SourceFile)))
-  )
-ALLOWED_PITCHERS <- verify_allowed_players_by_school(
-  verification_pool_v3, player_col = "Pitcher", allowed_names = ALLOWED_PITCHERS, label = "pitchers"
-)
-ALLOWED_HITTERS <- verify_allowed_players_by_school(
-  verification_pool_v3, player_col = "Batter", allowed_names = ALLOWED_HITTERS, label = "hitters"
-)
+# Marker-based school verification removed: keep configured allowed player lists as-is.
 
 # Keep the full dataset for Hitting & global refs
 # but build a PITCHING-ONLY copy that is filtered to the whitelist
@@ -5871,7 +5917,8 @@ compute_usage_by_count <- function(df, original_df = NULL) {
   
   pct_string <- function(num, den) {
     if (is.na(den) || den <= 0) return("0.0%")
-    paste0(round(100 * num / den, 1), "%")
+    out <- fmt_pct_ratio(num, den, digits = 1)
+    if (length(out)) out[[1]] else "0.0%"
   }
   
   calc_usage <- function(dfi) {
@@ -6214,9 +6261,7 @@ compute_process_results <- function(df, mode = "All") {
 safe_pct <- function(num, den) {
   num <- suppressWarnings(as.numeric(num))
   den <- suppressWarnings(as.numeric(den))
-  ifelse(is.finite(den) & den > 0 & is.finite(num),
-         paste0(round(100 * num / den, 1), "%"),
-         "")
+  fmt_pct_ratio(num, den, digits = 1)
 }
 
 count_state_mask <- function(balls, strikes, states) {
@@ -6828,7 +6873,7 @@ pitch_ui <- function(show_header = FALSE) {
         selectInput(
           "sessionType", "Session Type:",
           choices = session_type_choices(),
-          selected = "Season"
+          selected = "All"
         ),
         selectInput(
           "withVideo", "With Video:",
@@ -6863,9 +6908,7 @@ pitch_ui <- function(show_header = FALSE) {
         ),
         selectInput(
           "zoneLoc", "Zone Location:",
-          choices = c("All",
-                      "Upper Half","Bottom Half","Left Half","Right Half",
-                      "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+          choices = pitching_zone_location_choices,
           selected = "All",
           multiple = TRUE
         ),
@@ -7374,9 +7417,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
         ),
         selectInput(
           ns("zoneLoc"), "Zone Location:",
-          choices = c("All",
-                      "Upper Half","Bottom Half","Left Half","Right Half",
-                      "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+          choices = pitching_zone_location_choices,
           selected = "All",
           multiple = TRUE
         ),
@@ -7669,7 +7710,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         }
         if ("Session Type" %in% sel) {
           out <- c(out, list(
-            selectInput(ns(paste0("cell_session_", cell_id)), "Session Type:", choices = session_type_choices(), selected = "Season")
+            selectInput(ns(paste0("cell_session_", cell_id)), "Session Type:", choices = session_type_choices(), selected = "All")
           ))
         }
         if ("Pitch Types" %in% sel) {
@@ -7902,15 +7943,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         x=c(-0.75,0.75,0.75,0.00,-0.75),
         y=c(1.05,1.05,1.15,1.25,1.15)-0.5
       )
-      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
-      list(
+      c(list(
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col),
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col, linetype = "dashed"),
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col)
-      )
+      ), zone_nine_square_layers(color = line_col))
     }
     
     # ---------- AB Report: date choices + default ----------
@@ -8657,7 +8698,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75),
                          y=c(1.05,1.05,1.15,1.25,1.15)-0.5)
-      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       
       df_known <- dplyr::filter(df_i, !is.na(Result))
@@ -8669,6 +8710,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                   fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col) +
+        zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight,
@@ -10222,7 +10264,7 @@ mod_catch_ui <- function(id, show_header = FALSE) {
     sidebarLayout(
       sidebarPanel(
         # Exact same main sidebar as Pitching, but with Catcher selector
-        selectInput(ns("sessionType"), "Session Type:", choices = session_type_choices(), selected = "Season"),
+        selectInput(ns("sessionType"), "Session Type:", choices = session_type_choices(), selected = "All"),
         selectInput(ns("catcher"), "Select Catcher:", choices = c("All" = "All", catcher_map), selected = "All"),
         selectInput(
           ns("teamType"), "Team:",
@@ -10238,9 +10280,7 @@ mod_catch_ui <- function(id, show_header = FALSE) {
                     choices = c("All", levels(pitch_data$TaggedPitchType)), selected = "All", multiple = TRUE),
         selectInput(
           ns("zoneLoc"), "Zone Location:",
-          choices = c("All",
-                      "Upper Half","Bottom Half","Left Half","Right Half",
-                      "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+          choices = pitching_zone_location_choices,
           selected = "All",
           multiple = TRUE
         ),
@@ -11088,7 +11128,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       
       # Overlays (same geometry you use elsewhere)
       home <- data.frame(x = c(-0.75,0.75,0.75,0.00,-0.75), y = c(1.05,1.05,1.15,1.25,1.15) - 0.5)
-      cz   <- data.frame(xmin = -1.5, xmax =  1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz   <- data.frame(xmin = -1.5, xmax =  1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz   <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       
       cols <- .safe_heat_cols(256)
@@ -11102,6 +11142,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
                   fill = NA, color = line_col, linetype = "dashed", linewidth = 0.6) +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col, linewidth = 0.8) +
+        zone_nine_square_layers(color = line_col, linewidth = 0.45) +
         coord_fixed(ratio = 1, xlim = c(lims[1], lims[2]), ylim = c(lims[3], lims[4])) +
         labs(title = "Called-Strike%", x = NULL, y = NULL) +
         theme_void() +
@@ -11129,7 +11170,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
                                    Result = factor(compute_result(PitchCall, PlayResult), levels = result_levels))
       
       home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75), y=c(1.05,1.05,1.15,1.25,1.15)-0.5)
-      cz   <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz   <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz   <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       
       df_known <- dplyr::filter(df_i, !is.na(Result))
@@ -11139,6 +11180,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col) +
+        zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight, color = TaggedPitchType, fill = TaggedPitchType, tooltip = tt, data_id = rid),
@@ -11187,9 +11229,7 @@ mod_camps_ui <- function(id, show_header = FALSE) {
         selectInput(ns("pitchType"),  "Pitch Type:",    choices = "All", selected = "All", multiple = TRUE),
         selectInput(
           ns("zoneLoc"), "Zone Location:",
-          choices = c("All",
-                      "Upper Half","Bottom Half","Left Half","Right Half",
-                      "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+          choices = pitching_zone_location_choices,
           selected = "All", multiple = TRUE
         ),
         selectInput(ns("inZone"),     "In Zone:",       choices = c("All","Yes","No","Competitive"), selected = "All"),
@@ -12033,7 +12073,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       
       home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75),
                          y=c(1.05,1.05,1.15,1.25,1.15)-0.5)
-      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       
       p <- ggplot() +
@@ -12042,6 +12082,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
                   fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col) +
+        zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df,
           aes(PlateLocSide, PlateLocHeight, color = TaggedPitchType,
@@ -12074,7 +12115,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       build_row <- function(df) {
         safe_pct <- function(num, den) {
           num <- suppressWarnings(as.numeric(num)); den <- suppressWarnings(as.numeric(den))
-          ifelse(is.finite(den) & den > 0 & is.finite(num), paste0(round(100*num/den, 1), "%"), "")
+          fmt_pct_ratio(num, den, digits = 1)
         }
         scores <- ifelse(
           df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
@@ -12578,7 +12619,7 @@ mod_leader_ui <- function(id, show_header = FALSE) {
         selectInput(ns("teamType"), "Team:", choices = TEAM_CHOICES, selected = "All"),
         
         # --- Common filters (apply to all domains) ---
-        selectInput(ns("sessionType"), "Session Type:", choices = session_type_choices(), selected = "Season"),
+        selectInput(ns("sessionType"), "Session Type:", choices = session_type_choices(), selected = "All"),
         dateRangeInput(ns("dates"), "Date Range:",
                        start = max(pitch_data$Date, na.rm = TRUE),
                        end   = max(pitch_data$Date, na.rm = TRUE),
@@ -12587,9 +12628,7 @@ mod_leader_ui <- function(id, show_header = FALSE) {
         selectInput(ns("pitchType"),  "Pitch Type:",    choices = c("All", levels(pitch_data$TaggedPitchType)), selected = "All", multiple = TRUE),
         selectInput(
           ns("zoneLoc"), "Zone Location:",
-          choices = c("All",
-                      "Upper Half","Bottom Half","Left Half","Right Half",
-                      "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+          choices = pitching_zone_location_choices,
           selected = "All", multiple = TRUE
         ),
         selectInput(ns("inZone"),     "In Zone:",       choices = c("All","Yes","No","Competitive"), selected = "All"),
@@ -12899,6 +12938,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       
       df <- df %>% dplyr::filter(!is.na(.data[[player_col]]) & nzchar(.data[[player_col]]))
       by_player <- split(df, df[[player_col]])
+      by_player <- c(list(All = df), by_player)
       
       res_mode <- resolve_table_mode_global(input$lbMode, input$lbCustomCols)
       mode <- res_mode$mode
@@ -12919,7 +12959,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           }
         }
         
-        rows <- lapply(by_player, function(dfi) {
+        rows <- lapply(names(by_player), function(player_name) {
+          dfi <- by_player[[player_name]]
           all_ip <- ip_calculation(dfi)
           all_p <- nrow(dfi)
           # Completed BF calculation (shared)
@@ -12943,7 +12984,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           p_per_bf <- if (all_bf > 0) as.character(round(all_p / all_bf, 1)) else ""
           
           tibble::tibble(
-            Player = as.character(dfi[[player_col]][1]),
+            Player = player_name,
             IP = all_ip,
             P = all_p,
             BF = all_bf,
@@ -12971,7 +13012,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
             remember        = FALSE,
             default_visible = visible_set,
             mode            = "Raw Data",
-            enable_colors   = use_colors
+            enable_colors   = use_colors,
+            pin_all_row     = TRUE
           )
         }, error = function(e) {
           message("lbTable Raw Data error: ", conditionMessage(e))
@@ -12996,7 +13038,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           }
           safe_pct <- function(num, den) {
             num <- suppressWarnings(as.numeric(num)); den <- suppressWarnings(as.numeric(den))
-            out <- ifelse(is.finite(den) & den > 0 & is.finite(num), paste0(round(100*num/den, 1), "%"), "")
+            out <- fmt_pct_ratio(num, den, digits = 1)
             scalar_chr(out)
           }
           nz_mean_local <- function(x) {
@@ -13099,7 +13141,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         
         original_data <- if (identical(mode, "Usage")) filtered_lb_before_pitch_type() else NULL
         
-        rows <- lapply(by_player, function(dfi) {
+        rows <- lapply(names(by_player), function(player_name) {
+          dfi <- by_player[[player_name]]
           # Flatten any list-cols that break downstream summaries
           dfi <- dfi %>% dplyr::mutate(dplyr::across(where(is.list), ~unlist(.x)))
           base_row <- build_all_row(dfi)
@@ -13136,15 +13179,19 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
             }
           }
           out_row <- dplyr::bind_cols(
-            tibble::tibble(Player = as.character(dfi[[player_col]][1])),
+            tibble::tibble(Player = player_name),
             base_row,
             extras_all
           )
           if (identical(mode, "Usage")) {
-            player_val <- as.character(dfi[[player_col]][1])
-            original_player <- if (!is.null(original_data)) {
+            original_player <- if (is.null(original_data)) {
+              NULL
+            } else if (identical(player_name, "All")) {
+              original_data
+            } else {
+              player_val <- player_name
               original_data[original_data[[player_col]] == player_val, , drop = FALSE]
-            } else NULL
+            }
             usage_cols <- compute_usage_by_count(dfi, original_player) %>%
               dplyr::filter(tolower(PitchType) == "all") %>%
               dplyr::select(`0-0`,`Behind`,`Even`,`Ahead`,`<2K`,`2K`)
@@ -13220,7 +13267,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           lock            = "Player",
           remember        = FALSE,
           default_visible = intersect(visible_set, names(out_tbl)),
-          mode            = mode
+          mode            = mode,
+          pin_all_row     = TRUE
         )
       } # End of else block for normal modes
     }, server = FALSE)
@@ -13272,8 +13320,10 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       
       swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
       by_batter <- split(df, df$Batter)
+      by_batter <- c(list(All = df), by_batter)
       
-      results_rows <- lapply(by_batter, function(dfi) {
+      results_rows <- lapply(names(by_batter), function(player_name) {
+        dfi <- by_batter[[player_name]]
         # Terminal rows = completed PA for THIS batter
         is_term_i <- (
           (!is.na(dfi$PlayResult) & dfi$PlayResult != "Undefined") |
@@ -13336,7 +13386,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         }
         
         tibble::tibble(
-          Player = as.character(dfi$Batter[1]),
+          Player = player_name,
           PA  = PAt,
           AB  = ABt,
           AVG = safe_div(H_all, ABt),
@@ -13360,7 +13410,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       })
       
       # Swing Decisions rows per batter
-      sd_rows <- lapply(by_batter, function(dfi) {
+      sd_rows <- lapply(names(by_batter), function(player_name) {
+        dfi <- by_batter[[player_name]]
         inner_half <- 7 / 12
         mid_x <- (ZONE_LEFT + ZONE_RIGHT) / 2
         mid_y <- (ZONE_BOTTOM + ZONE_TOP) / 2
@@ -13423,7 +13474,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           dplyr::mutate(dplyr::across(dplyr::everything(), ~ ifelse(is.finite(.), round(.,1), NA_real_)))
         
         tibble::tibble(
-          Player = as.character(dfi$Batter[1])
+          Player = player_name
         ) %>% dplyr::bind_cols(sd_vals)
       })
       
@@ -13451,7 +13502,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           lock = "Player",
           remember = FALSE,
           default_visible = intersect(default_visible, names(out)),
-          enable_colors = FALSE
+          enable_colors = FALSE,
+          pin_all_row = TRUE
         ))
       }
       
@@ -13554,7 +13606,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         lock            = "Player",
         remember        = FALSE,
         default_visible = intersect(default_visible, names(out)),
-        enable_colors   = FALSE
+        enable_colors   = FALSE,
+        pin_all_row     = TRUE
       )
     }, server = FALSE)
     
@@ -13607,6 +13660,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       buckets_all <- inzone_label(df_all$PlateLocSide, df_all$PlateLocHeight)
       
       by_catcher <- split(seq_len(nrow(df_all)), df_all$Catcher)  # split by index for reuse
+      by_catcher <- c(list(All = seq_len(nrow(df_all))), by_catcher)
       
       rows <- lapply(names(by_catcher), function(name) {
         idx <- by_catcher[[name]]
@@ -13695,7 +13749,8 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
         lock            = "Player",
         remember        = TRUE,
         default_visible = intersect(default_visible, names(final)),
-        enable_colors   = FALSE
+        enable_colors   = FALSE,
+        pin_all_row     = TRUE
       )
     }, server = FALSE)
     
@@ -13740,7 +13795,7 @@ mod_comp_ui <- function(id, show_header = FALSE) {
               selectInput(
                 ns("cmpA_sessionType"), "Session Type:",
                 choices  = session_type_choices(),
-                selected = "Season"
+                selected = "All"
               ),
               dateRangeInput(
                 ns("cmpA_dates"), "Date Range:",
@@ -13814,9 +13869,7 @@ mod_comp_ui <- function(id, show_header = FALSE) {
               ),
               selectInput(
                 ns("cmpA_zone"),"Zone Location:",
-                choices = c("All",
-                            "Upper Half","Bottom Half","Left Half","Right Half",
-                            "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+                choices = pitching_zone_location_choices,
                 selected = "All",
                 multiple = TRUE
               ),
@@ -13845,7 +13898,7 @@ mod_comp_ui <- function(id, show_header = FALSE) {
               selectInput(
                 ns("cmpB_sessionType"), "Session Type:",
                 choices  = session_type_choices(),
-                selected = "Season"
+                selected = "All"
               ),
               dateRangeInput(
                 ns("cmpB_dates"), "Date Range:",
@@ -13918,9 +13971,7 @@ mod_comp_ui <- function(id, show_header = FALSE) {
               ),
               selectInput(
                 ns("cmpB_zone"),"Zone Location:",
-                choices = c("All",
-                            "Upper Half","Bottom Half","Left Half","Right Half",
-                            "Upper 3rd","Bottom 3rd","Left 3rd","Right 3rd"),
+                choices = pitching_zone_location_choices,
                 selected = "All",
                 multiple = TRUE
               ),
@@ -14608,7 +14659,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         )
       home <- data.frame(x = c(-0.75,0.75,0.75,0.00,-0.75),
                          y = c(1.05,1.05,1.15,1.25,1.15) - 0.5)
-      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+      cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
       sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
       line_col <- if (dark_on) "#ffffff" else "black"
       df_known <- dplyr::filter(df_i, !is.na(Result))
@@ -14619,6 +14670,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
                   inherit.aes = FALSE, fill = NA, color = line_col, linetype = "dashed") +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   inherit.aes = FALSE, fill = NA, color = line_col) +
+        zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
           aes(PlateLocSide, PlateLocHeight,
@@ -15500,7 +15552,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP, 1.47,
           ifelse(
             df$PlateLocSide >= -1.5 & df$PlateLocSide <= 1.5 &
-              df$PlateLocHeight >= (2.65 - 1.5) & df$PlateLocHeight <= (2.65 + 1.5),
+              df$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & df$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
             0.73, 0
           )
         )
@@ -16400,8 +16452,10 @@ custom_reports_ui <- function(id) {
                      uiOutput(ns("multi_player_selectors"))
                    ),
                    selectInput(ns("report_rows"), "Rows:", choices = 1:15, selected = 1),
+                   uiOutput(ns("row_panel_notes_inputs")),
                    selectInput(ns("report_cols"), "Columns:", choices = 1:5, selected = 1),
                    checkboxInput(ns("use_global_dates"), "Apply one date range to all panels", value = FALSE),
+                   checkboxInput(ns("show_pitch_type_key"), "Show pitch type key", value = TRUE),
                    conditionalPanel(
                      sprintf("input['%s']", ns("use_global_dates")),
                      {
@@ -16561,6 +16615,12 @@ custom_reports_server <- function(id) {
       cr <- custom_reports_store()
       if (!nm %in% names(cr)) return()
       rep <- cr[[nm]]
+      if (!is.list(rep)) {
+        message("Skipping malformed saved report '", nm, "': expected list payload.")
+        return()
+      }
+      rep_cells <- rep$cells
+      if (!is.list(rep_cells)) rep_cells <- list()
       if (isTRUE(is_admin_local())) {
         updateCheckboxInput(session, "report_global", value = identical(rep$school_code, GLOBAL_SCOPE))
       }
@@ -16569,14 +16629,16 @@ custom_reports_server <- function(id) {
       loading_report(TRUE)
       
       # FIRST: Update current_cells with saved data (before UI changes)
-      update_reports_grid(rep$cells %||% list())
+      update_reports_grid(rep_cells)
       new_report_token(as.numeric(Sys.time()))
       
       # Also populate cell_titles from the loaded report
       titles <- list()
-      for (cell_id in names(rep$cells)) {
-        if (!is.null(rep$cells[[cell_id]]$title)) {
-          titles[[cell_id]] <- rep$cells[[cell_id]]$title
+      for (cell_id in names(rep_cells)) {
+        saved_cell <- rep_cells[[cell_id]]
+        if (!is.list(saved_cell)) next
+        if (!is.null(saved_cell$title)) {
+          titles[[cell_id]] <- saved_cell$title
         }
       }
       cell_titles(titles)
@@ -16591,6 +16653,7 @@ custom_reports_server <- function(id) {
       updateSelectInput(session, "report_rows", selected = rep$rows %||% 1)
       updateSelectInput(session, "report_cols", selected = rep$cols %||% 1)
       updateCheckboxInput(session, "use_global_dates", value = isTRUE(rep$use_global_dates))
+      updateCheckboxInput(session, "show_pitch_type_key", value = if (is.null(rep$show_pitch_type_key)) TRUE else isTRUE(rep$show_pitch_type_key))
       if (!is.null(rep$global_dates) && length(rep$global_dates) == 2) {
         updateDateRangeInput(session, "global_dates", start = rep$global_dates[1], end = rep$global_dates[2])
       }
@@ -16598,7 +16661,7 @@ custom_reports_server <- function(id) {
       rows <- rep$rows %||% 1
       cols <- rep$cols %||% 1
       scope <- rep$scope %||% "Single Player"
-      cells <- rep$cells %||% list()
+      cells <- rep_cells
 
       update_saved_state <- function() {
         for (r in seq_len(rows)) {
@@ -16618,10 +16681,21 @@ custom_reports_server <- function(id) {
           }
         }
         for (r in seq_len(rows)) {
+          note_val <- cells[[paste0("row_", r, "_panel_note")]] %||% ""
+          span_val <- cells[[paste0("row_", r, "_panel_note_span")]] %||% 1
+          span_val <- suppressWarnings(as.integer(span_val))
+          if (is.na(span_val) || span_val < 1) span_val <- 1
+          max_span <- max(1L, rows - r + 1L)
+          span_val <- min(span_val, max_span)
+          updateTextInput(session, paste0("row_panel_note_", r), value = note_val)
+          updateNumericInput(session, paste0("row_panel_note_span_", r), value = span_val, min = 1, max = max_span)
+        }
+        for (r in seq_len(rows)) {
           for (c in seq_len(cols)) {
             cell_id <- paste0("r", r, "c", c)
             saved_cell <- cells[[cell_id]]
             if (is.null(saved_cell)) next
+            if (!is.list(saved_cell)) next
             if (!is.null(saved_cell$type)) {
               updateSelectInput(session, paste0("cell_type_", cell_id), selected = saved_cell$type)
             }
@@ -16645,6 +16719,9 @@ custom_reports_server <- function(id) {
             }
             if (!is.null(saved_cell$filter_select)) {
               updateSelectizeInput(session, paste0("cell_filter_select_", cell_id), selected = saved_cell$filter_select)
+            }
+            if (!is.null(saved_cell$note_text)) {
+              updateTextAreaInput(session, paste0("cell_note_", cell_id), value = saved_cell$note_text)
             }
             if (!is.null(saved_cell$span) && length(saved_cell$span) == 1 && !is.na(saved_cell$span)) {
               updateNumericInput(session, paste0("cell_span_", cell_id), value = saved_cell$span)
@@ -16709,6 +16786,7 @@ custom_reports_server <- function(id) {
           for (c in seq_len(cols)) {
             cell_id <- paste0("r", r, "c", c)
             saved_cell <- cells[[cell_id]] %||% list()
+            if (!is.list(saved_cell)) saved_cell <- list()
             show_val <- saved_cell$show_controls
             if (is.null(show_val)) show_val <- TRUE
             updateCheckboxInput(session, paste0("cell_show_controls_", cell_id), value = show_val)
@@ -16751,6 +16829,81 @@ custom_reports_server <- function(id) {
         )
       })
     })
+
+    output$row_panel_notes_inputs <- renderUI({
+      rows <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows) || rows < 1) return(NULL)
+      inputs <- lapply(seq_len(rows), function(r) {
+        note_id <- paste0("row_panel_note_", r)
+        span_id <- paste0("row_panel_note_span_", r)
+        max_span <- max(1L, rows - r + 1L)
+        blur_id <- paste0("row_panel_note_blur_", r)
+        pending_id <- paste0("row_panel_note_pending_", r)
+
+        tagList(
+          textInput(
+            ns(note_id),
+            label = paste0("Row ", r, " Panel Notes"),
+            value = "",
+            placeholder = "Optional"
+          ),
+          tags$script(HTML(sprintf("
+            (function() {
+              var id = '%s';
+              var blurId = '%s';
+              var pendingId = '%s';
+              var el = document.getElementById(id);
+              if (!el) return;
+              el.removeEventListener('blur', el.__row_note_blur_listener__);
+              el.removeEventListener('input', el.__row_note_input_listener__);
+              var blurListener = function() {
+                Shiny.setInputValue(blurId, el.value, {priority: 'event'});
+              };
+              var inputListener = function() {
+                Shiny.setInputValue(pendingId, el.value, {priority: 'event'});
+              };
+              el.__row_note_blur_listener__ = blurListener;
+              el.__row_note_input_listener__ = inputListener;
+              el.addEventListener('blur', blurListener);
+              el.addEventListener('input', inputListener);
+              inputListener();
+            })();
+          ", ns(note_id), ns(blur_id), ns(pending_id)))),
+          numericInput(
+            ns(span_id),
+            label = paste0("Row ", r, " Note Covers Rows"),
+            value = 1,
+            min = 1,
+            max = max_span,
+            step = 1,
+            width = "100%"
+          )
+        )
+      })
+
+      tagList(
+        tags$hr(style = "margin-top:12px; margin-bottom:12px;"),
+        tags$strong("Row Panel Notes (optional)"),
+        tags$div(style = "height:8px;"),
+        inputs
+      )
+    })
+
+    observeEvent(input$report_rows, {
+      rows <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows) || rows < 1) return()
+      cells <- isolate(current_cells())
+      for (r in seq_len(rows)) {
+        note_val <- cells[[paste0("row_", r, "_panel_note")]] %||% ""
+        span_val <- cells[[paste0("row_", r, "_panel_note_span")]] %||% 1
+        span_val <- suppressWarnings(as.integer(span_val))
+        if (is.na(span_val) || span_val < 1) span_val <- 1
+        max_span <- max(1L, rows - r + 1L)
+        span_val <- min(span_val, max_span)
+        updateTextInput(session, paste0("row_panel_note_", r), value = note_val)
+        updateNumericInput(session, paste0("row_panel_note_span_", r), value = span_val, min = 1, max = max_span)
+      }
+    }, ignoreInit = FALSE)
     
     # Header showing report title + players
     output$report_header <- renderUI({
@@ -16799,6 +16952,39 @@ custom_reports_server <- function(id) {
         )
       )
     })
+
+    stack_vertical_note <- function(txt) {
+      chars <- strsplit(txt %||% "", "", fixed = TRUE)[[1]]
+      chars <- ifelse(chars == " ", "\u00a0", chars)
+      tags$div(
+        class = "creport-row-note-text",
+        lapply(chars, function(ch) tags$div(htmltools::HTML(htmltools::htmlEscape(ch))))
+      )
+    }
+
+    flush_row_note_now <- function(row_num, value = NULL) {
+      rows_now <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows_now) || rows_now < 1 || row_num < 1 || row_num > rows_now) return(invisible(NULL))
+      pending_val <- isolate(input[[paste0("row_panel_note_pending_", row_num)]])
+      note_val <- if (!is.null(value)) value else if (!is.null(pending_val)) pending_val else isolate(input[[paste0("row_panel_note_", row_num)]])
+      if (is.null(note_val)) return(invisible(NULL))
+      cells <- isolate(current_cells())
+      cells[[paste0("row_", row_num, "_panel_note")]] <- note_val
+      current_cells(cells)
+    }
+
+    flush_row_note_span_now <- function(row_num, value = NULL) {
+      rows_now <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows_now) || rows_now < 1 || row_num < 1 || row_num > rows_now) return(invisible(NULL))
+      max_span <- max(1L, rows_now - row_num + 1L)
+      raw_span <- if (!is.null(value)) value else isolate(input[[paste0("row_panel_note_span_", row_num)]])
+      span_val <- suppressWarnings(as.integer(raw_span))
+      if (is.na(span_val) || span_val < 1) span_val <- 1L
+      span_val <- min(span_val, max_span)
+      cells <- isolate(current_cells())
+      cells[[paste0("row_", row_num, "_panel_note_span")]] <- span_val
+      current_cells(cells)
+    }
 
     observeEvent(input$download_report_pdf, {
       title_txt <- trimws(input$report_title %||% "")
@@ -16851,6 +17037,13 @@ custom_reports_server <- function(id) {
         showNotification("Please enter a report title.", type = "warning")
         return()
       }
+
+      rows_now <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows_now) || rows_now < 1) rows_now <- 1
+      for (r in seq_len(rows_now)) {
+        flush_row_note_now(r)
+        flush_row_note_span_now(r)
+      }
       
       # First, ensure all titles are synced from cell_titles to current_cells
       titles <- isolate(cell_titles())
@@ -16874,6 +17067,7 @@ custom_reports_server <- function(id) {
         rows = as.integer(input$report_rows),
         cols = as.integer(input$report_cols),
         use_global_dates = isTRUE(input$use_global_dates),
+        show_pitch_type_key = isTRUE(input$show_pitch_type_key),
         global_dates = input$global_dates,
         cells = cells,
         school_code = scope
@@ -16910,6 +17104,16 @@ custom_reports_server <- function(id) {
       updateTextInput(session, "report_subtitle", value = "")
       updateSelectInput(session, "saved_report", selected = "")
       updateCheckboxInput(session, "use_global_dates", value = FALSE)
+      updateCheckboxInput(session, "show_pitch_type_key", value = TRUE)
+      rows_now <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows_now) || rows_now < 1) rows_now <- 1
+      for (r in seq_len(rows_now)) {
+        max_span <- max(1L, rows_now - r + 1L)
+        updateTextInput(session, paste0("row_panel_note_", r), value = "")
+        updateNumericInput(session, paste0("row_panel_note_span_", r), value = 1, min = 1, max = max_span)
+        flush_row_note_now(r, value = "")
+        flush_row_note_span_now(r, value = 1)
+      }
       if (isTRUE(is_admin_local())) updateCheckboxInput(session, "report_global", value = FALSE)
 
       loading_report_handle <<- later::later(function() {
@@ -16960,24 +17164,8 @@ custom_reports_server <- function(id) {
       }
     })
 
-    show_report_pitch_legend <- reactive({
-      rows <- suppressWarnings(as.integer(input$report_rows))
-      cols <- suppressWarnings(as.integer(input$report_cols))
-      if (is.na(rows) || is.na(cols) || rows < 1 || cols < 1) return(TRUE)
-      cells <- current_cells()
-      for (r in seq_len(rows)) for (c in seq_len(cols)) {
-        cell_id <- paste0("r", r, "c", c)
-        settings_cell_id <- if (identical(input$report_scope, "Multi-Player") && r > 1) paste0("r1c", c) else cell_id
-        saved <- cells[[settings_cell_id]] %||% list()
-        tsel <- input[[paste0("cell_type_", settings_cell_id)]] %||% saved$type %||% ""
-        fsel <- input[[paste0("cell_filter_", settings_cell_id)]] %||% saved$filter %||% "Pitch Types"
-        if (identical(tsel, "Summary Table") && identical(fsel, "Pitch Types")) return(FALSE)
-      }
-      TRUE
-    })
-
     output$report_pitch_type_legend <- renderUI({
-      if (!show_report_pitch_legend()) return(NULL)
+      if (!isTRUE(input$show_pitch_type_key)) return(NULL)
       rows <- suppressWarnings(as.integer(input$report_rows))
       cols <- suppressWarnings(as.integer(input$report_cols))
       if (is.na(rows) || is.na(cols) || rows < 1 || cols < 1) return(NULL)
@@ -17219,6 +17407,29 @@ custom_reports_server <- function(id) {
         }
         player_name
       }
+
+      row_note_starts <- vector("list", rows)
+      covered_by_prior_note <- rep(FALSE, rows)
+      for (note_row in seq_len(rows)) {
+        if (isTRUE(covered_by_prior_note[note_row])) next
+        note_input_val <- input[[paste0("row_panel_note_", note_row)]]
+        note_saved_val <- cells[[paste0("row_", note_row, "_panel_note")]] %||% ""
+        note_text <- trimws(if (!is.null(note_input_val) && nzchar(trimws(note_input_val))) note_input_val else note_saved_val)
+        if (!nzchar(note_text)) next
+        note_span_input <- input[[paste0("row_panel_note_span_", note_row)]]
+        note_span_saved <- cells[[paste0("row_", note_row, "_panel_note_span")]] %||% 1
+        note_span_raw <- if (!is.null(note_span_input)) note_span_input else note_span_saved
+        note_span <- suppressWarnings(as.integer(note_span_raw))
+        if (is.na(note_span) || note_span < 1) note_span <- 1L
+        max_span <- max(1L, rows - note_row + 1L)
+        note_span <- min(note_span, max_span)
+        row_note_starts[[note_row]] <- list(text = note_text, span = note_span)
+        if (note_span > 1L) {
+          covered_idx <- seq.int(note_row + 1L, note_row + note_span - 1L)
+          if (length(covered_idx)) covered_by_prior_note[covered_idx] <- TRUE
+        }
+      }
+      has_row_notes <- any(vapply(row_note_starts, Negate(is.null), logical(1)))
       
       grid <- lapply(seq_len(rows), function(r) {
         # For Multi-Player mode, add player name before the row of charts
@@ -17241,6 +17452,7 @@ custom_reports_server <- function(id) {
             type = "", 
             filter = "Pitch Types", 
             title = "",
+            note_text = "",
             show_controls = TRUE,
             table_mode = "Stuff",
             table_custom_cols = character(0),
@@ -17343,9 +17555,9 @@ custom_reports_server <- function(id) {
                                  ),
                                  selectInput(ns(paste0("cell_type_", info$cell_id)), "Content:", 
                                              choices = if (identical(input$report_type, "Pitching")) {
-                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Velocity Chart", "Pitch Usage Pie Chart", "Pitch Usage Bar Chart", "Velocity Bar Chart", "Velocity Distribution", "Summary Table", "Spray Chart")
+                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Velocity Chart", "Pitch Usage Pie Chart", "Pitch Usage Bar Chart", "Velocity Bar Chart", "Velocity Distribution", "Summary Table", "Spray Chart", "Note Section")
                                              } else {
-                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Summary Table", "Spray Chart")
+                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Summary Table", "Spray Chart", "Note Section")
                                              },
                                              selected = info$sel$type),
                                  {
@@ -17421,16 +17633,28 @@ custom_reports_server <- function(id) {
                                      selected = info$sel$velocity_chart %||% "Velocity Chart (Game/Inning)"
                                    )
                                  ),
-                                 selectizeInput(
-                                   ns(paste0("cell_filter_select_", info$cell_id)),
-                                   "Filters to show:",
-                                   choices = c("Dates","Session Type","Pitch Types","Batter Hand","Pitcher Hand","Pitch Results","QP Locations",
-                                               "Count","After Count","Zone Location","Velo Min/Max","IVB Min/Max","HB Min/Max"),
-                                   selected = info$sel$filter_select %||% c("Dates","Session Type","Pitch Types"),
-                                   multiple = TRUE,
-                                   options = list(plugins = list("remove_button"))
+                                 conditionalPanel(
+                                   sprintf("input['%s'] == 'Note Section'", ns(paste0("cell_type_", info$cell_id))),
+                                   tags$div(
+                                     style = "font-size:12px; color:#666; margin-top:4px;",
+                                     "Type your note in the box below."
+                                   )
                                  ),
-                                 uiOutput(ns(paste0("cell_filters_", info$cell_id)))
+                                 conditionalPanel(
+                                   sprintf("input['%s'] != 'Note Section'", ns(paste0("cell_type_", info$cell_id))),
+                                   tagList(
+                                     selectizeInput(
+                                       ns(paste0("cell_filter_select_", info$cell_id)),
+                                       "Filters to show:",
+                                       choices = c("Dates","Session Type","Pitch Types","Batter Hand","Pitcher Hand","Pitch Results","QP Locations",
+                                                   "Count","After Count","Zone Location","Velo Min/Max","IVB Min/Max","HB Min/Max"),
+                                       selected = info$sel$filter_select %||% c("Dates","Session Type","Pitch Types"),
+                                       multiple = TRUE,
+                                       options = list(plugins = list("remove_button"))
+                                     ),
+                                     uiOutput(ns(paste0("cell_filters_", info$cell_id)))
+                                   )
+                                 )
                                )
                              )
                            ),
@@ -17450,9 +17674,27 @@ custom_reports_server <- function(id) {
         row_cells <- Filter(Negate(is.null), row_cells)
         
         # Return player name (if Multi-Player) followed by the row of charts
+        row_note <- row_note_starts[[r]]
+        note_block <- NULL
+        note_span <- 1L
+        if (!is.null(row_note)) {
+          note_span <- row_note$span %||% 1L
+          note_block <- div(
+            class = "creport-row-note",
+            stack_vertical_note(row_note$text)
+          )
+        }
+
+        row_block <- div(
+          class = paste("creport-row-wrap", if (has_row_notes) "creport-row-wrap-has-gutter" else ""),
+          style = sprintf("--creport-row-note-span:%d;", note_span),
+          note_block,
+          fluidRow(row_cells)
+        )
+
         tagList(
           player_name_row,
-          fluidRow(row_cells)
+          row_block
         )
       })
       
@@ -17489,7 +17731,7 @@ custom_reports_server <- function(id) {
           }
         }
       }
-      
+
       for (r in seq_len(rows)) {
         for (c in seq_len(cols)) {
           id <- paste0("r", r, "c", c)
@@ -17509,6 +17751,7 @@ custom_reports_server <- function(id) {
             type = update_if_exists(input[[paste0("cell_type_", id)]], existing_cell$type, ""),
             filter = update_if_exists(input[[paste0("cell_filter_", id)]], existing_cell$filter, "Pitch Types"),
             title = title_vals[[id]] %||% existing_cell$title %||% "",  # Prefer latest debounced title
+            note_text = existing_cell$note_text %||% "",
             show_controls = update_if_exists(input[[paste0("cell_show_controls_", id)]], existing_cell$show_controls, TRUE),
             table_mode = update_if_exists(input[[paste0("cell_table_mode_", id)]], existing_cell$table_mode, "Stuff"),
             table_custom_cols = update_if_exists(input[[paste0("cell_table_custom_cols_", id)]], existing_cell$table_custom_cols, character(0)),
@@ -17558,7 +17801,38 @@ custom_reports_server <- function(id) {
       current_cells(cells)
     }
 
+    flush_cell_note_now <- function(cell_id, value = NULL) {
+      pending_val <- isolate(input[[paste0("cell_note_pending_", cell_id)]])
+      note_val <- if (!is.null(value)) value else if (!is.null(pending_val)) pending_val else isolate(input[[paste0("cell_note_", cell_id)]])
+      if (is.null(note_val)) return(invisible(NULL))
+      cells <- isolate(current_cells())
+      existing_cell <- cells[[cell_id]] %||% list()
+      if (identical(existing_cell$note_text %||% "", note_val)) return(invisible(NULL))
+      existing_cell$note_text <- note_val
+      cells[[cell_id]] <- existing_cell
+      current_cells(cells)
+    }
+
     created_title_flush_ids <- character(0)
+    created_row_note_flush_ids <- integer(0)
+
+    observeEvent(input$report_rows, {
+      rows <- suppressWarnings(as.integer(input$report_rows))
+      if (is.na(rows) || rows < 1) return()
+      for (r in seq_len(rows)) {
+        if (r %in% created_row_note_flush_ids) next
+        created_row_note_flush_ids <<- c(created_row_note_flush_ids, r)
+        local({
+          rid <- r
+          observeEvent(input[[paste0("row_panel_note_blur_", rid)]], {
+            flush_row_note_now(rid, value = input[[paste0("row_panel_note_blur_", rid)]])
+          }, ignoreInit = TRUE)
+          observeEvent(input[[paste0("row_panel_note_span_", rid)]], {
+            flush_row_note_span_now(rid, value = input[[paste0("row_panel_note_span_", rid)]])
+          }, ignoreInit = TRUE)
+        })
+      }
+    }, ignoreInit = FALSE)
 
     observeEvent(list(input$report_rows, input$report_cols), {
       rows <- as.integer(input$report_rows); cols <- as.integer(input$report_cols)
@@ -17586,6 +17860,9 @@ custom_reports_server <- function(id) {
             }, ignoreInit = TRUE)
             observeEvent(input[[paste0("cell_title_blur_", id)]], {
               flush_cell_title_now(id, value = input[[paste0("cell_title_blur_", id)]])
+            }, ignoreInit = TRUE)
+            observeEvent(input[[paste0("cell_note_blur_", id)]], {
+              flush_cell_note_now(id, value = input[[paste0("cell_note_blur_", id)]])
             }, ignoreInit = TRUE)
           })
         }
@@ -17844,6 +18121,46 @@ custom_reports_server <- function(id) {
       if (!nzchar(tsel)) {
         output[[out_id]] <- renderUI({ NULL })
         return(NULL)
+      }
+      if (tsel == "Note Section") {
+        output[[out_id]] <- renderUI({
+          cell_state <- current_cells()[[cell_id]] %||% list()
+          note_val <- cell_state$note_text %||% ""
+          tagList(
+            textAreaInput(
+              ns(paste0("cell_note_", cell_id)),
+              label = NULL,
+              value = note_val,
+              width = "100%",
+              height = "260px",
+              placeholder = "Type notes here..."
+            ),
+            tags$script(HTML(sprintf("
+              (function() {
+                var id = '%s';
+                var blurId = '%s';
+                var pendingId = '%s';
+                var el = document.getElementById(id);
+                if (!el) return;
+                el.removeEventListener('blur', el.__cell_note_blur_listener__);
+                el.removeEventListener('input', el.__cell_note_input_listener__);
+                var blurListener = function() {
+                  Shiny.setInputValue(blurId, el.value, {priority: 'event'});
+                };
+                var inputListener = function() {
+                  Shiny.setInputValue(pendingId, el.value, {priority: 'event'});
+                };
+                el.__cell_note_blur_listener__ = blurListener;
+                el.__cell_note_input_listener__ = inputListener;
+                el.addEventListener('blur', blurListener);
+                el.addEventListener('input', inputListener);
+                inputListener();
+              })();
+            ", ns(paste0("cell_note_", cell_id)), ns(paste0("cell_note_blur_", cell_id)),
+            ns(paste0("cell_note_pending_", cell_id)))))
+          )
+        })
+        return(uiOutput(ns(out_id)))
       }
       df <- get_cell_data_wrapper(cell_id)
       if (!nrow(df)) {
@@ -18143,7 +18460,7 @@ custom_reports_server <- function(id) {
             types_chr <- as.character(intersect(names(cols), unique(df_loc$SplitColumn)))
             home <- data.frame(x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
                                y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5)
-            cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+            cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
             sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
             p <- ggplot() +
               geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
@@ -18151,6 +18468,7 @@ custom_reports_server <- function(id) {
                         fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
               geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                         fill = NA, color = line_col, inherit.aes = FALSE) +
+              zone_nine_square_layers(color = line_col) +
               ggiraph::geom_point_interactive(
                 data = df_other,
                 aes(PlateLocSide, PlateLocHeight,
@@ -19389,6 +19707,10 @@ custom_reports_server <- function(id) {
                 # Get cell data (triggers on chart type/filter/mode changes only)
                 cd <- cell_data()
                 out_id <- paste0("cell_render_", id)
+                if (identical(cd$type, "Note Section")) {
+                  render_cell(id)
+                  return(uiOutput(ns(out_id)))
+                }
                 df_now <- get_cell_data_wrapper(id)
                 if (!nrow(df_now)) {
                   output[[out_id]] <- renderUI({
@@ -19466,7 +19788,7 @@ player_plans_ui <- function() {
           
           selectInput("pp_session_type", "Session Type:",
                       choices = session_type_choices(),
-                      selected = "Season"),
+                      selected = "All"),
           
           dateRangeInput("pp_date_range", "Date Range:",
                          start = Sys.Date() - 30,
@@ -21326,25 +21648,59 @@ ui <- tagList(
             el.remove();
           });
 
-          var sandbox = document.createElement('div');
-          sandbox.className = 'creport-pdf-sandbox';
-          if (isDark) sandbox.classList.add('creport-pdf-sandbox-dark');
-          sandbox.appendChild(clone);
-          document.body.appendChild(sandbox);
+          var renderCloneToCanvas = async function(node) {
+            var sandbox = document.createElement('div');
+            sandbox.className = 'creport-pdf-sandbox';
+            if (isDark) sandbox.classList.add('creport-pdf-sandbox-dark');
+            sandbox.appendChild(node);
+            document.body.appendChild(sandbox);
+            try {
+              return await window.html2canvas(node, {
+                scale: 2,
+                useCORS: true,
+                allowTaint: true,
+                backgroundColor: isDark ? '#0b0f14' : '#ffffff',
+                windowWidth: window.innerWidth,
+                windowHeight: window.innerHeight
+              });
+            } finally {
+              if (sandbox.parentNode) sandbox.parentNode.removeChild(sandbox);
+            }
+          };
 
-          var canvas = await window.html2canvas(clone, {
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: isDark ? '#0b0f14' : '#ffffff',
-            windowWidth: window.innerWidth,
-            windowHeight: window.innerHeight
-          });
+          var buildPageClone = function(baseClone, startIdx, endIdx) {
+            var pageClone = baseClone.cloneNode(true);
+            var rows = Array.prototype.slice.call(pageClone.querySelectorAll('.creport-row-wrap'));
+            rows.forEach(function(rowEl, idx) {
+              if (idx >= startIdx && idx <= endIdx) return;
+              var prev = rowEl.previousElementSibling;
+              rowEl.remove();
+              if (prev && !prev.classList.contains('creport-row-wrap')) {
+                var prevHasRows = prev.querySelector && prev.querySelector('.creport-row-wrap');
+                if (!prevHasRows) prev.remove();
+              }
+            });
+            return pageClone;
+          };
 
-          document.body.removeChild(sandbox);
+          var rowsPerPage = 5;
+          var totalRows = clone.querySelectorAll('.creport-row-wrap').length;
+          var pageCanvases = [];
+          if (totalRows > rowsPerPage) {
+            var pageCount = Math.ceil(totalRows / rowsPerPage);
+            for (var p = 0; p < pageCount; p++) {
+              var startIdx = p * rowsPerPage;
+              var endIdx = Math.min(totalRows - 1, startIdx + rowsPerPage - 1);
+              var pageClone = buildPageClone(clone, startIdx, endIdx);
+              pageCanvases.push(await renderCloneToCanvas(pageClone));
+            }
+          } else {
+            pageCanvases.push(await renderCloneToCanvas(clone));
+          }
 
           var jsPDF = window.jspdf.jsPDF;
-          var orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+          var firstCanvas = pageCanvases[0];
+          var orientation = firstCanvas.width > firstCanvas.height ? 'landscape' : 'portrait';
           var pdf = new jsPDF({
             orientation: orientation,
             unit: 'pt',
@@ -21355,20 +21711,24 @@ ui <- tagList(
           var pageW = pdf.internal.pageSize.getWidth();
           var pageH = pdf.internal.pageSize.getHeight();
           var margin = 24;
-          var availW = pageW - (margin * 2);
-          var availH = pageH - (margin * 2);
-          var ratio = Math.min(availW / canvas.width, availH / canvas.height);
-          var drawW = canvas.width * ratio;
-          var drawH = canvas.height * ratio;
-          var x = (pageW - drawW) / 2;
-          var y = (pageH - drawH) / 2;
+          pageCanvases.forEach(function(canvas, idx) {
+            if (idx > 0) pdf.addPage();
+            pageW = pdf.internal.pageSize.getWidth();
+            pageH = pdf.internal.pageSize.getHeight();
+            var availW = pageW - (margin * 2);
+            var availH = pageH - (margin * 2);
+            var ratio = Math.min(availW / canvas.width, availH / canvas.height);
+            var drawW = canvas.width * ratio;
+            var drawH = canvas.height * ratio;
+            var x = (pageW - drawW) / 2;
+            var y = margin;
 
-          if (isDark) {
-            pdf.setFillColor(11, 15, 20);
-            pdf.rect(0, 0, pageW, pageH, 'F');
-          }
-
-          pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', x, y, drawW, drawH, '', 'FAST');
+            if (isDark) {
+              pdf.setFillColor(11, 15, 20);
+              pdf.rect(0, 0, pageW, pageH, 'F');
+            }
+            pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', x, y, drawW, drawH, '', 'FAST');
+          });
           pdf.save(message.filename || 'custom_report.pdf');
         } catch (err) {
           if (window.Shiny && Shiny.setInputValue) {
@@ -21431,6 +21791,33 @@ ui <- tagList(
       }
       .creport-pdf-clone {
         width: 100%;
+      }
+      .creport-pdf-clone [id$='report_canvas_wrapper'] {
+        padding-left: 0 !important;
+        margin-left: 0 !important;
+        overflow: visible !important;
+      }
+      .creport-pdf-clone [id$='report_canvas'] {
+        margin-left: 0 !important;
+      }
+      .creport-pdf-clone .creport-row-wrap-has-gutter {
+        padding-left: 56px !important;
+      }
+      .creport-pdf-clone .creport-row-wrap-has-gutter > .row {
+        margin-left: -56px !important;
+      }
+      .creport-pdf-clone .creport-row-note {
+        left: 8px !important;
+        width: 40px !important;
+        z-index: 25 !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+      .creport-pdf-clone .creport-row-note-text {
+        color: #111111 !important;
+      }
+      .creport-pdf-clone.creport-pdf-dark .creport-row-note-text {
+        color: #f3f4f6 !important;
       }
       .creport-pdf-clone.creport-pdf-light {
         background: #ffffff;
@@ -22221,6 +22608,39 @@ ui <- tagList(
       .creport-grid .row:last-child {
         margin-bottom: 0;
       }
+      .creport-row-wrap {
+        position: relative;
+        overflow: visible;
+      }
+      .creport-row-wrap-has-gutter {
+        padding-left: 0;
+      }
+      .creport-row-note {
+        position: absolute;
+        left: -34px;
+        top: calc(50% + ((var(--creport-row-note-span, 1) - 1) * (var(--creport-cell-height) + var(--creport-gap)) / 2));
+        transform: translateY(-50%);
+        width: 28px;
+        display: flex;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .creport-row-note-text {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1px;
+        font-weight: 700;
+        font-size: 16px;
+        line-height: 1.02;
+        text-transform: none;
+        white-space: nowrap;
+      }
+      #creports-report_canvas_wrapper {
+        padding-left: 40px;
+        margin-left: -40px;
+      }
       .creport-cell {
         background: #ffffff;
         border: 2px solid #000;
@@ -22316,6 +22736,9 @@ ui <- tagList(
         background: rgba(0,0,0,0.92) !important;
         border: 1px solid #2a2a2a !important;
         box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+        color: #e5e7eb;
+      }
+      body.theme-dark .creport-row-note-text {
         color: #e5e7eb;
       }
       body.theme-dark .creport-controls-toggle {
@@ -23831,7 +24254,7 @@ deg_to_clock <- function(x) {
       x = c(-0.75, 0.75, 0.75, 0, -0.75),
       y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5
     )
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
 
     p <- ggplot() +
@@ -23840,6 +24263,7 @@ deg_to_clock <- function(x) {
                 inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 inherit.aes = FALSE, fill = NA, color = line_col) +
+      zone_nine_square_layers(color = line_col) +
       coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
       theme_void() +
       theme(
@@ -26850,7 +27274,7 @@ deg_to_clock <- function(x) {
     # pull current filters
     ds <- input$dates[1]; de <- input$dates[2]
     pit <- input$pitcher %or% "All"
-    st  <- input$sessionType %or% "Season"
+    st  <- input$sessionType %or% "All"
     sui <- current_suite()
     pag <- current_page()
     
@@ -27153,7 +27577,7 @@ deg_to_clock <- function(x) {
     # --- context for the note ---
     ds <- input$dates[1]; de <- input$dates[2]
     pit <- input$pitcher     %or% "All"
-    st  <- input$sessionType %or% "Season"
+    st  <- input$sessionType %or% "All"
     sui <- current_suite();  pag <- current_page()
     page_combo <- paste0(sui, "::", pag %or% "")
     
@@ -27746,7 +28170,7 @@ deg_to_clock <- function(x) {
           df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP, 1.47,
         ifelse(
           df$PlateLocSide >= -1.5 & df$PlateLocSide <= 1.5 &
-            df$PlateLocHeight >= (2.65 - 1.5) & df$PlateLocHeight <= (2.65 + 1.5),
+            df$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & df$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
           0.73, 0
         )
       )
@@ -28302,7 +28726,7 @@ deg_to_clock <- function(x) {
       x = c(-0.75, 0.75, 0.75, 0, -0.75),
       y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5
     )
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     
     df_known <- df_i %>% dplyr::filter(!is.na(Result))
@@ -28314,6 +28738,7 @@ deg_to_clock <- function(x) {
                 inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 inherit.aes = FALSE, fill = NA, color = line_col) +
+      zone_nine_square_layers(color = line_col) +
       
       # filled circles for "no result" rows
       ggiraph::geom_point_interactive(
@@ -28426,9 +28851,7 @@ deg_to_clock <- function(x) {
   safe_pct <- function(num, den) {
     num <- suppressWarnings(as.numeric(num))
     den <- suppressWarnings(as.numeric(den))
-    ifelse(is.finite(den) & den > 0 & is.finite(num),
-           paste0(round(100 * num / den, 1), "%"),
-           "")
+    fmt_pct_ratio(num, den, digits = 1)
   }
   nz_mean <- function(x) {
     x <- suppressWarnings(as.numeric(x))
@@ -28601,7 +29024,7 @@ deg_to_clock <- function(x) {
             df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP, 1.47,
           ifelse(
             df$PlateLocSide >= -1.5 & df$PlateLocSide <= 1.5 &
-              df$PlateLocHeight >= (2.65 - 1.5) & df$PlateLocHeight <= (2.65 + 1.5),
+              df$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & df$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
             0.73, 0
           )
         )
@@ -30047,7 +30470,7 @@ deg_to_clock <- function(x) {
           df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP, 1.47,
         ifelse(
           df$PlateLocSide >= -1.5 & df$PlateLocSide <= 1.5 &
-            df$PlateLocHeight >= (2.65 - 1.5) & df$PlateLocHeight <= (2.65 + 1.5),
+            df$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & df$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
           0.73, 0
         )
       )
@@ -31194,15 +31617,15 @@ deg_to_clock <- function(x) {
   .abp_geom_zone <- function(color = "black") {
     home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75),
                        y=c(1.05, 1.05,1.15,1.25, 1.15)-0.5)
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
-    list(
+    c(list(
       geom_polygon(data = home, aes(x, y), fill = NA, color = color),
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = color, linetype = "dashed"),
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = color)
-    )
+    ), zone_nine_square_layers(color = color))
   }
   
   # All game dates where the selected pitcher has ≥1 completed PA (across any batters)
@@ -33024,7 +33447,7 @@ deg_to_clock <- function(x) {
     
     home <- data.frame(x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
                        y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5)
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     
     df_known <- dplyr::filter(df_i, !is.na(Result))
@@ -33036,6 +33459,7 @@ deg_to_clock <- function(x) {
                 fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = line_col, inherit.aes = FALSE) +
+      zone_nine_square_layers(color = line_col) +
       
       ggiraph::geom_point_interactive(
         data = df_other,
@@ -33211,7 +33635,7 @@ deg_to_clock <- function(x) {
     
     home <- data.frame(x=c(-0.75,0.75,0.75,0.00,-0.75),
                        y=c(1.05,1.05,1.15,1.25,1.15)-0.5)
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     
     p <- ggplot() +
@@ -33220,6 +33644,7 @@ deg_to_clock <- function(x) {
                 fill = NA, color = line_col, linetype = "dashed") +
       geom_rect(data = sz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
                 fill = NA, color = line_col) +
+      zone_nine_square_layers(color = line_col) +
       
       # visible points (unknown result as solid circle)
       ggiraph::geom_point_interactive(
@@ -33407,7 +33832,7 @@ deg_to_clock <- function(x) {
     trend_plot(
       df,
       PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-        PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5),
+        PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
       "Comp %", "Percentage",
       function(x) mean(x, na.rm = TRUE) * 100,
       digits = 1
@@ -33448,7 +33873,7 @@ deg_to_clock <- function(x) {
                           PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP, 1.47,
                         ifelse(
                           PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-                            PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5),
+                            PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
                           0.73, 0
                         )
                       ) * 100)
@@ -33477,7 +33902,7 @@ deg_to_clock <- function(x) {
             PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP, 1.47,
           ifelse(
             PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-              PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5),
+              PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
             0.73, 0
           )
         ) * 100
@@ -33524,7 +33949,7 @@ deg_to_clock <- function(x) {
                           PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP, 1.47,
                         ifelse(
                           PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-                            PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5),
+                            PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
                           0.73, 0
                         )
                       ) * 100)
@@ -34133,7 +34558,7 @@ deg_to_clock <- function(x) {
         1.47,  # Strike zone score
         ifelse(
           data$PlateLocSide >= -1.5 & data$PlateLocSide <= 1.5 &
-            data$PlateLocHeight >= (2.65 - 1.5) & data$PlateLocHeight <= (2.65 + 1.5),
+            data$PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & data$PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
           0.73,   # Competitive zone score
           0       # Outside competitive zone
         )
@@ -34198,7 +34623,7 @@ deg_to_clock <- function(x) {
         `Comp%` = as.numeric(ifelse(
           !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
             PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-            PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5),
+            PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5),
           100, 0
         )),
         `Strike%` = as.numeric(ifelse(
@@ -34391,7 +34816,7 @@ deg_to_clock <- function(x) {
             valid_locations <- sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight), na.rm = TRUE)
             in_comp <- sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
                              PlateLocSide >= -1.5 & PlateLocSide <= 1.5 &
-                             PlateLocHeight >= (2.65 - 1.5) & PlateLocHeight <= (2.65 + 1.5), na.rm = TRUE)
+                             PlateLocHeight >= (((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5) & PlateLocHeight <= (((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5), na.rm = TRUE)
             if (valid_locations > 0) (in_comp / valid_locations) * 100 else NA_real_
           },
           `CSW%` = {
@@ -35858,7 +36283,7 @@ deg_to_clock <- function(x) {
     types_chr <- intersect(names(cols), unique(df$TaggedPitchType))
     home <- data.frame(x = c(-0.75, 0.75, 0.75, 0.00, -0.75),
                        y = c(1.05, 1.05, 1.15, 1.25, 1.15) - 0.5)
-    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = 2.65 - 1.5, ymax = 2.65 + 1.5)
+    cz <- data.frame(xmin = -1.5, xmax = 1.5, ymin = ((ZONE_BOTTOM + ZONE_TOP) / 2) - 1.5, ymax = ((ZONE_BOTTOM + ZONE_TOP) / 2) + 1.5)
     sz <- data.frame(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP)
     df_known <- dplyr::filter(df, !is.na(Result))
     df_other <- dplyr::filter(df,  is.na(Result))
@@ -35869,6 +36294,7 @@ deg_to_clock <- function(x) {
                 fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = line_col, inherit.aes = FALSE) +
+      zone_nine_square_layers(color = line_col) +
       
       ggiraph::geom_point_interactive(
         data = df_other,
