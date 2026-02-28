@@ -27985,6 +27985,12 @@ deg_to_clock <- function(x) {
   
   # Global persistent date range - initializes to most recent date on startup
   global_date_range <- reactiveVal()
+  coerce_date_pair <- function(x) {
+    if (is.null(x) || length(x) != 2) return(NULL)
+    d <- suppressWarnings(as.Date(x))
+    if (length(d) != 2 || any(is.na(d)) || any(!is.finite(d))) return(NULL)
+    d
+  }
   
   # Initialize global date range on startup
   observe({
@@ -28005,22 +28011,23 @@ deg_to_clock <- function(x) {
   
   # Update global date range when main input changes
   observeEvent(input$dates, {
-    if (!is.null(input$dates) && length(input$dates) == 2) {
+    d_in <- coerce_date_pair(input$dates)
+    if (!is.null(d_in)) {
       # Only update if the dates are actually different to prevent loops
-      current_global <- global_date_range()
-      if (is.null(current_global) || 
-          !identical(as.Date(input$dates), as.Date(current_global))) {
-        global_date_range(input$dates)
+      current_global <- coerce_date_pair(global_date_range())
+      if (is.null(current_global) || !identical(d_in, current_global)) {
+        global_date_range(d_in)
       }
     }
   })
   
   # Sync date range input with global value - only when global changes
   observe({
-    global_dates <- global_date_range()
-    if (!is.null(global_dates) && !is.null(input$dates)) {
+    global_dates <- coerce_date_pair(global_date_range())
+    input_dates <- coerce_date_pair(input$dates)
+    if (!is.null(global_dates)) {
       # Only update UI if the values are actually different to prevent loops
-      if (!identical(as.Date(input$dates), as.Date(global_dates))) {
+      if (is.null(input_dates) || !identical(input_dates, global_dates)) {
         updateDateRangeInput(session, "dates", 
                              start = global_dates[1], 
                              end = global_dates[2])
@@ -28878,13 +28885,20 @@ deg_to_clock <- function(x) {
     df_base <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = FALSE), input$sessionType)
     df_base <- apply_pitching_team_filter(df_base, input$teamType)
     
+    if (!("Date" %in% names(df_base))) return()
+    all_dates <- suppressWarnings(as.Date(df_base$Date))
+    all_dates <- all_dates[is.finite(all_dates)]
+    if (!length(all_dates)) return()
     last_date <- if (is.null(input$pitcher) || input$pitcher == "All") {
-      max(df_base$Date, na.rm = TRUE)
+      max(all_dates, na.rm = TRUE)
     } else {
-      ld <- max(df_base$Date[df_base$Pitcher == input$pitcher], na.rm = TRUE)
-      if (is.finite(ld)) ld else max(df_base$Date, na.rm = TRUE)
+      pit_dates <- suppressWarnings(as.Date(df_base$Date[df_base$Pitcher == input$pitcher]))
+      pit_dates <- pit_dates[is.finite(pit_dates)]
+      if (length(pit_dates)) max(pit_dates, na.rm = TRUE) else max(all_dates, na.rm = TRUE)
     }
-    updateDateRangeInput(session, "dates", start = last_date, end = last_date)
+    if (length(last_date) == 1 && is.finite(last_date)) {
+      updateDateRangeInput(session, "dates", start = last_date, end = last_date)
+    }
   }, ignoreInit = TRUE)
   
   observe({
