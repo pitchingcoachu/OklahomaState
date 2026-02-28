@@ -17189,23 +17189,33 @@ custom_reports_server <- function(id) {
       team_type <- team_type %||% "All"
       switch(report_type,
         "Pitching" = {
-          pool <- unique(stats::na.omit(c(pitch_data_pitching$Pitcher, pitch_data$Pitcher)))
+          pool <- if (identical(team_type, "Opponents")) {
+            unique(stats::na.omit(as.character(pitch_data$Pitcher)))
+          } else {
+            unique(stats::na.omit(as.character(pitch_data_pitching$Pitcher)))
+          }
           pool <- pool[nzchar(pool)]
           if (team_type == "Campers") {
-            sort(intersect(ALLOWED_CAMPERS, pool))
+            sort(intersect(ALLOWED_CAMPERS_DL, pool))
           } else if (team_type == TEAM_CODE) {
-            sort(intersect(ALLOWED_PITCHERS, pool))
+            sort(intersect(ALLOWED_PITCHERS_DL, pool))
+          } else if (team_type == "Opponents") {
+            known_norm <- unique(c(norm_name_ci(ALLOWED_PITCHERS_DL), norm_name_ci(ALLOWED_CAMPERS_DL)))
+            sort(unique(pool[!(norm_name_ci(pool) %in% known_norm)]))
           } else {
             sort(pool)
           }
         },
         "Hitting" = {
-          pool <- unique(stats::na.omit(c(pitch_data$Batter, pitch_data_pitching$Batter)))
+          pool <- unique(stats::na.omit(as.character(pitch_data$Batter)))
           pool <- pool[nzchar(pool)]
           if (team_type == "Campers") {
-            sort(intersect(ALLOWED_CAMPERS, pool))
+            sort(intersect(ALLOWED_CAMPERS_DL, pool))
           } else if (team_type == TEAM_CODE) {
-            sort(intersect(ALLOWED_HITTERS, pool))
+            sort(intersect(ALLOWED_HITTERS_DL, pool))
+          } else if (team_type == "Opponents") {
+            known_norm <- unique(c(norm_name_ci(ALLOWED_HITTERS_DL), norm_name_ci(ALLOWED_CAMPERS_DL)))
+            sort(unique(pool[!(norm_name_ci(pool) %in% known_norm)]))
           } else {
             sort(pool)
           }
@@ -28778,20 +28788,42 @@ deg_to_clock <- function(x) {
     )
   })
   
+  apply_pitching_team_filter <- function(df, team_type = "All") {
+    if (is.null(df) || !nrow(df) || !"Pitcher" %in% names(df)) return(df)
+    team_type <- team_type %||% "All"
+    if (!nzchar(team_type) || identical(team_type, "All")) return(df)
+    pitcher_chr <- as.character(df$Pitcher %||% "")
+    pitcher_norm <- norm_name_ci(pitcher_chr)
+    campers_norm <- norm_name_ci(ALLOWED_CAMPERS_DL)
+    team_norm <- norm_name_ci(ALLOWED_PITCHERS_DL)
+    known_norm <- unique(c(campers_norm, team_norm))
+    mask <- switch(
+      team_type,
+      "Campers" = pitcher_norm %in% campers_norm,
+      TEAM_CODE = pitcher_norm %in% team_norm,
+      "Opponents" = !(pitcher_norm %in% known_norm),
+      rep(TRUE, length(pitcher_chr))
+    )
+    mask[is.na(mask)] <- FALSE
+    df[mask, , drop = FALSE]
+  }
+  
+  pitching_base_for_team <- function(team_type = "All", include_modifications = TRUE) {
+    team_type <- team_type %||% "All"
+    if (identical(team_type, "Opponents")) return(pitch_data)
+    if (isTRUE(include_modifications)) {
+      df_mod <- tryCatch(modified_pitch_data(), error = function(e) NULL)
+      if (!is.null(df_mod) && nrow(df_mod)) return(df_mod)
+    }
+    pitch_data_pitching
+  }
+  
   # 1) Pitcher selector
   output$pitcher_ui <- renderUI({
     req(input$sessionType, input$teamType)
     
-    df_base <- apply_session_type_filter(pitch_data_pitching, input$sessionType)
-    
-    # Apply team filtering to get the available pitchers
-    if (input$teamType == "Campers") {
-      df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_CAMPERS)
-    } else if (input$teamType == TEAM_CODE) {
-      # Filter to only GCU allowed pitchers (exclude campers)
-      df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
-    }
-    # If "All" is selected, df_base already contains all pitchers
+    df_base <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = FALSE), input$sessionType)
+    df_base <- apply_pitching_team_filter(df_base, input$teamType)
     
     # Create name map for the filtered dataset
     raw_names_team <- sort(unique(df_base$Pitcher))
@@ -28843,15 +28875,8 @@ deg_to_clock <- function(x) {
   observeEvent(list(input$sessionType, input$teamType), {
     req(input$sessionType, input$teamType)
     
-    df_base <- apply_session_type_filter(pitch_data_pitching, input$sessionType)
-    
-    # Apply team filtering
-    if (input$teamType == "Campers") {
-      df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_CAMPERS)
-    } else if (input$teamType == TEAM_CODE) {
-      df_base <- dplyr::filter(df_base, Pitcher %in% ALLOWED_PITCHERS)
-    }
-    # If "All" is selected, don't filter - show all data
+    df_base <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = FALSE), input$sessionType)
+    df_base <- apply_pitching_team_filter(df_base, input$teamType)
     
     last_date <- if (is.null(input$pitcher) || input$pitcher == "All") {
       max(df_base$Date, na.rm = TRUE)
@@ -28861,6 +28886,24 @@ deg_to_clock <- function(x) {
     }
     updateDateRangeInput(session, "dates", start = last_date, end = last_date)
   }, ignoreInit = TRUE)
+  
+  observe({
+    req(input$sessionType, input$teamType)
+    df_base <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = FALSE), input$sessionType)
+    df_base <- apply_pitching_team_filter(df_base, input$teamType)
+    pit <- input$pitcher %||% "All"
+    if (!identical(pit, "All") && "Pitcher" %in% names(df_base)) {
+      df_base <- dplyr::filter(df_base, Pitcher == pit)
+    }
+    if (!is.null(input$dates) && length(input$dates) == 2 && all(is.finite(input$dates)) && "Date" %in% names(df_base)) {
+      df_base <- dplyr::filter(df_base, Date >= input$dates[1], Date <= input$dates[2])
+    }
+    hitters <- sort(unique(stats::na.omit(as.character(df_base$Batter))))
+    hitter_choices <- c("All" = "All", setNames(hitters, format_name_first_last(hitters)))
+    current <- isolate(input$oppHitter)
+    if (is.null(current) || !(current %in% unname(hitter_choices))) current <- "All"
+    updateSelectInput(session, "oppHitter", choices = hitter_choices, selected = current)
+  })
 
   # ---- Manual Velocity Entry (Pitching Suite) ----
   manual_velocity_entries <- reactiveVal(load_manual_velocity_entries(current_school()))
@@ -29181,17 +29224,10 @@ deg_to_clock <- function(x) {
     
     pitch_types <- if (is.null(input$pitchType) || !length(input$pitchType)) "All" else input$pitchType
     
-    # Session type - use modified data instead of original
-    df <- apply_session_type_filter(modified_pitch_data(), input$sessionType)
-    
-    # ⛔️ Team filtering - Filter by team selection ⛔️
-    if (!is.null(input$teamType)) {
-      if (input$teamType == "Campers") {
-        # Filter to only allowed campers
-        df <- dplyr::filter(df, Pitcher %in% ALLOWED_CAMPERS)
-      }
-      # If "GCU" is selected, use the existing data (already filtered to ALLOWED_PITCHERS)
-    }
+    # Session type/team source:
+    # Opponents must come from full pitch_data; team/campers use modified pitching data.
+    df <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = TRUE), input$sessionType)
+    df <- apply_pitching_team_filter(df, input$teamType)
     
     # ⛔️ Drop warmups & blank pitch types
     if ("TaggedPitchType" %in% names(df)) {
@@ -29298,8 +29334,10 @@ deg_to_clock <- function(x) {
     # protect against NULL during app init
     pitch_types <- if (is.null(input$pitchType)) "All" else input$pitchType
     
-    # first, honor Session Type
-    df <- apply_session_type_filter(pitch_data_pitching, input$sessionType)
+    # Session type/team source:
+    # Opponents must come from full pitch_data; team/campers use pitching dataset.
+    df <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = FALSE), input$sessionType)
+    df <- apply_pitching_team_filter(df, input$teamType)
     
     # Live-only BatterSide filter
     if (!is.null(input$batterSide) && input$batterSide != "All") {
