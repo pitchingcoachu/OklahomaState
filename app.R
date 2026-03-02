@@ -24018,12 +24018,6 @@ log_startup_timing("Completed UI object construction")
 
 # Server logic
 server <- function(input, output, session) {
-  if (isTRUE(defer_video_map_load) && isTRUE(video_map_warmup_enabled)) {
-    session$onFlushed(function() {
-      start_video_map_warmup(video_map_warmup_delay_ms)
-    }, once = TRUE)
-  }
-  
   # Get user email from shinyapps.io authentication
   # In shinyapps.io, session$user contains the authenticated user's email
   user_email <- reactive({
@@ -24058,6 +24052,31 @@ server <- function(input, output, session) {
   
   # Helper to normalize email for comparison
   norm_email <- function(x) tolower(trimws(as.character(x)))
+  
+  trigger_video_intent_warmup <- function(reason = "intent") {
+    if (!isTRUE(defer_video_map_load) || !isTRUE(video_map_warmup_enabled)) return(invisible(FALSE))
+    if (isTRUE(video_map_warmup_started) || isTRUE(video_map_warmup_completed)) return(invisible(FALSE))
+    message("🎬 Video intent detected: ", reason)
+    start_video_map_warmup(0L)
+  }
+  
+  observeEvent(input$withVideo, {
+    if (identical(input$withVideo, "Yes")) {
+      trigger_video_intent_warmup("withVideo=Yes")
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$pitch_click_action, {
+    if (identical(input$pitch_click_action, "video")) {
+      trigger_video_intent_warmup("pitch_click_action=video")
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$top, {
+    if (identical(input$top, "Video Upload")) {
+      trigger_video_intent_warmup("entered Video Upload tab")
+    }
+  }, ignoreInit = TRUE)
   
   # Initialize database on startup
   init_modifications_db()
@@ -25484,6 +25503,7 @@ deg_to_clock <- function(x) {
   
   show_pitch_video_sequence <- function(rows, label = NULL, start_index = 1,
                                         compare_pool = NULL, primary_pool_idx = NA_integer_) {
+    trigger_video_intent_warmup("open video modal")
     rows_df <- tryCatch(as.data.frame(rows), error = function(e) NULL)
     if (is.null(rows_df) || !nrow(rows_df)) {
       showModal(modalDialog("No video available for this selection.", easyClose = TRUE, footer = NULL))
