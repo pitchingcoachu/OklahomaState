@@ -32994,6 +32994,39 @@ deg_to_clock <- function(x) {
       (!is.na(df$PitchCall) & df$PitchCall == "HitByPitch")
   }
   
+  .abp_game_key <- function(df) {
+    key_cols <- c("GameID", "GameUID", "GameForeignID")
+    key_cols <- key_cols[key_cols %in% names(df)]
+    if (length(key_cols)) {
+      for (nm in key_cols) {
+        vals <- trimws(as.character(df[[nm]]))
+        vals[is.na(vals)] <- ""
+        if (any(nzchar(vals))) return(ifelse(nzchar(vals), vals, NA_character_))
+      }
+    }
+    dt <- suppressWarnings(as.Date(df$Date))
+    dt_chr <- as.character(dt)
+    dt_chr[is.na(dt)] <- NA_character_
+    dt_chr
+  }
+  
+  .abp_order_cols <- function(df) {
+    cols <- c(
+      "Date", "UTCDateTime", "LocalDateTime",
+      "GameID", "GameUID", "GameForeignID",
+      "Inning", "Top/Bottom", "PAofInning", "PitchofPA", "PitchNo"
+    )
+    cols[cols %in% names(df)]
+  }
+  
+  .abp_arrange_rows <- function(df) {
+    if (!nrow(df)) return(df)
+    oc <- .abp_order_cols(df)
+    if (!length(oc)) return(df)
+    ord <- do.call(order, c(unname(df[oc]), list(na.last = TRUE)))
+    df[ord, , drop = FALSE]
+  }
+  
   .abp_fmt_mdy <- function(d) format(as.Date(d), "%m/%d/%Y")
   
   # "Last, First" -> "First Last"
@@ -33110,7 +33143,8 @@ deg_to_clock <- function(x) {
     the_date <- as.Date(dt_chr)
     
     # Filter: selected pitcher on selected date (ignore the global date range for this page)
-    df_all <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit, as.Date(Date) == the_date)    
+    df_all <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit, as.Date(Date) == the_date)
+    df_all <- .abp_arrange_rows(df_all)
     
     if (!nrow(df_all)) return(div(tags$em("No pitches for this pitcher on the selected date.")))
     
@@ -33137,13 +33171,20 @@ deg_to_clock <- function(x) {
         paste0(.abp_pretty_name(bat), " (", lr, ")")
       )
       
-      # Segment PAs within this batter
+      # Segment PAs within this batter and game in pitch order.
+      dB <- .abp_arrange_rows(dB)
       term <- .abp_is_terminal(dB)
-      # cumsum starts a new PA *after* a terminal pitch:
-      pa_id <- cumsum(c(1L, as.integer(utils::head(term, -1))))
-      dB$._pa_id <- pa_id
-      done_ids <- unique(dB$._pa_id[term])
-      dB <- dplyr::filter(dB, ._pa_id %in% done_ids)
+      term[is.na(term)] <- FALSE
+      gk <- .abp_game_key(dB)
+      dB$._game_key <- ifelse(is.na(gk) | !nzchar(gk), "unknown_game", gk)
+      dB$._terminal <- term
+      dB <- dB %>%
+        dplyr::group_by(._game_key) %>%
+        dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
+        dplyr::ungroup()
+      done_keys <- unique(paste0(dB$._game_key[dB$._terminal], "::", dB$._pa_id[dB$._terminal]))
+      dB <- dB[paste0(dB$._game_key, "::", dB$._pa_id) %in% done_keys, , drop = FALSE]
+      dB$._terminal <- NULL
       if (!nrow(dB)) {
         return(fluidRow(
           column(3, div(style="padding:10px 6px;", name_html)),
@@ -33151,7 +33192,8 @@ deg_to_clock <- function(x) {
         ))
       }
       
-      pa_list <- split(dB, dB$._pa_id)
+      pa_keys <- paste0(dB$._game_key, "::", dB$._pa_id)
+      pa_list <- split(dB, pa_keys)
       n_pa <- length(pa_list)
       
       # Build one mini zone chart per PA (left→right, 1st→last)
@@ -33177,7 +33219,7 @@ deg_to_clock <- function(x) {
         # now compute the PA result label from the last pitch of this PA
         title_result <- .abp_pa_result_label(dat[nrow(dat), , drop = FALSE])
         
-        pid    <- paste0(bi, "_", names(pa_list)[i])
+        pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", names(pa_list)[i]))
         out_id <- ns(paste0("abpPlot_", pid))
         
         local({
