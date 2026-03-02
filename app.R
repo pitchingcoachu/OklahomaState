@@ -33148,58 +33148,67 @@ deg_to_clock <- function(x) {
     
     if (!nrow(df_all)) return(div(tags$em("No pitches for this pitcher on the selected date.")))
     
-    # Order batters by first appearance that day
-    first_idx <- df_all %>%
-      dplyr::mutate(.row_id = dplyr::row_number()) %>%
-      dplyr::group_by(Batter) %>%
-      dplyr::summarise(first_row = min(.row_id), .groups = "drop") %>%
-      dplyr::arrange(first_row)
+    # Segment completed PAs first (across all batters), then assign each PA to a batter label.
+    term_all <- .abp_is_terminal(df_all)
+    term_all[is.na(term_all)] <- FALSE
+    gk_all <- .abp_game_key(df_all)
+    df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
+    df_all$._terminal <- term_all
+    df_all <- df_all %>%
+      dplyr::group_by(._game_key) %>%
+      dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
+      dplyr::ungroup()
+    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+    done_keys <- unique(pa_key_all[df_all$._terminal])
+    df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
+    if (!nrow(df_all)) {
+      return(div(tags$em("No completed plate appearances on this date.")))
+    }
+    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+    pa_levels <- unique(pa_key_all)
+    pa_list_all <- split(df_all, factor(pa_key_all, levels = pa_levels))
     
-    # Build one row per batter
-    rows <- lapply(seq_len(nrow(first_idx)), function(bi) {
-      bat <- first_idx$Batter[bi]
-      dB  <- df_all %>% dplyr::filter(Batter == bat)
+    pa_meta <- lapply(pa_list_all, function(pa_df) {
+      bvals <- trimws(as.character(pa_df$Batter %||% ""))
+      bvals <- bvals[nzchar(bvals)]
+      batter_label <- if (length(bvals)) bvals[[length(bvals)]] else "Unknown Batter"
+      svals <- trimws(as.character(pa_df$BatterSide %||% ""))
+      svals <- svals[nzchar(svals)]
+      side_val <- if (length(svals)) svals[[length(svals)]] else ""
+      list(
+        batter = batter_label,
+        side = side_val,
+        data = pa_df
+      )
+    })
+    
+    batter_order <- unique(vapply(pa_meta, function(x) x$batter, character(1)))
+    
+    # Build one row per batter, with all completed PAs in chronological order.
+    rows <- lapply(seq_along(batter_order), function(bi) {
+      bat <- batter_order[[bi]]
+      idx_for_batter <- which(vapply(pa_meta, function(x) identical(x$batter, bat), logical(1)))
+      if (!length(idx_for_batter)) return(NULL)
+      pa_for_batter <- pa_meta[idx_for_batter]
       
       # Batter side & name label with color (Left = red, Right = black)
-      side <- as.character(dplyr::coalesce(dB$BatterSide[which.max(seq_len(nrow(dB)))], NA))
-      lr   <- ifelse(is.na(side), "", ifelse(grepl("^L", side, ignore.case = TRUE), "L", "R"))
+      side <- pa_for_batter[[length(pa_for_batter)]]$side %||% ""
+      lr   <- ifelse(!nzchar(side), "", ifelse(grepl("^L", side, ignore.case = TRUE), "L", "R"))
       is_left <- identical(lr, "L")
       dark_on <- isTRUE(input$dark_mode)
       name_col <- if (is_left) "#d32f2f" else if (dark_on) "#e5e7eb" else "#000000"
+      name_suffix <- if (nzchar(lr)) paste0(" (", lr, ")") else ""
       name_html <- tags$div(
         style = paste0("font-weight:700; color:", name_col, ";"),
-        paste0(.abp_pretty_name(bat), " (", lr, ")")
+        paste0(.abp_pretty_name(bat), name_suffix)
       )
       
-      # Segment PAs within this batter and game in pitch order.
-      dB <- .abp_arrange_rows(dB)
-      term <- .abp_is_terminal(dB)
-      term[is.na(term)] <- FALSE
-      gk <- .abp_game_key(dB)
-      dB$._game_key <- ifelse(is.na(gk) | !nzchar(gk), "unknown_game", gk)
-      dB$._terminal <- term
-      dB <- dB %>%
-        dplyr::group_by(._game_key) %>%
-        dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
-        dplyr::ungroup()
-      done_keys <- unique(paste0(dB$._game_key[dB$._terminal], "::", dB$._pa_id[dB$._terminal]))
-      dB <- dB[paste0(dB$._game_key, "::", dB$._pa_id) %in% done_keys, , drop = FALSE]
-      dB$._terminal <- NULL
-      if (!nrow(dB)) {
-        return(fluidRow(
-          column(3, div(style="padding:10px 6px;", name_html)),
-          column(9, div(style="padding:10px 6px;", tags$em("No completed PAs")))
-        ))
-      }
+      n_pa <- length(pa_for_batter)
       
-      pa_keys <- paste0(dB$._game_key, "::", dB$._pa_id)
-      pa_list <- split(dB, pa_keys)
-      n_pa <- length(pa_list)
-      
-      # Build one mini zone chart per PA (left→right, 1st→last)
+      # Build one mini zone chart per PA (left→right, 1st→last for this batter)
       chart_cells <- lapply(seq_len(n_pa), function(i) {
         # build the per-PA data first
-        dat <- pa_list[[i]] %>%
+        dat <- pa_for_batter[[i]]$data %>%
           dplyr::mutate(
             pitch_idx = dplyr::row_number(),
             Result    = factor(compute_result(PitchCall, PlayResult), levels = result_levels),
@@ -33219,7 +33228,8 @@ deg_to_clock <- function(x) {
         # now compute the PA result label from the last pitch of this PA
         title_result <- .abp_pa_result_label(dat[nrow(dat), , drop = FALSE])
         
-        pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", names(pa_list)[i]))
+        pa_name <- names(pa_list_all)[idx_for_batter[i]]
+        pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", pa_name))
         out_id <- ns(paste0("abpPlot_", pid))
         
         local({
