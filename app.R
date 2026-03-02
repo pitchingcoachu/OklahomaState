@@ -1584,6 +1584,27 @@ ensure_pitch_keys <- function(df) {
   df
 }
 
+safe_date_pair <- function(x) {
+  if (is.null(x) || length(x) != 2) return(NULL)
+  d <- suppressWarnings(as.Date(x))
+  if (length(d) != 2 || any(is.na(d)) || any(!is.finite(d))) return(NULL)
+  d
+}
+
+safe_update_date_range_input <- function(session, input_id, start, end) {
+  d <- safe_date_pair(c(start, end))
+  if (is.null(d)) return(invisible(FALSE))
+  s <- d[[1]]
+  e <- d[[2]]
+  if (e < s) {
+    tmp <- s
+    s <- e
+    e <- tmp
+  }
+  updateDateRangeInput(session, input_id, start = s, end = e)
+  invisible(TRUE)
+}
+
 deduplicate_pitch_rows <- function(df, fast = FALSE) {
   if (!nrow(df)) return(df)
   if (!"PitchKey" %in% names(df)) return(df)
@@ -8374,18 +8395,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     # Sync local date input with global date range
     if (!is.null(global_date_range)) {
       observe({
-        if (!is.null(global_date_range()) && length(global_date_range()) == 2) {
-          updateDateRangeInput(session, "dates", 
-                               start = global_date_range()[1], 
-                               end = global_date_range()[2])
-        }
+        gd <- safe_date_pair(global_date_range())
+        if (!is.null(gd)) safe_update_date_range_input(session, "dates", gd[[1]], gd[[2]])
       })
       
       # Update global date range when local input changes
       observeEvent(input$dates, {
-        if (!is.null(input$dates) && length(input$dates) == 2) {
-          global_date_range(input$dates)
-        }
+        d_in <- safe_date_pair(input$dates)
+        if (!is.null(d_in)) global_date_range(d_in)
       })
     }
     ns <- session$ns
@@ -8449,7 +8466,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       if (nrow(d)) {
         rng <- range(d$Date, na.rm = TRUE)
         if (all(is.finite(rng))) {
-          updateDateRangeInput(session, "dates", start = rng[1], end = rng[2])
+          safe_update_date_range_input(session, "dates", rng[1], rng[2])
         }
       }
     }, ignoreInit = FALSE)
@@ -9012,7 +9029,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       win <- recent_date_window(date_pool, n_days = 7L)
       if (!is.null(win)) {
-        updateDateRangeInput(session, "dates", start = win[[1]], end = win[[2]])
+        safe_update_date_range_input(session, "dates", win[[1]], win[[2]])
       }
     }, ignoreInit = TRUE)
     
@@ -10995,18 +11012,14 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
     # Sync local date input with global date range
     if (!is.null(global_date_range)) {
       observe({
-        if (!is.null(global_date_range()) && length(global_date_range()) == 2) {
-          updateDateRangeInput(session, "dates", 
-                               start = global_date_range()[1], 
-                               end = global_date_range()[2])
-        }
+        gd <- safe_date_pair(global_date_range())
+        if (!is.null(gd)) safe_update_date_range_input(session, "dates", gd[[1]], gd[[2]])
       })
       
       # Update global date range when local input changes
       observeEvent(input$dates, {
-        if (!is.null(input$dates) && length(input$dates) == 2) {
-          global_date_range(input$dates)
-        }
+        d_in <- safe_date_pair(input$dates)
+        if (!is.null(d_in)) global_date_range(d_in)
       })
     }
     ns <- session$ns
@@ -11103,7 +11116,7 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       }
       win <- recent_date_window(date_pool, n_days = 7L)
       if (!is.null(win)) {
-        updateDateRangeInput(session, "dates", start = win[[1]], end = win[[2]])
+        safe_update_date_range_input(session, "dates", win[[1]], win[[2]])
       }
     }, ignoreInit = TRUE)
     
@@ -12110,7 +12123,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       first_date <- min(all_dates, na.rm = TRUE)
       last_date  <- max(all_dates, na.rm = TRUE)
       if (is.finite(first_date) && is.finite(last_date)) {
-        updateDateRangeInput(session, "dates", start = first_date, end = last_date)
+        safe_update_date_range_input(session, "dates", first_date, last_date)
       }
     })
     
@@ -13337,18 +13350,14 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
     # Sync local date input with global date range
     if (!is.null(global_date_range)) {
       observe({
-        if (!is.null(global_date_range()) && length(global_date_range()) == 2) {
-          updateDateRangeInput(session, "dates", 
-                               start = global_date_range()[1], 
-                               end = global_date_range()[2])
-        }
+        gd <- safe_date_pair(global_date_range())
+        if (!is.null(gd)) safe_update_date_range_input(session, "dates", gd[[1]], gd[[2]])
       })
       
       # Update global date range when local input changes
       observeEvent(input$dates, {
-        if (!is.null(input$dates) && length(input$dates) == 2) {
-          global_date_range(input$dates)
-        }
+        d_in <- safe_date_pair(input$dates)
+        if (!is.null(d_in)) global_date_range(d_in)
       })
     }
     ns <- session$ns
@@ -13448,7 +13457,7 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
       base <- team_base()
       win <- recent_date_window(base$Date, n_days = 7L)
       if (!is.null(win)) {
-        updateDateRangeInput(session, "dates", start = win[[1]], end = win[[2]])
+        safe_update_date_range_input(session, "dates", win[[1]], win[[2]])
       }
     })
     
@@ -14806,13 +14815,10 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
     if (!is.null(global_date_range)) {
       # Comp module has different date input names (cmpA_dates, cmpB_dates)
       observe({
-        if (!is.null(global_date_range()) && length(global_date_range()) == 2) {
-          updateDateRangeInput(session, "cmpA_dates", 
-                               start = global_date_range()[1], 
-                               end = global_date_range()[2])
-          updateDateRangeInput(session, "cmpB_dates", 
-                               start = global_date_range()[1], 
-                               end = global_date_range()[2])
+        gd <- safe_date_pair(global_date_range())
+        if (!is.null(gd)) {
+          safe_update_date_range_input(session, "cmpA_dates", gd[[1]], gd[[2]])
+          safe_update_date_range_input(session, "cmpB_dates", gd[[1]], gd[[2]])
         }
       })
     }
@@ -14870,12 +14876,12 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
     observeEvent(list(input$domain, input$cmpA_player, input$cmpA_sessionType), {
       req(is_active())
       last_date <- .last_date_for(input$domain, input$cmpA_player, input$cmpA_sessionType)
-      if (is.finite(last_date)) updateDateRangeInput(session, "cmpA_dates", start = last_date, end = last_date)
+      if (is.finite(last_date)) safe_update_date_range_input(session, "cmpA_dates", last_date, last_date)
     }, ignoreInit = TRUE)
     observeEvent(list(input$domain, input$cmpB_player, input$cmpB_sessionType), {
       req(is_active())
       last_date <- .last_date_for(input$domain, input$cmpB_player, input$cmpB_sessionType)
-      if (is.finite(last_date)) updateDateRangeInput(session, "cmpB_dates", start = last_date, end = last_date)
+      if (is.finite(last_date)) safe_update_date_range_input(session, "cmpB_dates", last_date, last_date)
     }, ignoreInit = TRUE)
     
     # ---------- Common filtering helper ----------
@@ -28006,10 +28012,7 @@ deg_to_clock <- function(x) {
   # Global persistent date range - initializes to most recent date on startup
   global_date_range <- reactiveVal()
   coerce_date_pair <- function(x) {
-    if (is.null(x) || length(x) != 2) return(NULL)
-    d <- suppressWarnings(as.Date(x))
-    if (length(d) != 2 || any(is.na(d)) || any(!is.finite(d))) return(NULL)
-    d
+    safe_date_pair(x)
   }
   
   # Initialize global date range on startup
@@ -28048,9 +28051,7 @@ deg_to_clock <- function(x) {
     if (!is.null(global_dates)) {
       # Only update UI if the values are actually different to prevent loops
       if (is.null(input_dates) || !identical(input_dates, global_dates)) {
-        updateDateRangeInput(session, "dates", 
-                             start = global_dates[1], 
-                             end = global_dates[2])
+        safe_update_date_range_input(session, "dates", global_dates[1], global_dates[2])
       }
     }
   })
@@ -28480,7 +28481,7 @@ deg_to_clock <- function(x) {
       if (nzchar(x$sess))    updateSelectInput(session, "sessionType", selected = x$sess)
       if (nzchar(x$pitcher)) updateSelectInput(session, "pitcher",      selected = x$pitcher)
       if (nzchar(x$ds) && nzchar(x$de))
-        updateDateRangeInput(session, "dates", start = as.Date(x$ds), end = as.Date(x$de))
+        safe_update_date_range_input(session, "dates", x$ds, x$de)
       # sub-tabs by suite
       if (identical(x$suite, "Pitching")) {
         if (nzchar(x$page)) updateTabsetPanel(session, "tabs", selected = x$page)
@@ -28503,7 +28504,7 @@ deg_to_clock <- function(x) {
     
     if (!is.null(global_date_range())) {
       gd <- global_date_range()
-      updateDateRangeInput(session, "dates", start = gd[[1]], end = gd[[2]])
+      safe_update_date_range_input(session, "dates", gd[[1]], gd[[2]])
       return()
     }
     
@@ -28515,7 +28516,7 @@ deg_to_clock <- function(x) {
     }
     win <- recent_date_window(date_pool, n_days = 7L)
     if (!is.null(win)) {
-      updateDateRangeInput(session, "dates", start = win[[1]], end = win[[2]])
+      safe_update_date_range_input(session, "dates", win[[1]], win[[2]])
       global_date_range(win)
     }
   }, once = TRUE)
@@ -28533,9 +28534,7 @@ deg_to_clock <- function(x) {
       global_dates <- global_date_range()
       if (is.null(current_input) || 
           !identical(as.Date(current_input), as.Date(global_dates))) {
-        updateDateRangeInput(session, "dates", 
-                             start = global_dates[1], 
-                             end = global_dates[2])
+        safe_update_date_range_input(session, "dates", global_dates[1], global_dates[2])
       }
     } else {
       # Only fall back if no global date range is set
@@ -28546,7 +28545,7 @@ deg_to_clock <- function(x) {
       }
       win <- recent_date_window(date_pool, n_days = 7L)
       if (!is.null(win)) {
-        updateDateRangeInput(session, "dates", start = win[[1]], end = win[[2]])
+        safe_update_date_range_input(session, "dates", win[[1]], win[[2]])
         # Update global date range with this new value.
         global_date_range(win)
       }
@@ -28917,7 +28916,7 @@ deg_to_clock <- function(x) {
       if (length(pit_dates)) max(pit_dates, na.rm = TRUE) else max(all_dates, na.rm = TRUE)
     }
     if (length(last_date) == 1 && is.finite(last_date)) {
-      updateDateRangeInput(session, "dates", start = last_date, end = last_date)
+      safe_update_date_range_input(session, "dates", last_date, last_date)
     }
   }, ignoreInit = TRUE)
   
