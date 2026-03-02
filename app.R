@@ -33027,6 +33027,19 @@ deg_to_clock <- function(x) {
     df[ord, , drop = FALSE]
   }
   
+  .abp_struct_pa_key <- function(df) {
+    needed <- c("Inning", "PAofInning")
+    if (!all(needed %in% names(df))) return(rep(NA_character_, nrow(df)))
+    inning <- trimws(as.character(df$Inning))
+    pa_inning <- trimws(as.character(df$PAofInning))
+    tb <- if ("Top/Bottom" %in% names(df)) trimws(as.character(df[["Top/Bottom"]])) else rep("", nrow(df))
+    gk <- .abp_game_key(df)
+    valid <- nzchar(inning) & nzchar(pa_inning)
+    out <- rep(NA_character_, nrow(df))
+    out[valid] <- paste(gk[valid], inning[valid], tb[valid], pa_inning[valid], sep = "::")
+    out
+  }
+  
   .abp_fmt_mdy <- function(d) format(as.Date(d), "%m/%d/%Y")
   
   # "Last, First" -> "First Last"
@@ -33153,18 +33166,32 @@ deg_to_clock <- function(x) {
     term_all[is.na(term_all)] <- FALSE
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
-    df_all$._terminal <- term_all
-    df_all <- df_all %>%
-      dplyr::group_by(._game_key) %>%
-      dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
-      dplyr::ungroup()
-    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
-    done_keys <- unique(pa_key_all[df_all$._terminal])
-    df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
+    
+    # Prefer structural PA grouping (game+inning+half+PAofInning) when available.
+    pa_struct <- .abp_struct_pa_key(df_all)
+    if (any(!is.na(pa_struct))) {
+      df_all$._pa_group <- ifelse(is.na(pa_struct), paste0(df_all$._game_key, "::row::", seq_len(nrow(df_all))), pa_struct)
+      pa_done <- tapply(term_all, df_all$._pa_group, function(x) any(x, na.rm = TRUE))
+      done_keys <- names(pa_done)[which(pa_done)]
+      df_all <- df_all[df_all$._pa_group %in% done_keys, , drop = FALSE]
+      pa_key_all <- df_all$._pa_group
+    } else {
+      # Fallback for feeds without structural PA columns.
+      df_all$._terminal <- term_all
+      df_all <- df_all %>%
+        dplyr::group_by(._game_key) %>%
+        dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
+        dplyr::ungroup()
+      pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+      done_keys <- unique(pa_key_all[df_all$._terminal])
+      df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
+      pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+      df_all$._terminal <- NULL
+    }
     if (!nrow(df_all)) {
       return(div(tags$em("No completed plate appearances on this date.")))
     }
-    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+    if ("._pa_group" %in% names(df_all)) df_all$._pa_group <- NULL
     pa_levels <- unique(pa_key_all)
     pa_list_all <- split(df_all, factor(pa_key_all, levels = pa_levels))
     
