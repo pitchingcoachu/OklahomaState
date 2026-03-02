@@ -33040,6 +33040,35 @@ deg_to_clock <- function(x) {
     out
   }
   
+  .abp_struct_pa_key_from_pitchofpa <- function(df) {
+    needed <- c("Inning", "PitchofPA")
+    if (!all(needed %in% names(df))) return(rep(NA_character_, nrow(df)))
+    inning <- trimws(as.character(df$Inning))
+    tb <- if ("Top/Bottom" %in% names(df)) trimws(as.character(df[["Top/Bottom"]])) else rep("", nrow(df))
+    pitchofpa <- suppressWarnings(as.numeric(df$PitchofPA))
+    gk <- .abp_game_key(df)
+    valid_base <- nzchar(inning) & is.finite(pitchofpa)
+    out <- rep(NA_character_, nrow(df))
+    if (!any(valid_base)) return(out)
+    frame <- data.frame(
+      row_id = seq_len(nrow(df)),
+      game_key = ifelse(is.na(gk) | !nzchar(gk), "unknown_game", gk),
+      inning = inning,
+      tb = tb,
+      pitchofpa = pitchofpa,
+      valid = valid_base,
+      stringsAsFactors = FALSE
+    )
+    frame <- frame %>% dplyr::filter(valid)
+    if (!nrow(frame)) return(out)
+    frame <- frame %>%
+      dplyr::group_by(game_key, inning, tb) %>%
+      dplyr::mutate(pa_seq = cumsum(dplyr::if_else(dplyr::row_number() == 1L | pitchofpa == 1, 1L, 0L))) %>%
+      dplyr::ungroup()
+    out[frame$row_id] <- paste(frame$game_key, frame$inning, frame$tb, frame$pa_seq, sep = "::")
+    out
+  }
+  
   .abp_fmt_mdy <- function(d) format(as.Date(d), "%m/%d/%Y")
   
   # "Last, First" -> "First Last"
@@ -33070,7 +33099,9 @@ deg_to_clock <- function(x) {
     pit <- input$pitcher
     if (is.null(pit) || identical(pit, "All")) return(as.Date(character(0)))
     
-    d <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit)
+    d <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = TRUE), input$sessionType)
+    d <- apply_pitching_team_filter(d, input$teamType)
+    d <- d %>% dplyr::filter(Pitcher == pit)
     term <- .abp_is_terminal(d)
     sort(unique(as.Date(d$Date[term])))
   })
@@ -33094,7 +33125,9 @@ deg_to_clock <- function(x) {
     
     # Pitch-type legend: only types this pitcher actually threw
     types_for_legend <- {
-      d <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit)
+      d <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = TRUE), input$sessionType)
+      d <- apply_pitching_team_filter(d, input$teamType)
+      d <- d %>% dplyr::filter(Pitcher == pit)
       intersect(names(all_colors), as.character(unique(d$TaggedPitchType)))
     }
     dark_on <- isTRUE(input$dark_mode)
@@ -33155,8 +33188,21 @@ deg_to_clock <- function(x) {
     dt_chr <- input$abpGameDate; req(!is.null(dt_chr))
     the_date <- as.Date(dt_chr)
     
-    # Filter: selected pitcher on selected date (ignore the global date range for this page)
-    df_all <- pitch_data_pitching %>% dplyr::filter(Pitcher == pit, as.Date(Date) == the_date)
+    # Filter: selected pitcher on selected date (ignore the global date range for this page),
+    # but keep same suite context (session/team/hand/batter-side) as Summary filters.
+    df_all <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = TRUE), input$sessionType)
+    df_all <- apply_pitching_team_filter(df_all, input$teamType)
+    df_all <- df_all %>%
+      dplyr::filter(Pitcher == pit, as.Date(Date) == the_date)
+    if (!is.null(input$hand) && input$hand != "All") {
+      df_all <- dplyr::filter(df_all, PitcherThrows == input$hand)
+    }
+    if (!is.null(input$batterSide) && input$batterSide != "All") {
+      df_all <- df_all %>% dplyr::filter(SessionType != "Live" | (SessionType == "Live" & BatterSide == input$batterSide))
+    }
+    if (!is.null(input$oppHitter) && input$oppHitter != "All") {
+      df_all <- dplyr::filter(df_all, Batter == input$oppHitter)
+    }
     df_all <- .abp_arrange_rows(df_all)
     
     if (!nrow(df_all)) return(div(tags$em("No pitches for this pitcher on the selected date.")))
@@ -33169,6 +33215,9 @@ deg_to_clock <- function(x) {
     
     # Prefer structural PA grouping (game+inning+half+PAofInning) when available.
     pa_struct <- .abp_struct_pa_key(df_all)
+    if (!any(!is.na(pa_struct))) {
+      pa_struct <- .abp_struct_pa_key_from_pitchofpa(df_all)
+    }
     if (any(!is.na(pa_struct))) {
       df_all$._pa_group <- ifelse(is.na(pa_struct), paste0(df_all$._game_key, "::row::", seq_len(nrow(df_all))), pa_struct)
       pa_done <- tapply(term_all, df_all$._pa_group, function(x) any(x, na.rm = TRUE))
