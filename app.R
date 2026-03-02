@@ -33068,6 +33068,38 @@ deg_to_clock <- function(x) {
     out
   }
   
+  .abp_score_pa_key <- function(keys, term_mask) {
+    valid <- !is.na(keys) & nzchar(keys)
+    if (!any(valid)) return(list(score = -Inf))
+    
+    idx_by_key <- split(which(valid), keys[valid])
+    done <- vapply(idx_by_key, function(idx) any(term_mask[idx], na.rm = TRUE), logical(1))
+    if (!any(done)) return(list(score = -Inf))
+    
+    done_groups <- idx_by_key[done]
+    group_sizes <- vapply(done_groups, length, integer(1))
+    term_counts <- vapply(done_groups, function(idx) sum(term_mask[idx], na.rm = TRUE), integer(1))
+    
+    # Prefer keys that retain multi-pitch PAs; penalize keys that merge multiple terminal events.
+    score <- sum(group_sizes - 1L) - (3L * sum(pmax(term_counts - 1L, 0L)))
+    list(score = score)
+  }
+  
+  .abp_best_struct_pa_key <- function(df, term_mask) {
+    key_by_paofinning <- .abp_struct_pa_key(df)
+    key_by_pitchofpa <- .abp_struct_pa_key_from_pitchofpa(df)
+    
+    s_pa <- .abp_score_pa_key(key_by_paofinning, term_mask)
+    s_po <- .abp_score_pa_key(key_by_pitchofpa, term_mask)
+    
+    if (is.finite(s_po$score) && (!is.finite(s_pa$score) || s_po$score > s_pa$score)) {
+      return(key_by_pitchofpa)
+    }
+    if (is.finite(s_pa$score)) return(key_by_paofinning)
+    if (is.finite(s_po$score)) return(key_by_pitchofpa)
+    rep(NA_character_, nrow(df))
+  }
+  
   .abp_fmt_mdy <- function(d) format(as.Date(d), "%m/%d/%Y")
   
   # "Last, First" -> "First Last"
@@ -33212,11 +33244,8 @@ deg_to_clock <- function(x) {
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
     
-    # Prefer structural PA grouping (game+inning+half+PAofInning) when available.
-    pa_struct <- .abp_struct_pa_key(df_all)
-    if (!any(!is.na(pa_struct))) {
-      pa_struct <- .abp_struct_pa_key_from_pitchofpa(df_all)
-    }
+    # Prefer the structural grouping that best preserves complete multi-pitch PAs.
+    pa_struct <- .abp_best_struct_pa_key(df_all, term_all)
     if (any(!is.na(pa_struct))) {
       df_all$._pa_group <- ifelse(is.na(pa_struct), paste0(df_all$._game_key, "::row::", seq_len(nrow(df_all))), pa_struct)
       pa_done <- tapply(term_all, df_all$._pa_group, function(x) any(x, na.rm = TRUE))
