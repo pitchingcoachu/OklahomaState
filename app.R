@@ -33265,43 +33265,18 @@ deg_to_clock <- function(x) {
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
     df_all$._terminal <- term_all
 
-    # Prefer structural keys (Inning/PAofInning or Inning/PitchofPA resets) when available.
-    pa_key_all <- .abp_best_struct_pa_key(df_all, term_all)
-    valid_struct <- !is.na(pa_key_all) & nzchar(pa_key_all)
-
-    # Fallback segmentation for sparse/badly-keyed feeds.
-    if (!all(valid_struct)) {
-      pitchofpa_num <- if ("PitchofPA" %in% names(df_all)) suppressWarnings(as.numeric(df_all$PitchofPA)) else rep(NA_real_, nrow(df_all))
-      inning_chr <- if ("Inning" %in% names(df_all)) trimws(as.character(df_all$Inning)) else rep("", nrow(df_all))
-      tb_chr <- if ("Top/Bottom" %in% names(df_all)) trimws(as.character(df_all[["Top/Bottom"]])) else rep("", nrow(df_all))
-      paofinning_chr <- if ("PAofInning" %in% names(df_all)) trimws(as.character(df_all$PAofInning)) else rep("", nrow(df_all))
-      batter_chr <- if ("Batter" %in% names(df_all)) trimws(as.character(df_all$Batter)) else rep("", nrow(df_all))
-
-      pa_start <- rep(FALSE, nrow(df_all))
-      pa_id <- integer(nrow(df_all))
-      key_levels <- unique(df_all$._game_key)
-      for (gk in key_levels) {
-        idx <- which(df_all$._game_key == gk)
-        if (!length(idx)) next
-        pa_start[idx[1]] <- TRUE
-        if (length(idx) > 1) {
-          for (k in 2:length(idx)) {
-            i <- idx[k]
-            j <- idx[k - 1]
-            by_pitchofpa_reset <- is.finite(pitchofpa_num[i]) && is.finite(pitchofpa_num[j]) &&
-              ((pitchofpa_num[i] == 1 && pitchofpa_num[j] != 1) || (pitchofpa_num[i] < pitchofpa_num[j]))
-            by_inning <- nzchar(inning_chr[i]) && nzchar(inning_chr[j]) && (inning_chr[i] != inning_chr[j])
-            by_tb <- nzchar(tb_chr[i]) && nzchar(tb_chr[j]) && (tb_chr[i] != tb_chr[j])
-            by_paofinning <- nzchar(paofinning_chr[i]) && nzchar(paofinning_chr[j]) && (paofinning_chr[i] != paofinning_chr[j])
-            by_batter <- nzchar(batter_chr[i]) && nzchar(batter_chr[j]) && (batter_chr[i] != batter_chr[j])
-            pa_start[i] <- by_pitchofpa_reset || by_inning || by_tb || by_paofinning || by_batter
-          }
-        }
-        pa_id[idx] <- cumsum(pa_start[idx])
-      }
-      fallback_key <- paste0(df_all$._game_key, "::", pa_id)
-      pa_key_all[!valid_struct] <- fallback_key[!valid_struct]
+    # Segment PAs primarily by terminal boundaries to avoid feed-specific PA key issues.
+    # New PA starts at first row in game, or immediately after a terminal pitch.
+    pa_id <- integer(nrow(df_all))
+    key_levels <- unique(df_all$._game_key)
+    for (gk in key_levels) {
+      idx <- which(df_all$._game_key == gk)
+      if (!length(idx)) next
+      term_g <- term_all[idx]
+      term_g[is.na(term_g)] <- FALSE
+      pa_id[idx] <- cumsum(c(TRUE, utils::head(term_g, -1L)))
     }
+    pa_key_all <- paste0(df_all$._game_key, "::", pa_id)
 
     pa_has_terminal <- tapply(df_all$._terminal, pa_key_all, function(x) any(x, na.rm = TRUE))
     done_keys <- names(pa_has_terminal)[which(pa_has_terminal)]
