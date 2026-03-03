@@ -33303,9 +33303,12 @@ deg_to_clock <- function(x) {
     pa_key_all <- rep(NA_character_, nrow(df_all))
     pa_key_all[valid_struct] <- paste(df_all$._game_key[valid_struct], inning_chr[valid_struct], tb_chr[valid_struct], paofinning_chr[valid_struct], sep = "::")
     
-    # Fallback when PAofInning is missing: split by PitchofPA reset.
+    # Fallback when PAofInning is missing: split by robust pitch-order transitions.
     if (any(!valid_struct)) {
       fallback_id <- integer(nrow(df_all))
+      batter_chr <- if ("Batter" %in% names(df_all)) trimws(as.character(df_all$Batter)) else rep("", nrow(df_all))
+      balls_num <- if ("Balls" %in% names(df_all)) suppressWarnings(as.numeric(df_all$Balls)) else rep(NA_real_, nrow(df_all))
+      strikes_num <- if ("Strikes" %in% names(df_all)) suppressWarnings(as.numeric(df_all$Strikes)) else rep(NA_real_, nrow(df_all))
       for (gk in unique(df_all$._game_key)) {
         idx <- which(df_all$._game_key == gk)
         if (!length(idx)) next
@@ -33313,10 +33316,21 @@ deg_to_clock <- function(x) {
         start[1] <- TRUE
         if (length(idx) > 1) {
           p <- pitchofpa_num[idx]
+          inn <- inning_chr[idx]
+          tb <- tb_chr[idx]
+          bat <- batter_chr[idx]
+          bb <- balls_num[idx]
+          ss <- strikes_num[idx]
           for (k in 2:length(idx)) {
             prev <- p[k - 1]
             cur <- p[k]
-            start[k] <- is.finite(cur) && is.finite(prev) && (cur == 1 || cur < prev)
+            by_pitch_reset <- is.finite(cur) && is.finite(prev) && (cur == 1 || cur < prev)
+            by_inning <- nzchar(inn[k]) && nzchar(inn[k - 1]) && (inn[k] != inn[k - 1])
+            by_tb <- nzchar(tb[k]) && nzchar(tb[k - 1]) && (tb[k] != tb[k - 1])
+            by_batter <- nzchar(bat[k]) && nzchar(bat[k - 1]) && (bat[k] != bat[k - 1])
+            by_count_reset <- is.finite(bb[k]) && is.finite(ss[k]) && is.finite(bb[k - 1]) && is.finite(ss[k - 1]) &&
+              (bb[k] == 0 && ss[k] == 0) && (bb[k - 1] > 0 || ss[k - 1] > 0)
+            start[k] <- by_pitch_reset || by_inning || by_tb || by_batter || by_count_reset
           }
         }
         fallback_id[idx] <- cumsum(start)
@@ -33464,7 +33478,7 @@ deg_to_clock <- function(x) {
               scale_color_manual(values = cols[types], limits = types, name = NULL) +
               scale_fill_manual(values  = cols[types], limits = types, name = NULL) +
               scale_shape_manual(values = shape_map, drop = TRUE, name = NULL) +
-              coord_fixed(ratio = 1, xlim = c(-3, 3), ylim = c(0.5, 5)) +
+              coord_fixed(ratio = 1, xlim = c(-3.4, 3.4), ylim = c(0.2, 5.3)) +
               theme_void() + theme(legend.position = "none",
                                    plot.title = element_text(color = axis_col))
             
