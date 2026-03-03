@@ -32967,21 +32967,25 @@ deg_to_clock <- function(x) {
   
   # Build the PA-level result label (same logic as hitting)
   .abp_pa_result_label <- function(last_row) {
-    pr <- as.character(last_row$PlayResult)
-    kc <- as.character(last_row$KorBB)
-    pc <- as.character(last_row$PitchCall)
-    th <- as.character(last_row$TaggedHitType)
+    clean_val <- function(x) {
+      x <- trimws(as.character(x))
+      ifelse(is.na(x) | x == "" | x == "Undefined", NA_character_, x)
+    }
+    pr <- clean_val(last_row$PlayResult)
+    kc <- clean_val(last_row$KorBB)
+    pc <- clean_val(last_row$PitchCall)
+    th <- clean_val(last_row$TaggedHitType)
     
     if (!is.na(pc) && pc == "HitByPitch") return("HitByPitch")
     if (!is.na(kc) && kc %in% c("Strikeout","Walk")) return(kc)
     
-    if (!is.na(pr) && pr != "" && pr != "Undefined") {
+    if (!is.na(pr)) {
       if (pr == "HomeRun") return("HomeRun")
-      th_clean <- ifelse(is.na(th) | th == "", "", paste0(th, " "))
+      th_clean <- ifelse(is.na(th), "", paste0(th, " "))
       return(paste0(th_clean, pr))
     }
-    if (!is.na(pr) && pr != "") return(pr)
-    if (!is.na(pc) && pc != "") return(pc)
+    if (!is.na(pr)) return(pr)
+    if (!is.na(pc)) return(pc)
     "Result"
   }
   
