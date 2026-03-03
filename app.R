@@ -33319,37 +33319,63 @@ deg_to_clock <- function(x) {
     pa_levels <- unique(pa_key_all)
     pa_list_all <- split(df_all, factor(pa_key_all, levels = pa_levels))
     
-    pa_meta <- lapply(pa_list_all, function(pa_df) {
-      raw_n <- nrow(pa_df)
-      term_pa <- .abp_is_terminal(pa_df)
-      term_pa[is.na(term_pa)] <- FALSE
-      first_term_idx <- if (any(term_pa)) which(term_pa)[1] else NA_integer_
-      term_row <- if (is.finite(first_term_idx)) pa_df[first_term_idx, , drop = FALSE] else pa_df[nrow(pa_df), , drop = FALSE]
-      if (any(term_pa)) {
-        # Keep pitches only through the first terminal event in the PA.
-        pa_df <- pa_df[seq_len(first_term_idx), , drop = FALSE]
+    pa_meta <- list()
+    pa_keys <- names(pa_list_all)
+    for (pi in seq_along(pa_list_all)) {
+      pa_df <- pa_list_all[[pi]]
+      parent_key <- pa_keys[[pi]]
+      term_parent <- .abp_is_terminal(pa_df)
+      term_parent[is.na(term_parent)] <- FALSE
+      
+      # If a coarse key merged multiple PAs, split at rows following terminal pitches.
+      if (nrow(pa_df) > 1) {
+        sub_grp <- cumsum(dplyr::lag(term_parent, default = FALSE)) + 1L
+      } else {
+        sub_grp <- 1L
       }
-      bvals <- trimws(as.character(pa_df$Batter %||% ""))
-      bvals <- bvals[nzchar(bvals)]
-      batter_label <- if (length(bvals)) bvals[[length(bvals)]] else "Unknown Batter"
-      svals <- trimws(as.character(pa_df$BatterSide %||% ""))
-      svals <- svals[nzchar(svals)]
-      side_val <- if (length(svals)) svals[[length(svals)]] else ""
-      list(
-        batter = batter_label,
-        side = side_val,
-        data = pa_df,
-        debug = list(
-          raw_n = raw_n,
-          shown_n = nrow(pa_df),
-          has_terminal = any(term_pa),
-          first_term_idx = first_term_idx,
-          terminal_pitchcall = as.character(term_row$PitchCall %||% ""),
-          terminal_playresult = as.character(term_row$PlayResult %||% ""),
-          terminal_korbb = as.character(term_row$KorBB %||% "")
+      sub_list <- split(pa_df, sub_grp)
+      sub_completed <- Filter(function(x) {
+        t <- .abp_is_terminal(x)
+        t[is.na(t)] <- FALSE
+        any(t)
+      }, sub_list)
+      if (!length(sub_completed)) sub_completed <- sub_list
+      
+      for (si in seq_along(sub_completed)) {
+        pa_sub <- sub_completed[[si]]
+        raw_n <- nrow(pa_sub)
+        term_pa <- .abp_is_terminal(pa_sub)
+        term_pa[is.na(term_pa)] <- FALSE
+        first_term_idx <- if (any(term_pa)) which(term_pa)[1] else NA_integer_
+        term_row <- if (is.finite(first_term_idx)) pa_sub[first_term_idx, , drop = FALSE] else pa_sub[nrow(pa_sub), , drop = FALSE]
+        if (any(term_pa)) {
+          # Keep pitches only through the first terminal event in the PA.
+          pa_sub <- pa_sub[seq_len(first_term_idx), , drop = FALSE]
+        }
+        bvals <- trimws(as.character(pa_sub$Batter %||% ""))
+        bvals <- bvals[nzchar(bvals)]
+        batter_label <- if (length(bvals)) bvals[[length(bvals)]] else "Unknown Batter"
+        svals <- trimws(as.character(pa_sub$BatterSide %||% ""))
+        svals <- svals[nzchar(svals)]
+        side_val <- if (length(svals)) svals[[length(svals)]] else ""
+        
+        pa_meta[[length(pa_meta) + 1L]] <- list(
+          pa_key = paste0(parent_key, "_", si),
+          batter = batter_label,
+          side = side_val,
+          data = pa_sub,
+          debug = list(
+            raw_n = raw_n,
+            shown_n = nrow(pa_sub),
+            has_terminal = any(term_pa),
+            first_term_idx = first_term_idx,
+            terminal_pitchcall = as.character(term_row$PitchCall %||% ""),
+            terminal_playresult = as.character(term_row$PlayResult %||% ""),
+            terminal_korbb = as.character(term_row$KorBB %||% "")
+          )
         )
-      )
-    })
+      }
+    }
     
     batter_order <- unique(vapply(pa_meta, function(x) x$batter, character(1)))
     
@@ -33412,7 +33438,7 @@ deg_to_clock <- function(x) {
           )
         } else NULL
         
-        pa_name <- names(pa_list_all)[idx_for_batter[i]]
+        pa_name <- pa_for_batter[[i]]$pa_key
         pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", pa_name))
         out_id <- ns(paste0("abpPlot_", pid))
         
