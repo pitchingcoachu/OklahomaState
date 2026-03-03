@@ -33244,27 +33244,18 @@ deg_to_clock <- function(x) {
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
     
-    # Prefer the structural grouping that best preserves complete multi-pitch PAs.
-    pa_struct <- .abp_best_struct_pa_key(df_all, term_all)
-    if (any(!is.na(pa_struct))) {
-      df_all$._pa_group <- ifelse(is.na(pa_struct), paste0(df_all$._game_key, "::row::", seq_len(nrow(df_all))), pa_struct)
-      pa_done <- tapply(term_all, df_all$._pa_group, function(x) any(x, na.rm = TRUE))
-      done_keys <- names(pa_done)[which(pa_done)]
-      df_all <- df_all[df_all$._pa_group %in% done_keys, , drop = FALSE]
-      pa_key_all <- df_all$._pa_group
-    } else {
-      # Fallback for feeds without structural PA columns.
-      df_all$._terminal <- term_all
-      df_all <- df_all %>%
-        dplyr::group_by(._game_key) %>%
-        dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
-        dplyr::ungroup()
-      pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
-      done_keys <- unique(pa_key_all[df_all$._terminal])
-      df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
-      pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
-      df_all$._terminal <- NULL
-    }
+    # Robust PA segmentation: use game-order + terminal pitch boundaries.
+    # This avoids dropping early pitches when structural PA columns are sparse/inconsistent.
+    df_all$._terminal <- term_all
+    df_all <- df_all %>%
+      dplyr::group_by(._game_key) %>%
+      dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
+      dplyr::ungroup()
+    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+    done_keys <- unique(pa_key_all[df_all$._terminal])
+    df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
+    pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
+    df_all$._terminal <- NULL
     if (!nrow(df_all)) {
       return(div(tags$em("No completed plate appearances on this date.")))
     }
@@ -33385,7 +33376,7 @@ deg_to_clock <- function(x) {
         
         div(
           style = "display:inline-block; margin:0 8px 12px 0; vertical-align:top; text-align:center;",
-          tags$div(tags$strong(paste0("PA #", i))),
+          tags$div(tags$strong(paste0("PA #", i, " (", nrow(dat), " pitches)"))),
           tags$div(title_result, style = "margin-bottom:6px;"),
           ggiraph::girafeOutput(out_id, height = "300px", width = "300px")
         )
