@@ -33104,6 +33104,39 @@ deg_to_clock <- function(x) {
     rep(NA_character_, nrow(df))
   }
   
+  .abp_count_pa_key <- function(df) {
+    needed <- c("Balls", "Strikes")
+    if (!all(needed %in% names(df))) return(rep(NA_character_, nrow(df)))
+    gk <- .abp_game_key(df)
+    game_key <- ifelse(is.na(gk) | !nzchar(gk), "unknown_game", gk)
+    balls <- suppressWarnings(as.numeric(df$Balls))
+    strikes <- suppressWarnings(as.numeric(df$Strikes))
+    valid <- is.finite(balls) & is.finite(strikes)
+    
+    out <- rep(NA_character_, nrow(df))
+    for (g in unique(game_key)) {
+      idx <- which(game_key == g)
+      if (!length(idx)) next
+      b <- balls[idx]
+      s <- strikes[idx]
+      v <- valid[idx]
+      start <- rep(FALSE, length(idx))
+      start[1] <- TRUE
+      if (length(idx) > 1) {
+        for (k in 2:length(idx)) {
+          reset_to_00 <- v[k] && (b[k] == 0) && (s[k] == 0)
+          prev_is_00 <- v[k - 1] && (b[k - 1] == 0) && (s[k - 1] == 0)
+          count_drop <- v[k] && v[k - 1] && ((b[k] < b[k - 1]) || (s[k] < s[k - 1]))
+          valid_edge <- (!v[k - 1] && v[k])
+          start[k] <- (reset_to_00 && !prev_is_00) || count_drop || valid_edge
+        }
+      }
+      pa_seq <- cumsum(start)
+      out[idx] <- paste(game_key[idx], pa_seq, sep = "::")
+    }
+    out
+  }
+  
   .abp_fmt_mdy <- function(d) format(as.Date(d), "%m/%d/%Y")
   
   # "Last, First" -> "First Last"
@@ -33265,18 +33298,37 @@ deg_to_clock <- function(x) {
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
     df_all$._terminal <- term_all
 
-    # Segment PAs primarily by terminal boundaries to avoid feed-specific PA key issues.
-    # New PA starts at first row in game, or immediately after a terminal pitch.
-    pa_id <- integer(nrow(df_all))
+    # Build multiple PA key candidates and pick the best-scoring one for this dataset.
+    # This handles feeds where one keying method is intermittently unreliable.
+    pa_id_terminal <- integer(nrow(df_all))
     key_levels <- unique(df_all$._game_key)
     for (gk in key_levels) {
       idx <- which(df_all$._game_key == gk)
       if (!length(idx)) next
       term_g <- term_all[idx]
       term_g[is.na(term_g)] <- FALSE
-      pa_id[idx] <- cumsum(c(TRUE, utils::head(term_g, -1L)))
+      pa_id_terminal[idx] <- cumsum(c(TRUE, utils::head(term_g, -1L)))
     }
-    pa_key_all <- paste0(df_all$._game_key, "::", pa_id)
+    pa_key_terminal <- paste0(df_all$._game_key, "::", pa_id_terminal)
+    pa_key_struct <- .abp_best_struct_pa_key(df_all, term_all)
+    pa_key_count <- .abp_count_pa_key(df_all)
+    
+    key_candidates <- list(
+      terminal = pa_key_terminal,
+      structural = pa_key_struct,
+      counts = pa_key_count
+    )
+    key_scores <- vapply(key_candidates, function(k) .abp_score_pa_key(k, term_all)$score, numeric(1))
+    key_sizes <- vapply(key_candidates, function(k) {
+      valid <- !is.na(k) & nzchar(k)
+      if (!any(valid)) return(-Inf)
+      grp <- split(seq_along(k)[valid], k[valid])
+      mean(vapply(grp, length, integer(1)))
+    }, numeric(1))
+    ord <- order(key_scores, key_sizes, decreasing = TRUE)
+    best_name <- names(key_candidates)[ord[1]]
+    if (length(best_name) != 1 || !nzchar(best_name)) best_name <- "terminal"
+    pa_key_all <- key_candidates[[best_name]]
 
     pa_has_terminal <- tapply(df_all$._terminal, pa_key_all, function(x) any(x, na.rm = TRUE))
     done_keys <- names(pa_has_terminal)[which(pa_has_terminal)]
