@@ -33255,6 +33255,11 @@ deg_to_clock <- function(x) {
     term_all[is.na(term_all)] <- FALSE
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
+    df_all$._pitchofpa_src <- if ("PitchofPA" %in% names(df_all)) suppressWarnings(as.numeric(df_all$PitchofPA)) else NA_real_
+    df_all$._inning_chr <- if ("Inning" %in% names(df_all)) trimws(as.character(df_all$Inning)) else rep("", nrow(df_all))
+    df_all$._tb_chr <- if ("Top/Bottom" %in% names(df_all)) trimws(as.character(df_all[["Top/Bottom"]])) else rep("", nrow(df_all))
+    df_all$._paofinning_chr <- if ("PAofInning" %in% names(df_all)) trimws(as.character(df_all$PAofInning)) else rep("", nrow(df_all))
+    df_all$._batter_chr <- if ("Batter" %in% names(df_all)) trimws(as.character(df_all$Batter)) else rep("", nrow(df_all))
     
     # Robust PA segmentation: derive PA starts from pitch order / structural transitions,
     # then use terminal flags only to drop a trailing incomplete PA.
@@ -33263,7 +33268,7 @@ deg_to_clock <- function(x) {
       dplyr::group_by(._game_key) %>%
       dplyr::mutate(
         .row_in_game = dplyr::row_number(),
-        .pitchofpa_num = suppressWarnings(as.numeric(PitchofPA)),
+        .pitchofpa_num = ._pitchofpa_src,
         .pa_start = .row_in_game == 1L
       ) %>%
       dplyr::mutate(
@@ -33274,23 +33279,24 @@ deg_to_clock <- function(x) {
               (.pitchofpa_num <= dplyr::lag(.pitchofpa_num))
           ) |
           (
-            "Inning" %in% names(.) &
-              (trimws(as.character(Inning)) != trimws(as.character(dplyr::lag(Inning, default = first(Inning)))))
+            nzchar(._inning_chr) &
+              nzchar(dplyr::lag(._inning_chr, default = first(._inning_chr))) &
+              (._inning_chr != dplyr::lag(._inning_chr, default = first(._inning_chr)))
           ) |
           (
-            "Top/Bottom" %in% names(.) &
-              (trimws(as.character(`Top/Bottom`)) != trimws(as.character(dplyr::lag(`Top/Bottom`, default = first(`Top/Bottom`)))))
+            nzchar(._tb_chr) &
+              nzchar(dplyr::lag(._tb_chr, default = first(._tb_chr))) &
+              (._tb_chr != dplyr::lag(._tb_chr, default = first(._tb_chr)))
           ) |
           (
-            "PAofInning" %in% names(.) &
-              nzchar(trimws(as.character(PAofInning))) &
-              nzchar(trimws(as.character(dplyr::lag(PAofInning, default = first(PAofInning))))) &
-              (trimws(as.character(PAofInning)) != trimws(as.character(dplyr::lag(PAofInning, default = first(PAofInning)))))
+            nzchar(._paofinning_chr) &
+              nzchar(dplyr::lag(._paofinning_chr, default = first(._paofinning_chr))) &
+              (._paofinning_chr != dplyr::lag(._paofinning_chr, default = first(._paofinning_chr)))
           ) |
           (
-            nzchar(trimws(as.character(Batter))) &
-              nzchar(trimws(as.character(dplyr::lag(Batter, default = first(Batter))))) &
-              (trimws(as.character(Batter)) != trimws(as.character(dplyr::lag(Batter, default = first(Batter)))))
+            nzchar(._batter_chr) &
+              nzchar(dplyr::lag(._batter_chr, default = first(._batter_chr))) &
+              (._batter_chr != dplyr::lag(._batter_chr, default = first(._batter_chr)))
           )
       ) %>%
       dplyr::mutate(._pa_id = cumsum(._pa_start)) %>%
@@ -33309,6 +33315,11 @@ deg_to_clock <- function(x) {
     df_all$._row_in_game <- NULL
     df_all$._pitchofpa_num <- NULL
     df_all$._pa_start <- NULL
+    df_all$._pitchofpa_src <- NULL
+    df_all$._inning_chr <- NULL
+    df_all$._tb_chr <- NULL
+    df_all$._paofinning_chr <- NULL
+    df_all$._batter_chr <- NULL
     if (!nrow(df_all)) {
       return(div(tags$em("No completed plate appearances on this date.")))
     }
