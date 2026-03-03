@@ -33291,58 +33291,44 @@ deg_to_clock <- function(x) {
     
     if (!nrow(df_all)) return(div(tags$em("No pitches for this pitcher on the selected date.")))
     
-    # Segment completed PAs first (across all batters), then assign each PA to a batter label.
-    term_all <- .abp_is_terminal(df_all)
-    term_all[is.na(term_all)] <- FALSE
+    # Group plate appearances directly from game structure, preserving CSV order.
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
-    df_all$._terminal <- term_all
-
-    # Build multiple PA key candidates and pick the best-scoring one for this dataset.
-    # This handles feeds where one keying method is intermittently unreliable.
-    pa_id_terminal <- integer(nrow(df_all))
-    key_levels <- unique(df_all$._game_key)
-    for (gk in key_levels) {
-      idx <- which(df_all$._game_key == gk)
-      if (!length(idx)) next
-      term_g <- term_all[idx]
-      term_g[is.na(term_g)] <- FALSE
-      pa_id_terminal[idx] <- cumsum(c(TRUE, utils::head(term_g, -1L)))
-    }
-    pa_key_terminal <- paste0(df_all$._game_key, "::", pa_id_terminal)
-    pa_key_struct <- .abp_best_struct_pa_key(df_all, term_all)
-    pa_key_count <- .abp_count_pa_key(df_all)
+    inning_chr <- if ("Inning" %in% names(df_all)) trimws(as.character(df_all$Inning)) else rep("", nrow(df_all))
+    tb_chr <- if ("Top/Bottom" %in% names(df_all)) trimws(as.character(df_all[["Top/Bottom"]])) else rep("", nrow(df_all))
+    paofinning_chr <- if ("PAofInning" %in% names(df_all)) trimws(as.character(df_all$PAofInning)) else rep("", nrow(df_all))
+    pitchofpa_num <- if ("PitchofPA" %in% names(df_all)) suppressWarnings(as.numeric(df_all$PitchofPA)) else rep(NA_real_, nrow(df_all))
     
-    key_candidates <- list(
-      terminal = pa_key_terminal,
-      structural = pa_key_struct,
-      counts = pa_key_count
-    )
-    key_scores <- vapply(key_candidates, function(k) .abp_score_pa_key(k, term_all)$score, numeric(1))
-    key_sizes <- vapply(key_candidates, function(k) {
-      valid <- !is.na(k) & nzchar(k)
-      if (!any(valid)) return(-Inf)
-      grp <- split(seq_along(k)[valid], k[valid])
-      mean(vapply(grp, length, integer(1)))
-    }, numeric(1))
-    ord <- order(key_scores, key_sizes, decreasing = TRUE)
-    best_name <- names(key_candidates)[ord[1]]
-    if (length(best_name) != 1 || !nzchar(best_name)) best_name <- "terminal"
-    pa_key_all <- key_candidates[[best_name]]
-
-    pa_has_terminal <- tapply(df_all$._terminal, pa_key_all, function(x) any(x, na.rm = TRUE))
-    done_keys <- names(pa_has_terminal)[which(pa_has_terminal)]
-    if (!length(done_keys)) {
-      # Fallback: if terminal flags are unreliable, keep all segmented PAs.
-      done_keys <- unique(pa_key_all)
+    valid_struct <- nzchar(inning_chr) & nzchar(paofinning_chr)
+    pa_key_all <- rep(NA_character_, nrow(df_all))
+    pa_key_all[valid_struct] <- paste(df_all$._game_key[valid_struct], inning_chr[valid_struct], tb_chr[valid_struct], paofinning_chr[valid_struct], sep = "::")
+    
+    # Fallback when PAofInning is missing: split by PitchofPA reset.
+    if (any(!valid_struct)) {
+      fallback_id <- integer(nrow(df_all))
+      for (gk in unique(df_all$._game_key)) {
+        idx <- which(df_all$._game_key == gk)
+        if (!length(idx)) next
+        start <- rep(FALSE, length(idx))
+        start[1] <- TRUE
+        if (length(idx) > 1) {
+          p <- pitchofpa_num[idx]
+          for (k in 2:length(idx)) {
+            prev <- p[k - 1]
+            cur <- p[k]
+            start[k] <- is.finite(cur) && is.finite(prev) && (cur == 1 || cur < prev)
+          }
+        }
+        fallback_id[idx] <- cumsum(start)
+      }
+      fallback_key <- paste(df_all$._game_key, fallback_id, sep = "::")
+      pa_key_all[!valid_struct] <- fallback_key[!valid_struct]
     }
-    df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
-    pa_key_all <- pa_key_all[pa_key_all %in% done_keys]
-    df_all$._terminal <- NULL
-    if (!nrow(df_all)) {
-      return(div(tags$em("No completed plate appearances on this date.")))
-    }
-    if ("._pa_group" %in% names(df_all)) df_all$._pa_group <- NULL
+    
+    # Last fallback: each row as its own PA key (only if keys are still missing).
+    missing_key <- is.na(pa_key_all) | !nzchar(pa_key_all)
+    if (any(missing_key)) pa_key_all[missing_key] <- paste(df_all$._game_key[missing_key], seq_len(sum(missing_key)), sep = "::row::")
+    
     pa_levels <- unique(pa_key_all)
     pa_list_all <- split(df_all, factor(pa_key_all, levels = pa_levels))
     
@@ -33350,58 +33336,36 @@ deg_to_clock <- function(x) {
     pa_keys <- names(pa_list_all)
     for (pi in seq_along(pa_list_all)) {
       pa_df <- pa_list_all[[pi]]
-      parent_key <- pa_keys[[pi]]
-      term_parent <- .abp_is_terminal(pa_df)
-      term_parent[is.na(term_parent)] <- FALSE
+      pa_name <- pa_keys[[pi]]
+      raw_n <- nrow(pa_df)
       
-      # If a coarse key merged multiple PAs, split at rows following terminal pitches.
-      if (nrow(pa_df) > 1) {
-        sub_grp <- cumsum(dplyr::lag(term_parent, default = FALSE)) + 1L
-      } else {
-        sub_grp <- 1L
-      }
-      sub_list <- split(pa_df, sub_grp)
-      sub_completed <- Filter(function(x) {
-        t <- .abp_is_terminal(x)
-        t[is.na(t)] <- FALSE
-        any(t)
-      }, sub_list)
-      if (!length(sub_completed)) sub_completed <- sub_list
+      term_pa <- .abp_is_terminal(pa_df)
+      term_pa[is.na(term_pa)] <- FALSE
+      term_idx <- if (any(term_pa)) tail(which(term_pa), 1) else NA_integer_
+      term_row <- if (is.finite(term_idx)) pa_df[term_idx, , drop = FALSE] else pa_df[nrow(pa_df), , drop = FALSE]
       
-      for (si in seq_along(sub_completed)) {
-        pa_sub <- sub_completed[[si]]
-        raw_n <- nrow(pa_sub)
-        term_pa <- .abp_is_terminal(pa_sub)
-        term_pa[is.na(term_pa)] <- FALSE
-        first_term_idx <- if (any(term_pa)) which(term_pa)[1] else NA_integer_
-        term_row <- if (is.finite(first_term_idx)) pa_sub[first_term_idx, , drop = FALSE] else pa_sub[nrow(pa_sub), , drop = FALSE]
-        if (any(term_pa)) {
-          # Keep pitches only through the first terminal event in the PA.
-          pa_sub <- pa_sub[seq_len(first_term_idx), , drop = FALSE]
-        }
-        bvals <- trimws(as.character(pa_sub$Batter %||% ""))
-        bvals <- bvals[nzchar(bvals)]
-        batter_label <- if (length(bvals)) bvals[[length(bvals)]] else "Unknown Batter"
-        svals <- trimws(as.character(pa_sub$BatterSide %||% ""))
-        svals <- svals[nzchar(svals)]
-        side_val <- if (length(svals)) svals[[length(svals)]] else ""
-        
-        pa_meta[[length(pa_meta) + 1L]] <- list(
-          pa_key = paste0(parent_key, "_", si),
-          batter = batter_label,
-          side = side_val,
-          data = pa_sub,
-          debug = list(
-            raw_n = raw_n,
-            shown_n = nrow(pa_sub),
-            has_terminal = any(term_pa),
-            first_term_idx = first_term_idx,
-            terminal_pitchcall = as.character(term_row$PitchCall %||% ""),
-            terminal_playresult = as.character(term_row$PlayResult %||% ""),
-            terminal_korbb = as.character(term_row$KorBB %||% "")
-          )
+      bvals <- trimws(as.character(pa_df$Batter %||% ""))
+      bvals <- bvals[nzchar(bvals)]
+      batter_label <- if (length(bvals)) bvals[[1]] else "Unknown Batter"
+      svals <- trimws(as.character(pa_df$BatterSide %||% ""))
+      svals <- svals[nzchar(svals)]
+      side_val <- if (length(svals)) svals[[1]] else ""
+      
+      pa_meta[[length(pa_meta) + 1L]] <- list(
+        pa_key = pa_name,
+        batter = batter_label,
+        side = side_val,
+        data = pa_df,
+        debug = list(
+          raw_n = raw_n,
+          shown_n = raw_n,
+          has_terminal = any(term_pa),
+          first_term_idx = term_idx,
+          terminal_pitchcall = as.character(term_row$PitchCall %||% ""),
+          terminal_playresult = as.character(term_row$PlayResult %||% ""),
+          terminal_korbb = as.character(term_row$KorBB %||% "")
         )
-      }
+      )
     }
     
     batter_order <- unique(vapply(pa_meta, function(x) x$batter, character(1)))
