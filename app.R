@@ -33181,6 +33181,10 @@ deg_to_clock <- function(x) {
     
     tagList(
       selectInput(ns("abpGameDate"), "Select Game:", choices = choices, selected = sel),
+      tags$details(
+        tags$summary(style = paste0("cursor:pointer;color:", text_col, ";font-size:12px;"), "AB Debug"),
+        checkboxInput(ns("abpDebug"), "Show Debug Details", value = FALSE)
+      ),
       tags$hr(),
       tags$div(tags$strong(style = paste0("color:", text_col), "Pitch Result")),
       shape_rows,
@@ -33308,6 +33312,15 @@ deg_to_clock <- function(x) {
     pa_list_all <- split(df_all, factor(pa_key_all, levels = pa_levels))
     
     pa_meta <- lapply(pa_list_all, function(pa_df) {
+      raw_n <- nrow(pa_df)
+      term_pa <- .abp_is_terminal(pa_df)
+      term_pa[is.na(term_pa)] <- FALSE
+      first_term_idx <- if (any(term_pa)) which(term_pa)[1] else NA_integer_
+      term_row <- if (is.finite(first_term_idx)) pa_df[first_term_idx, , drop = FALSE] else pa_df[nrow(pa_df), , drop = FALSE]
+      if (any(term_pa)) {
+        # Keep pitches only through the first terminal event in the PA.
+        pa_df <- pa_df[seq_len(first_term_idx), , drop = FALSE]
+      }
       bvals <- trimws(as.character(pa_df$Batter %||% ""))
       bvals <- bvals[nzchar(bvals)]
       batter_label <- if (length(bvals)) bvals[[length(bvals)]] else "Unknown Batter"
@@ -33317,7 +33330,16 @@ deg_to_clock <- function(x) {
       list(
         batter = batter_label,
         side = side_val,
-        data = pa_df
+        data = pa_df,
+        debug = list(
+          raw_n = raw_n,
+          shown_n = nrow(pa_df),
+          has_terminal = any(term_pa),
+          first_term_idx = first_term_idx,
+          terminal_pitchcall = as.character(term_row$PitchCall %||% ""),
+          terminal_playresult = as.character(term_row$PlayResult %||% ""),
+          terminal_korbb = as.character(term_row$KorBB %||% "")
+        )
       )
     })
     
@@ -33366,6 +33388,21 @@ deg_to_clock <- function(x) {
         
         # now compute the PA result label from the last pitch of this PA
         title_result <- .abp_pa_result_label(dat[nrow(dat), , drop = FALSE])
+        dbg <- pa_for_batter[[i]]$debug
+        debug_line <- if (isTRUE(input$abpDebug)) {
+          tags$div(
+            style = "font-size:11px; color:#6b7280; margin-bottom:4px;",
+            paste0(
+              "raw=", dbg$raw_n,
+              ", shown=", dbg$shown_n,
+              ", term=", ifelse(isTRUE(dbg$has_terminal), "Y", "N"),
+              ", term_idx=", ifelse(is.finite(dbg$first_term_idx), dbg$first_term_idx, "NA"),
+              ", PC=", ifelse(is.na(dbg$terminal_pitchcall) || dbg$terminal_pitchcall == "", "NA", dbg$terminal_pitchcall),
+              ", PR=", ifelse(is.na(dbg$terminal_playresult) || dbg$terminal_playresult == "", "NA", dbg$terminal_playresult),
+              ", KBB=", ifelse(is.na(dbg$terminal_korbb) || dbg$terminal_korbb == "", "NA", dbg$terminal_korbb)
+            )
+          )
+        } else NULL
         
         pa_name <- names(pa_list_all)[idx_for_batter[i]]
         pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", pa_name))
@@ -33422,6 +33459,7 @@ deg_to_clock <- function(x) {
           style = "display:inline-block; margin:0 8px 12px 0; vertical-align:top; text-align:center;",
           tags$div(tags$strong(paste0("PA #", i, " (", nrow(dat), " pitches)"))),
           tags$div(title_result, style = "margin-bottom:6px;"),
+          debug_line,
           ggiraph::girafeOutput(out_id, height = "300px", width = "300px")
         )
       })
