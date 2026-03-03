@@ -7636,7 +7636,7 @@ pitch_ui <- function(show_header = FALSE) {
 
           # --- Pitching → AB Report tab ---
           tabPanel(
-            "AB Report",
+            "A/B Report",
             value = "pitch_ab_report",
             sidebarLayout(
               sidebarPanel(width = 3, uiOutput("abpSidebar")),
@@ -8099,7 +8099,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
             )
           ),
           tabPanel(
-            "AB Report",
+            "A/B Report",
             sidebarLayout(
               sidebarPanel(
                 # Select Game control and legend live here
@@ -8564,7 +8564,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       hit <- input$hitter
       if (is.null(hit) || identical(hit, "All")) {
         return(tagList(
-          tags$em("Select a single hitter in the main sidebar to enable AB Report.")
+          tags$em("Select a single hitter in the main sidebar to enable A/B Report.")
         ))
       }
       dark_on <- is_dark_mode()
@@ -8638,7 +8638,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       req(is_active())
       hit <- input$hitter
       if (is.null(hit) || identical(hit, "All"))
-        return(div(style="margin:8px 0;", tags$em("Select a single hitter to view the AB Report.")))
+        return(div(style="margin:8px 0;", tags$em("Select a single hitter to view the A/B Report.")))
       
       dt_chr <- input$abGameDate; req(!is.null(dt_chr))
       dt <- as.Date(dt_chr)
@@ -33023,37 +33023,8 @@ deg_to_clock <- function(x) {
   }
   
   .abp_arrange_rows <- function(df) {
-    if (!nrow(df)) return(df)
-    gk <- .abp_game_key(df)
-    gk[is.na(gk) | !nzchar(gk)] <- "unknown_game"
-    src_idx <- seq_len(nrow(df))
-    
-    # Prefer explicit pitch sequence from source feed.
-    if ("PitchNo" %in% names(df)) {
-      pno <- suppressWarnings(as.numeric(df$PitchNo))
-      if (any(is.finite(pno))) {
-        ord <- order(gk, pno, src_idx, na.last = TRUE)
-        return(df[ord, , drop = FALSE])
-      }
-    }
-    
-    # Then datetime if available.
-    if ("UTCDateTime" %in% names(df)) {
-      utc <- suppressWarnings(as.POSIXct(df$UTCDateTime, tz = "UTC"))
-      if (any(is.finite(utc))) {
-        ord <- order(gk, utc, src_idx, na.last = TRUE)
-        return(df[ord, , drop = FALSE])
-      }
-    }
-    if ("LocalDateTime" %in% names(df)) {
-      ldt <- suppressWarnings(as.POSIXct(df$LocalDateTime))
-      if (any(is.finite(ldt))) {
-        ord <- order(gk, ldt, src_idx, na.last = TRUE)
-        return(df[ord, , drop = FALSE])
-      }
-    }
-    
-    # Final fallback: keep incoming order (top-to-bottom from source import).
+    # Keep incoming row order exactly as loaded (CSV top-to-bottom).
+    # Any forced resort (PitchNo/timestamp) can invert lineup order for some files.
     df
   }
   
@@ -33205,7 +33176,7 @@ deg_to_clock <- function(x) {
   output$abpSidebar <- renderUI({
     pit <- input$pitcher
     if (is.null(pit) || identical(pit, "All")) {
-      return(tagList(tags$em("Select a single pitcher in the main sidebar to enable AB Report.")))
+      return(tagList(tags$em("Select a single pitcher in the main sidebar to enable A/B Report.")))
     }
     
     dates <- abp_dates()
@@ -33282,7 +33253,7 @@ deg_to_clock <- function(x) {
   output$abpPanels <- renderUI({
     pit <- input$pitcher
     if (is.null(pit) || identical(pit, "All"))
-      return(div(style="margin:8px 0;", tags$em("Select a single pitcher to view the AB Report.")))
+      return(div(style="margin:8px 0;", tags$em("Select a single pitcher to view the A/B Report.")))
     
     dt_chr <- input$abpGameDate; req(!is.null(dt_chr))
     the_date <- as.Date(dt_chr)
@@ -33397,6 +33368,7 @@ deg_to_clock <- function(x) {
         batter = batter_label,
         side = side_val,
         data = pa_df,
+        result_row = term_row,
         debug = list(
           raw_n = raw_n,
           shown_n = raw_n,
@@ -33452,8 +33424,12 @@ deg_to_clock <- function(x) {
             )
           )
         
-        # now compute the PA result label from the last pitch of this PA
-        title_result <- .abp_pa_result_label(dat[nrow(dat), , drop = FALSE])
+        # Compute the PA result label from the terminal pitch when available.
+        result_row <- pa_for_batter[[i]]$result_row
+        if (is.null(result_row) || !nrow(result_row)) {
+          result_row <- dat[nrow(dat), , drop = FALSE]
+        }
+        title_result <- .abp_pa_result_label(result_row)
         dbg <- pa_for_batter[[i]]$debug
         debug_line <- if (isTRUE(input$abpDebug)) {
           tags$div(
