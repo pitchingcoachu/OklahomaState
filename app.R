@@ -33255,52 +33255,36 @@ deg_to_clock <- function(x) {
     term_all[is.na(term_all)] <- FALSE
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
-    df_all$._pitchofpa_src <- if ("PitchofPA" %in% names(df_all)) suppressWarnings(as.numeric(df_all$PitchofPA)) else NA_real_
-    df_all$._inning_chr <- if ("Inning" %in% names(df_all)) trimws(as.character(df_all$Inning)) else rep("", nrow(df_all))
-    df_all$._tb_chr <- if ("Top/Bottom" %in% names(df_all)) trimws(as.character(df_all[["Top/Bottom"]])) else rep("", nrow(df_all))
-    df_all$._paofinning_chr <- if ("PAofInning" %in% names(df_all)) trimws(as.character(df_all$PAofInning)) else rep("", nrow(df_all))
-    df_all$._batter_chr <- if ("Batter" %in% names(df_all)) trimws(as.character(df_all$Batter)) else rep("", nrow(df_all))
+    pitchofpa_num <- if ("PitchofPA" %in% names(df_all)) suppressWarnings(as.numeric(df_all$PitchofPA)) else rep(NA_real_, nrow(df_all))
+    inning_chr <- if ("Inning" %in% names(df_all)) trimws(as.character(df_all$Inning)) else rep("", nrow(df_all))
+    tb_chr <- if ("Top/Bottom" %in% names(df_all)) trimws(as.character(df_all[["Top/Bottom"]])) else rep("", nrow(df_all))
+    paofinning_chr <- if ("PAofInning" %in% names(df_all)) trimws(as.character(df_all$PAofInning)) else rep("", nrow(df_all))
+    batter_chr <- if ("Batter" %in% names(df_all)) trimws(as.character(df_all$Batter)) else rep("", nrow(df_all))
     
-    # Robust PA segmentation: derive PA starts from pitch order / structural transitions,
-    # then use terminal flags only to drop a trailing incomplete PA.
+    # Robust PA segmentation: derive PA starts from pitch-order/structural transitions.
     df_all$._terminal <- term_all
-    df_all <- df_all %>%
-      dplyr::group_by(._game_key) %>%
-      dplyr::mutate(
-        .row_in_game = dplyr::row_number(),
-        .pitchofpa_num = ._pitchofpa_src,
-        .pa_start = .row_in_game == 1L
-      ) %>%
-      dplyr::mutate(
-        .pa_start = .pa_start |
-          (
-            is.finite(.pitchofpa_num) &
-              is.finite(dplyr::lag(.pitchofpa_num)) &
-              (.pitchofpa_num <= dplyr::lag(.pitchofpa_num))
-          ) |
-          (
-            nzchar(._inning_chr) &
-              nzchar(dplyr::lag(._inning_chr, default = first(._inning_chr))) &
-              (._inning_chr != dplyr::lag(._inning_chr, default = first(._inning_chr)))
-          ) |
-          (
-            nzchar(._tb_chr) &
-              nzchar(dplyr::lag(._tb_chr, default = first(._tb_chr))) &
-              (._tb_chr != dplyr::lag(._tb_chr, default = first(._tb_chr)))
-          ) |
-          (
-            nzchar(._paofinning_chr) &
-              nzchar(dplyr::lag(._paofinning_chr, default = first(._paofinning_chr))) &
-              (._paofinning_chr != dplyr::lag(._paofinning_chr, default = first(._paofinning_chr)))
-          ) |
-          (
-            nzchar(._batter_chr) &
-              nzchar(dplyr::lag(._batter_chr, default = first(._batter_chr))) &
-              (._batter_chr != dplyr::lag(._batter_chr, default = first(._batter_chr)))
-          )
-      ) %>%
-      dplyr::mutate(._pa_id = cumsum(._pa_start)) %>%
-      dplyr::ungroup()
+    pa_start <- rep(FALSE, nrow(df_all))
+    pa_id <- integer(nrow(df_all))
+    key_levels <- unique(df_all$._game_key)
+    for (gk in key_levels) {
+      idx <- which(df_all$._game_key == gk)
+      if (!length(idx)) next
+      pa_start[idx[1]] <- TRUE
+      if (length(idx) > 1) {
+        for (k in 2:length(idx)) {
+          i <- idx[k]
+          j <- idx[k - 1]
+          by_pitchofpa <- is.finite(pitchofpa_num[i]) && is.finite(pitchofpa_num[j]) && (pitchofpa_num[i] <= pitchofpa_num[j])
+          by_inning <- nzchar(inning_chr[i]) && nzchar(inning_chr[j]) && (inning_chr[i] != inning_chr[j])
+          by_tb <- nzchar(tb_chr[i]) && nzchar(tb_chr[j]) && (tb_chr[i] != tb_chr[j])
+          by_paofinning <- nzchar(paofinning_chr[i]) && nzchar(paofinning_chr[j]) && (paofinning_chr[i] != paofinning_chr[j])
+          by_batter <- nzchar(batter_chr[i]) && nzchar(batter_chr[j]) && (batter_chr[i] != batter_chr[j])
+          pa_start[i] <- by_pitchofpa || by_inning || by_tb || by_paofinning || by_batter
+        }
+      }
+      pa_id[idx] <- cumsum(pa_start[idx])
+    }
+    df_all$._pa_id <- pa_id
     
     pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
     pa_has_terminal <- tapply(df_all$._terminal, pa_key_all, function(x) any(x, na.rm = TRUE))
@@ -33312,14 +33296,6 @@ deg_to_clock <- function(x) {
     df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
     pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
     df_all$._terminal <- NULL
-    df_all$._row_in_game <- NULL
-    df_all$._pitchofpa_num <- NULL
-    df_all$._pa_start <- NULL
-    df_all$._pitchofpa_src <- NULL
-    df_all$._inning_chr <- NULL
-    df_all$._tb_chr <- NULL
-    df_all$._paofinning_chr <- NULL
-    df_all$._batter_chr <- NULL
     if (!nrow(df_all)) {
       return(div(tags$em("No completed plate appearances on this date.")))
     }
