@@ -30,8 +30,8 @@ LOCAL_V3_DIR        <- file.path(LOCAL_DATA_DIR, "v3")
 SYNC_START_YEAR <- suppressWarnings(as.integer(Sys.getenv("TM_SYNC_START_YEAR", "2024")))
 if (is.na(SYNC_START_YEAR) || SYNC_START_YEAR < 2000) SYNC_START_YEAR <- 2024
 LAST_SYNC_FILE <- file.path(LOCAL_DATA_DIR, "last_sync.txt")
-TM_SYNC_LOOKBACK_DAYS <- suppressWarnings(as.integer(Sys.getenv("TM_SYNC_LOOKBACK_DAYS", "2")))
-if (is.na(TM_SYNC_LOOKBACK_DAYS) || TM_SYNC_LOOKBACK_DAYS < 1L) TM_SYNC_LOOKBACK_DAYS <- 2L
+TM_SYNC_LOOKBACK_DAYS <- suppressWarnings(as.integer(Sys.getenv("TM_SYNC_LOOKBACK_DAYS", "1")))
+if (is.na(TM_SYNC_LOOKBACK_DAYS) || TM_SYNC_LOOKBACK_DAYS < 1L) TM_SYNC_LOOKBACK_DAYS <- 1L
 TM_SYNC_INITIAL_FULL <- tolower(trimws(Sys.getenv("TM_SYNC_INITIAL_FULL", "0"))) %in% c("1", "true", "yes", "y")
 FTP_THROTTLE_SEC <- suppressWarnings(as.numeric(Sys.getenv("TM_FTP_THROTTLE_SEC", "0")))
 if (is.na(FTP_THROTTLE_SEC) || FTP_THROTTLE_SEC < 0) FTP_THROTTLE_SEC <- 0
