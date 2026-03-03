@@ -33223,8 +33223,7 @@ deg_to_clock <- function(x) {
     # but keep same suite context (session/team/hand/batter-side) as Summary filters.
     df_all <- apply_session_type_filter(pitching_base_for_team(input$teamType, include_modifications = TRUE), input$sessionType)
     df_all <- apply_pitching_team_filter(df_all, input$teamType)
-    df_all <- df_all %>%
-      dplyr::filter(Pitcher == pit, as.Date(Date) == the_date)
+    df_all <- df_all %>% dplyr::filter(Pitcher == pit)
     if (!is.null(input$hand) && input$hand != "All") {
       df_all <- dplyr::filter(df_all, PitcherThrows == input$hand)
     }
@@ -33234,6 +33233,19 @@ deg_to_clock <- function(x) {
     if (!is.null(input$oppHitter) && input$oppHitter != "All") {
       df_all <- dplyr::filter(df_all, Batter == input$oppHitter)
     }
+    # Select the game(s) that have completed PAs for this pitcher on the selected date,
+    # then include all pitches from those game(s) even if some rows have a different Date value.
+    gk_all <- .abp_game_key(df_all)
+    term_all_pre <- .abp_is_terminal(df_all)
+    term_all_pre[is.na(term_all_pre)] <- FALSE
+    selected_game_keys <- unique(gk_all[term_all_pre & as.Date(df_all$Date) == the_date])
+    selected_game_keys <- selected_game_keys[!is.na(selected_game_keys) & nzchar(selected_game_keys)]
+    if (length(selected_game_keys)) {
+      df_all <- df_all[!is.na(gk_all) & gk_all %in% selected_game_keys, , drop = FALSE]
+    } else {
+      df_all <- df_all %>% dplyr::filter(as.Date(Date) == the_date)
+    }
+    
     df_all <- .abp_arrange_rows(df_all)
     
     if (!nrow(df_all)) return(div(tags$em("No pitches for this pitcher on the selected date.")))
@@ -33244,18 +33256,59 @@ deg_to_clock <- function(x) {
     gk_all <- .abp_game_key(df_all)
     df_all$._game_key <- ifelse(is.na(gk_all) | !nzchar(gk_all), "unknown_game", gk_all)
     
-    # Robust PA segmentation: use game-order + terminal pitch boundaries.
-    # This avoids dropping early pitches when structural PA columns are sparse/inconsistent.
+    # Robust PA segmentation: derive PA starts from pitch order / structural transitions,
+    # then use terminal flags only to drop a trailing incomplete PA.
     df_all$._terminal <- term_all
     df_all <- df_all %>%
       dplyr::group_by(._game_key) %>%
-      dplyr::mutate(._pa_id = cumsum(dplyr::lag(._terminal, default = FALSE)) + 1L) %>%
+      dplyr::mutate(
+        .row_in_game = dplyr::row_number(),
+        .pitchofpa_num = suppressWarnings(as.numeric(PitchofPA)),
+        .pa_start = .row_in_game == 1L
+      ) %>%
+      dplyr::mutate(
+        .pa_start = .pa_start |
+          (
+            is.finite(.pitchofpa_num) &
+              is.finite(dplyr::lag(.pitchofpa_num)) &
+              (.pitchofpa_num <= dplyr::lag(.pitchofpa_num))
+          ) |
+          (
+            "Inning" %in% names(.) &
+              (trimws(as.character(Inning)) != trimws(as.character(dplyr::lag(Inning, default = first(Inning)))))
+          ) |
+          (
+            "Top/Bottom" %in% names(.) &
+              (trimws(as.character(`Top/Bottom`)) != trimws(as.character(dplyr::lag(`Top/Bottom`, default = first(`Top/Bottom`)))))
+          ) |
+          (
+            "PAofInning" %in% names(.) &
+              nzchar(trimws(as.character(PAofInning))) &
+              nzchar(trimws(as.character(dplyr::lag(PAofInning, default = first(PAofInning))))) &
+              (trimws(as.character(PAofInning)) != trimws(as.character(dplyr::lag(PAofInning, default = first(PAofInning)))))
+          ) |
+          (
+            nzchar(trimws(as.character(Batter))) &
+              nzchar(trimws(as.character(dplyr::lag(Batter, default = first(Batter))))) &
+              (trimws(as.character(Batter)) != trimws(as.character(dplyr::lag(Batter, default = first(Batter)))))
+          )
+      ) %>%
+      dplyr::mutate(._pa_id = cumsum(._pa_start)) %>%
       dplyr::ungroup()
+    
     pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
-    done_keys <- unique(pa_key_all[df_all$._terminal])
+    pa_has_terminal <- tapply(df_all$._terminal, pa_key_all, function(x) any(x, na.rm = TRUE))
+    done_keys <- names(pa_has_terminal)[which(pa_has_terminal)]
+    if (!length(done_keys)) {
+      # Fallback: if terminal flags are unreliable, keep all segmented PAs.
+      done_keys <- unique(pa_key_all)
+    }
     df_all <- df_all[pa_key_all %in% done_keys, , drop = FALSE]
     pa_key_all <- paste0(df_all$._game_key, "::", df_all$._pa_id)
     df_all$._terminal <- NULL
+    df_all$._row_in_game <- NULL
+    df_all$._pitchofpa_num <- NULL
+    df_all$._pa_start <- NULL
     if (!nrow(df_all)) {
       return(div(tags$em("No completed plate appearances on this date.")))
     }
