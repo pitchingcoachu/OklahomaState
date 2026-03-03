@@ -33024,10 +33024,37 @@ deg_to_clock <- function(x) {
   
   .abp_arrange_rows <- function(df) {
     if (!nrow(df)) return(df)
-    oc <- .abp_order_cols(df)
-    if (!length(oc)) return(df)
-    ord <- do.call(order, c(unname(df[oc]), list(na.last = TRUE)))
-    df[ord, , drop = FALSE]
+    gk <- .abp_game_key(df)
+    gk[is.na(gk) | !nzchar(gk)] <- "unknown_game"
+    src_idx <- seq_len(nrow(df))
+    
+    # Prefer explicit pitch sequence from source feed.
+    if ("PitchNo" %in% names(df)) {
+      pno <- suppressWarnings(as.numeric(df$PitchNo))
+      if (any(is.finite(pno))) {
+        ord <- order(gk, pno, src_idx, na.last = TRUE)
+        return(df[ord, , drop = FALSE])
+      }
+    }
+    
+    # Then datetime if available.
+    if ("UTCDateTime" %in% names(df)) {
+      utc <- suppressWarnings(as.POSIXct(df$UTCDateTime, tz = "UTC"))
+      if (any(is.finite(utc))) {
+        ord <- order(gk, utc, src_idx, na.last = TRUE)
+        return(df[ord, , drop = FALSE])
+      }
+    }
+    if ("LocalDateTime" %in% names(df)) {
+      ldt <- suppressWarnings(as.POSIXct(df$LocalDateTime))
+      if (any(is.finite(ldt))) {
+        ord <- order(gk, ldt, src_idx, na.last = TRUE)
+        return(df[ord, , drop = FALSE])
+      }
+    }
+    
+    # Final fallback: keep incoming order (top-to-bottom from source import).
+    df
   }
   
   .abp_struct_pa_key <- function(df) {
