@@ -26,6 +26,7 @@ pitch_data_default_columns <- function() {
     "VertApprAngle", "HorzApprAngle", "PlateLocSide", "PlateLocHeight",
     "PitchCall", "KorBB", "Balls", "Strikes", "SessionType", "PlayID",
     "ExitSpeed", "Angle", "Distance", "Direction", "BatterSide", "PlayResult", "TaggedHitType", "OutsOnPlay",
+    "BatSpeed", "VerticalAttackAngle", "HorizontalAttackAngle", "HitSpinRate",
     "ThrowSpeed", "ExchangeTime", "PopTime", "TimeToBase",
     "BasePositionX", "BasePositionY", "BasePositionZ", "TargetBase",
     "Batter", "Catcher", "VideoClip", "VideoClip2", "VideoClip3",
@@ -110,6 +111,10 @@ pitch_data_storage_name_map <- function() {
     Angle = "angle",
     Distance = "distance",
     Direction = "direction",
+    BatSpeed = "batspeed",
+    VerticalAttackAngle = "verticalattackangle",
+    HorizontalAttackAngle = "horizontalattackangle",
+    HitSpinRate = "hitspinrate",
     ThrowSpeed = "throwspeed",
     ExchangeTime = "exchangetime",
     PopTime = "poptime",
@@ -674,7 +679,10 @@ load_pitch_data_from_postgres <- function(school_code = "", startup_logger = NUL
   ttl <- pitch_data_cache_ttl()
   cached <- pitch_data_load_cached(cache_file, ttl)
   if (!is.null(cached) && is.list(cached) && !is.null(cached$data)) {
-    required_cols <- c("BackendRowID", "Distance", "Direction", "ThrowSpeed", "ExchangeTime", "PopTime")
+    required_cols <- c(
+      "BackendRowID", "Distance", "Direction", "ThrowSpeed", "ExchangeTime", "PopTime",
+      "BatSpeed", "VerticalAttackAngle", "HorizontalAttackAngle", "HitSpinRate"
+    )
     min_cache_rows <- suppressWarnings(as.integer(Sys.getenv("PITCH_DATA_CACHE_MIN_ROWS", "100")))
     if (is.na(min_cache_rows) || min_cache_rows < 0L) min_cache_rows <- 0L
     cache_rows <- nrow(cached$data)

@@ -9925,10 +9925,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             IVB = mean(InducedVertBreak, na.rm = TRUE),
             HB = mean(HorzBreak, na.rm = TRUE),
             Distance = mean(Distance_num[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
-            `Bat Speed` = mean(suppressWarnings(as.numeric(BatSpeed))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
-            `V. Attack Angle` = mean(suppressWarnings(as.numeric(VerticalAttackAngle))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
-            `H. Attack Angle` = mean(suppressWarnings(as.numeric(HorizontalAttackAngle))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
-            `Hit Spin Rate` = mean(suppressWarnings(as.numeric(HitSpinRate))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
+            `Bat Speed` = mean(suppressWarnings(as.numeric(BatSpeed))[SessionType == "Live"], na.rm = TRUE),
+            `V. Attack Angle` = mean(suppressWarnings(as.numeric(VerticalAttackAngle))[SessionType == "Live"], na.rm = TRUE),
+            `H. Attack Angle` = mean(suppressWarnings(as.numeric(HorizontalAttackAngle))[SessionType == "Live"], na.rm = TRUE),
+            `Hit Spin Rate` = mean(suppressWarnings(as.numeric(HitSpinRate))[SessionType == "Live"], na.rm = TRUE),
             `RV/100` = {
               rv <- sum(RunsScored_num, na.rm = TRUE)
               safe_div(rv * 100, dplyr::n())
@@ -10175,10 +10175,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         all_row$IVB <- mean(df$InducedVertBreak, na.rm = TRUE)
         all_row$HB <- mean(df$HorzBreak, na.rm = TRUE)
         all_row$Distance <- mean(df$Distance_num[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
-        all_row$`Bat Speed` <- mean(suppressWarnings(as.numeric(df$BatSpeed))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
-        all_row$`V. Attack Angle` <- mean(suppressWarnings(as.numeric(df$VerticalAttackAngle))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
-        all_row$`H. Attack Angle` <- mean(suppressWarnings(as.numeric(df$HorizontalAttackAngle))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
-        all_row$`Hit Spin Rate` <- mean(suppressWarnings(as.numeric(df$HitSpinRate))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
+        all_row$`Bat Speed` <- mean(suppressWarnings(as.numeric(df$BatSpeed))[df$SessionType == "Live"], na.rm = TRUE)
+        all_row$`V. Attack Angle` <- mean(suppressWarnings(as.numeric(df$VerticalAttackAngle))[df$SessionType == "Live"], na.rm = TRUE)
+        all_row$`H. Attack Angle` <- mean(suppressWarnings(as.numeric(df$HorizontalAttackAngle))[df$SessionType == "Live"], na.rm = TRUE)
+        all_row$`Hit Spin Rate` <- mean(suppressWarnings(as.numeric(df$HitSpinRate))[df$SessionType == "Live"], na.rm = TRUE)
         all_row$`RV/100` <- safe_div(sum(df$RunsScored_num, na.rm = TRUE) * 100, nrow(df))
         
         # Discipline stats for All row
