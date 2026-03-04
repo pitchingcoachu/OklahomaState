@@ -7636,7 +7636,7 @@ pitch_ui <- function(show_header = FALSE) {
 
           # --- Pitching → AB Report tab ---
           tabPanel(
-            "A/B Report",
+            "AB Report",
             value = "pitch_ab_report",
             sidebarLayout(
               sidebarPanel(width = 3, uiOutput("abpSidebar")),
@@ -8099,7 +8099,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
             )
           ),
           tabPanel(
-            "A/B Report",
+            "AB Report",
             sidebarLayout(
               sidebarPanel(
                 # Select Game control and legend live here
@@ -8564,7 +8564,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       hit <- input$hitter
       if (is.null(hit) || identical(hit, "All")) {
         return(tagList(
-          tags$em("Select a single hitter in the main sidebar to enable A/B Report.")
+          tags$em("Select a single hitter in the main sidebar to enable AB Report.")
         ))
       }
       dark_on <- is_dark_mode()
@@ -8638,7 +8638,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       req(is_active())
       hit <- input$hitter
       if (is.null(hit) || identical(hit, "All"))
-        return(div(style="margin:8px 0;", tags$em("Select a single hitter to view the A/B Report.")))
+        return(div(style="margin:8px 0;", tags$em("Select a single hitter to view the AB Report.")))
       
       dt_chr <- input$abGameDate; req(!is.null(dt_chr))
       dt <- as.Date(dt_chr)
@@ -33199,7 +33199,7 @@ deg_to_clock <- function(x) {
   output$abpSidebar <- renderUI({
     pit <- input$pitcher
     if (is.null(pit) || identical(pit, "All")) {
-      return(tagList(tags$em("Select a single pitcher in the main sidebar to enable A/B Report.")))
+      return(tagList(tags$em("Select a single pitcher in the main sidebar to enable AB Report.")))
     }
     
     dates <- abp_dates()
@@ -33235,10 +33235,6 @@ deg_to_clock <- function(x) {
     
     tagList(
       selectInput(ns("abpGameDate"), "Select Game:", choices = choices, selected = sel),
-      tags$details(
-        tags$summary(style = paste0("cursor:pointer;color:", text_col, ";font-size:12px;"), "AB Debug"),
-        checkboxInput(ns("abpDebug"), "Show Debug Details", value = FALSE)
-      ),
       tags$hr(),
       tags$div(tags$strong(style = paste0("color:", text_col), "Pitch Result")),
       shape_rows,
@@ -33276,7 +33272,7 @@ deg_to_clock <- function(x) {
   output$abpPanels <- renderUI({
     pit <- input$pitcher
     if (is.null(pit) || identical(pit, "All"))
-      return(div(style="margin:8px 0;", tags$em("Select a single pitcher to view the A/B Report.")))
+      return(div(style="margin:8px 0;", tags$em("Select a single pitcher to view the AB Report.")))
     
     dt_chr <- input$abpGameDate; req(!is.null(dt_chr))
     the_date <- as.Date(dt_chr)
@@ -33435,6 +33431,9 @@ deg_to_clock <- function(x) {
             pitch_idx = dplyr::row_number(),
             Result    = factor(compute_result(PitchCall, PlayResult), levels = result_levels),
             tt_fill   = dplyr::coalesce(all_colors[as.character(TaggedPitchType)], "gray80"),
+            ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+            Angle     = suppressWarnings(as.numeric(Angle)),
+            Distance  = suppressWarnings(as.numeric(Distance)),
             tt        = paste0(
               "Pitch: ", as.character(TaggedPitchType), "\n",
               "Result: ", dplyr::case_when(
@@ -33443,7 +33442,10 @@ deg_to_clock <- function(x) {
               ), "\n",
               "Velo: ", ifelse(is.finite(RelSpeed), sprintf("%.1f", RelSpeed), "—"), "\n",
               "IVB: ",  ifelse(is.finite(InducedVertBreak), sprintf("%.1f", InducedVertBreak), "—"), "\n",
-              "HB: ",   ifelse(is.finite(HorzBreak), sprintf("%.1f", HorzBreak), "—")
+              "HB: ",   ifelse(is.finite(HorzBreak), sprintf("%.1f", HorzBreak), "—"), "\n",
+              "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f", ExitSpeed), "—"), "\n",
+              "LA: ", ifelse(is.finite(Angle), sprintf("%.1f", Angle), "—"), "\n",
+              "Distance: ", ifelse(is.finite(Distance), sprintf("%.0f", Distance), "—")
             )
           )
         
