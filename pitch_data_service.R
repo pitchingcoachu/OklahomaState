@@ -19,6 +19,7 @@ pitch_data_normalize_school_code <- function(x) {
 
 pitch_data_default_columns <- function() {
   c(
+    "BackendRowID",
     "Date", "Pitcher", "Email", "PitcherThrows", "TaggedPitchType",
     "InducedVertBreak", "HorzBreak", "RelSpeed", "ReleaseTilt", "BreakTilt",
     "SpinEfficiency", "SpinRate", "RelHeight", "RelSide", "Extension",
@@ -79,6 +80,7 @@ pitch_data_make_key <- function(df) {
 
 pitch_data_storage_name_map <- function() {
   c(
+    BackendRowID = "id",
     Date = "date",
     Pitcher = "pitcher",
     Email = "email",
@@ -672,7 +674,7 @@ load_pitch_data_from_postgres <- function(school_code = "", startup_logger = NUL
   ttl <- pitch_data_cache_ttl()
   cached <- pitch_data_load_cached(cache_file, ttl)
   if (!is.null(cached) && is.list(cached) && !is.null(cached$data)) {
-    required_cols <- c("Distance", "Direction", "ThrowSpeed", "ExchangeTime", "PopTime")
+    required_cols <- c("BackendRowID", "Distance", "Direction", "ThrowSpeed", "ExchangeTime", "PopTime")
     min_cache_rows <- suppressWarnings(as.integer(Sys.getenv("PITCH_DATA_CACHE_MIN_ROWS", "100")))
     if (is.na(min_cache_rows) || min_cache_rows < 0L) min_cache_rows <- 0L
     cache_rows <- nrow(cached$data)

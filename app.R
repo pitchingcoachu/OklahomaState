@@ -33023,8 +33023,31 @@ deg_to_clock <- function(x) {
   }
   
   .abp_arrange_rows <- function(df) {
-    # Keep incoming row order exactly as loaded (CSV top-to-bottom).
-    # Any forced resort (PitchNo/timestamp) can invert lineup order for some files.
+    if (!nrow(df)) return(df)
+    gk <- .abp_game_key(df)
+    gk[is.na(gk) | !nzchar(gk)] <- "unknown_game"
+    src_idx <- seq_len(nrow(df))
+
+    # Preferred fallback for backend-loaded data: preserve insertion order.
+    # Neon loader returns DESC by date/id, so AB needs BackendRowID ascending.
+    if ("BackendRowID" %in% names(df)) {
+      rid <- suppressWarnings(as.numeric(df$BackendRowID))
+      if (any(is.finite(rid))) {
+        ord <- order(gk, rid, src_idx, na.last = TRUE)
+        return(df[ord, , drop = FALSE])
+      }
+    }
+
+    # Next fallback for CSVs or feeds that carry PitchNo.
+    if ("PitchNo" %in% names(df)) {
+      pno <- suppressWarnings(as.numeric(df$PitchNo))
+      if (any(is.finite(pno))) {
+        ord <- order(gk, pno, src_idx, na.last = TRUE)
+        return(df[ord, , drop = FALSE])
+      }
+    }
+
+    # Otherwise keep current order.
     df
   }
   
