@@ -9645,7 +9645,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             selectizeInput(
               ns("dpCustomCols"), label = "Columns (drag to order):",
               choices  = c("#","PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
-                           "Velo","IVB","HB","Distance","RV/100","1-1W%","QP%","QP+",
+                           "Velo","IVB","HB","Distance","RV/100",
+                           "Bat Speed","V. Attack Angle","H. Attack Angle","Hit Spin Rate",
+                           "1-1W%","QP%","QP+",
                            "Swing%","FPS%","Called-S%","Take%","Whiff%","CSW%","GB%","K%","BB%","Barrel%",
                            "Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%","EV","LA",
                            "Swings","Takes","Called-S","Whiffs","Chases","IZswings","Barrels","FPS","EdgeSwings","PosSD","GoZoneSw"),
@@ -9866,7 +9868,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           )
         
         # Guard optional columns so summary tables still render when source files omit them
-        for (nm in c("ExitSpeed", "Angle", "RelSpeed", "InducedVertBreak", "HorzBreak", "Distance", "RunsScored", "PlateLocSide", "PlateLocHeight")) {
+        for (nm in c("ExitSpeed", "Angle", "RelSpeed", "InducedVertBreak", "HorzBreak", "Distance", "RunsScored", "PlateLocSide", "PlateLocHeight",
+                     "BatSpeed", "VerticalAttackAngle", "HorizontalAttackAngle", "HitSpinRate")) {
           if (!nm %in% names(df)) df[[nm]] <- NA_real_
         }
         for (nm in c("SessionType", "PitchCall", "TaggedHitType", "Balls", "Strikes")) {
@@ -9914,7 +9917,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           dplyr::select(SplitColumn, xWOBA, xISO, BABIP, `Barrel%`) %>%
           dplyr::rename(!!split_col_name := SplitColumn)
         
-        # Additional stats for custom tables: Velo, IVB, HB, Distance, RV/100, discipline stats
+        # Additional stats for custom tables: Velo/shape, batted-ball, and bat sensor metrics.
         pitch_metrics <- df %>%
           dplyr::group_by(SplitColumn) %>%
           dplyr::summarise(
@@ -9922,6 +9925,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             IVB = mean(InducedVertBreak, na.rm = TRUE),
             HB = mean(HorzBreak, na.rm = TRUE),
             Distance = mean(Distance_num[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
+            `Bat Speed` = mean(suppressWarnings(as.numeric(BatSpeed))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
+            `V. Attack Angle` = mean(suppressWarnings(as.numeric(VerticalAttackAngle))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
+            `H. Attack Angle` = mean(suppressWarnings(as.numeric(HorizontalAttackAngle))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
+            `Hit Spin Rate` = mean(suppressWarnings(as.numeric(HitSpinRate))[SessionType == "Live" & PitchCall == "InPlay"], na.rm = TRUE),
             `RV/100` = {
               rv <- sum(RunsScored_num, na.rm = TRUE)
               safe_div(rv * 100, dplyr::n())
@@ -10168,6 +10175,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         all_row$IVB <- mean(df$InducedVertBreak, na.rm = TRUE)
         all_row$HB <- mean(df$HorzBreak, na.rm = TRUE)
         all_row$Distance <- mean(df$Distance_num[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
+        all_row$`Bat Speed` <- mean(suppressWarnings(as.numeric(df$BatSpeed))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
+        all_row$`V. Attack Angle` <- mean(suppressWarnings(as.numeric(df$VerticalAttackAngle))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
+        all_row$`H. Attack Angle` <- mean(suppressWarnings(as.numeric(df$HorizontalAttackAngle))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
+        all_row$`Hit Spin Rate` <- mean(suppressWarnings(as.numeric(df$HitSpinRate))[df$SessionType == "Live" & df$PitchCall == "InPlay"], na.rm = TRUE)
         all_row$`RV/100` <- safe_div(sum(df$RunsScored_num, na.rm = TRUE) * 100, nrow(df))
         
         # Discipline stats for All row
@@ -10359,6 +10370,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         num_cols <- c("PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
                       "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA",
                       "Velo","IVB","HB","Distance","RV/100",
+                      "Bat Speed","V. Attack Angle","H. Attack Angle","Hit Spin Rate",
                       "FPS%","Called-S%","Take%","Chase%","GoZoneSw%","IZswing%",
                       "EdgeSwing%","1-1W%","QP%","QP+","PosSD%")
         
@@ -10419,6 +10431,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                                 round(suppressWarnings(as.numeric(df_out$LA)), 1), "")
           }
           for (col in c("Velo", "IVB", "HB")) {
+            if (col %in% names(df_out)) {
+              df_out[[col]] <- ifelse(is.finite(suppressWarnings(as.numeric(df_out[[col]]))),
+                                      round(suppressWarnings(as.numeric(df_out[[col]])), 1), "")
+            }
+          }
+          for (col in c("Bat Speed", "V. Attack Angle", "H. Attack Angle", "Hit Spin Rate")) {
             if (col %in% names(df_out)) {
               df_out[[col]] <- ifelse(is.finite(suppressWarnings(as.numeric(df_out[[col]]))),
                                       round(suppressWarnings(as.numeric(df_out[[col]])), 1), "")
@@ -33516,6 +33534,8 @@ deg_to_clock <- function(x) {
         pa_name <- pa_for_batter[[i]]$pa_key
         pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", pa_name))
         out_id <- ns(paste0("abpPlot_", pid))
+        sep_col <- if (isTRUE(input$dark_mode)) "rgba(229,231,235,0.28)" else "rgba(15,23,42,0.16)"
+        cell_sep <- if (i < n_pa) paste0("border-right:1px solid ", sep_col, "; padding-right:12px; margin-right:12px;") else ""
         
         local({
           dat_local    <- dat
@@ -33565,14 +33585,14 @@ deg_to_clock <- function(x) {
         })
         
         div(
-          style = "display:inline-block; margin:0 8px 12px 0; vertical-align:top; text-align:center;",
+          style = paste0("display:inline-block; margin:0 8px 12px 0; vertical-align:top; text-align:center;", cell_sep),
           tags$div(tags$strong(paste0("PA #", i, " (", nrow(dat), " pitches)"))),
           tags$div(title_result, style = "margin-bottom:6px;"),
           debug_line,
           div(
-            style = "display:flex; align-items:flex-start; gap:6px; justify-content:center;",
+            style = "display:flex; align-items:center; gap:6px; justify-content:center;",
             div(
-              style = "width:185px; max-width:185px; overflow-x:auto; text-align:left;",
+              style = "width:185px; max-width:185px; overflow-x:auto; text-align:left; height:300px; display:flex; align-items:center;",
               table_ui
             ),
             ggiraph::girafeOutput(out_id, height = "300px", width = "300px")
