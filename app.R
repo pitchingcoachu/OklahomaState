@@ -33470,6 +33470,48 @@ deg_to_clock <- function(x) {
             )
           )
         } else NULL
+
+        tbl_df <- dat %>%
+          dplyr::transmute(
+            `#` = pitch_idx,
+            Pitch = dplyr::coalesce(as.character(TaggedPitchType), "—"),
+            Velo = ifelse(is.finite(RelSpeed), sprintf("%.1f", RelSpeed), "—"),
+            IVB = ifelse(is.finite(InducedVertBreak), sprintf("%.1f", InducedVertBreak), "—"),
+            HB = ifelse(is.finite(HorzBreak), sprintf("%.1f", HorzBreak), "—"),
+            EV = ifelse(is.finite(ExitSpeed), sprintf("%.1f", ExitSpeed), "—"),
+            LA = ifelse(is.finite(Angle), sprintf("%.1f", Angle), "—"),
+            Result = dplyr::case_when(
+              PitchCall == "InPlay" & !is.na(PlayResult) & PlayResult != "" & PlayResult != "Undefined" ~ as.character(PlayResult),
+              !is.na(KorBB) & KorBB %in% c("Strikeout", "Walk") ~ as.character(KorBB),
+              TRUE ~ dplyr::coalesce(as.character(PitchCall), "—")
+            )
+          )
+
+        table_ui <- tags$table(
+          style = "width:100%; border-collapse:collapse; font-size:10px; line-height:1.2;",
+          tags$thead(
+            tags$tr(
+              lapply(names(tbl_df), function(nm) {
+                tags$th(
+                  style = "padding:2px 4px; border-bottom:1px solid rgba(128,128,128,.35); text-align:center; white-space:nowrap;",
+                  nm
+                )
+              })
+            )
+          ),
+          tags$tbody(
+            lapply(seq_len(nrow(tbl_df)), function(r) {
+              tags$tr(
+                lapply(seq_len(ncol(tbl_df)), function(c) {
+                  tags$td(
+                    style = "padding:1px 4px; text-align:center; white-space:nowrap;",
+                    as.character(tbl_df[r, c, drop = TRUE])
+                  )
+                })
+              )
+            })
+          )
+        )
         
         pa_name <- pa_for_batter[[i]]$pa_key
         pid    <- paste0(bi, "_", gsub("[^A-Za-z0-9_]+", "_", pa_name))
@@ -33527,7 +33569,14 @@ deg_to_clock <- function(x) {
           tags$div(tags$strong(paste0("PA #", i, " (", nrow(dat), " pitches)"))),
           tags$div(title_result, style = "margin-bottom:6px;"),
           debug_line,
-          ggiraph::girafeOutput(out_id, height = "300px", width = "300px")
+          div(
+            style = "display:flex; align-items:flex-start; gap:6px; justify-content:center;",
+            div(
+              style = "width:185px; max-width:185px; overflow-x:auto; text-align:left;",
+              table_ui
+            ),
+            ggiraph::girafeOutput(out_id, height = "300px", width = "300px")
+          )
         )
       })
       
