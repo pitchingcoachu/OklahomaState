@@ -6554,8 +6554,38 @@ compute_process_results <- function(df, mode = "All") {
       pitch_n   <- nrow(dfi)
       dfi_live  <- dfi %>% dplyr::filter(SessionType == "Live")
       # Use PA-ending outcomes so K%/BB% numerators align with BF denominator.
+      # Prefer structural PA keys when available; this is order-independent.
       kbb_from_terminal_pa <- function(d) {
         if (!nrow(d)) return(list(BF = 0L, K = 0L, BB = 0L))
+        playres  <- as.character(d$PlayResult)
+        korbb    <- as.character(d$KorBB)
+        terminal_ok <- (!is.na(playres) & playres != "Undefined") |
+          (!is.na(korbb) & korbb %in% c("Strikeout", "Walk"))
+
+        key_cols_game <- intersect(c("GameID", "GameUID", "GameForeignID"), names(d))
+        has_struct_cols <- all(c("Inning", "PAofInning") %in% names(d))
+        if (length(key_cols_game) && has_struct_cols) {
+          gvals <- rep("", nrow(d))
+          for (nm in key_cols_game) {
+            cand <- trimws(as.character(d[[nm]]))
+            cand[is.na(cand)] <- ""
+            use <- !nzchar(gvals) & nzchar(cand)
+            gvals[use] <- cand[use]
+          }
+          inning <- trimws(as.character(d$Inning))
+          pa_inn <- trimws(as.character(d$PAofInning))
+          valid_key <- nzchar(gvals) & nzchar(inning) & nzchar(pa_inn)
+          if (any(valid_key)) {
+            pa_key <- rep(NA_character_, nrow(d))
+            pa_key[valid_key] <- paste(gvals[valid_key], inning[valid_key], pa_inn[valid_key], sep = "::")
+            term_key <- pa_key[terminal_ok & !is.na(pa_key)]
+            bf <- length(unique(term_key))
+            k <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Strikeout", na.rm = TRUE)
+            bb <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Walk", na.rm = TRUE)
+            return(list(BF = as.integer(bf), K = as.integer(k), BB = as.integer(bb)))
+          }
+        }
+
         balls   <- suppressWarnings(as.numeric(d$Balls))
         strikes <- suppressWarnings(as.numeric(d$Strikes))
         valid   <- is.finite(balls) & is.finite(strikes)
@@ -6569,10 +6599,6 @@ compute_process_results <- function(df, mode = "All") {
 
         last_idx <- ave(seq_len(nrow(d)), pa_id, FUN = function(idx) rep(max(idx), length(idx)))
         is_last  <- seq_len(nrow(d)) == last_idx
-        playres  <- as.character(d$PlayResult)
-        korbb    <- as.character(d$KorBB)
-        terminal_ok <- (!is.na(playres) & playres != "Undefined") |
-          (!is.na(korbb) & korbb %in% c("Strikeout", "Walk"))
         term_last <- is_last & terminal_ok & !is.na(pa_id)
 
         d_term <- d[term_last, , drop = FALSE]
