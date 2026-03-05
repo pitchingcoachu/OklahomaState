@@ -8168,6 +8168,12 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                 fluidRow(
                   column(
                     3,
+                    selectInput(
+                      ns("contact2dMode"),
+                      "Display:",
+                      choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
+                      selected = "individual"
+                    ),
                     tags$div(
                       style = "font-weight:bold; text-align:left; margin-bottom:6px;",
                       "Pitch Type Key"
@@ -8182,6 +8188,18 @@ mod_hit_ui <- function(id, show_header = FALSE) {
               ),
               tabPanel(
                 "3D Contact",
+                fluidRow(
+                  column(
+                    3,
+                    selectInput(
+                      ns("contact3dMode"),
+                      "Display:",
+                      choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
+                      selected = "individual"
+                    )
+                  ),
+                  column(9)
+                ),
                 plotly::plotlyOutput(ns("contactPoint3d"), height = "620px")
               ),
               tabPanel(
@@ -9459,30 +9477,54 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       text_col <- if (dark_on) "#e5e7eb" else "#111827"
       cols <- colors_for_mode(dark_on)
       
-      df_plot <- df %>%
+      mode_2d <- input$contact2dMode %||% "individual"
+      df_base <- df %>%
         dplyr::mutate(
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
         ) %>%
         dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ)) %>%
-        dplyr::mutate(
-          TaggedPitchType = as.character(TaggedPitchType),
-          tooltip = {
-            pr <- as.character(PlayResult)
-            result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                         dplyr::coalesce(as.character(PitchCall), "—"))
-            paste0(
+        dplyr::mutate(TaggedPitchType = as.character(TaggedPitchType))
+      
+      if (identical(mode_2d, "average_pitch_type")) {
+        df_plot <- df_base %>%
+          dplyr::group_by(TaggedPitchType) %>%
+          dplyr::summarise(
+            ContactPositionX = mean(ContactPositionX, na.rm = TRUE),
+            ContactPositionZ = mean(ContactPositionZ, na.rm = TRUE),
+            n = dplyr::n(),
+            .groups = "drop"
+          ) %>%
+          dplyr::mutate(
+            tooltip = paste0(
               "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-              "Result: ", result_txt, "<br>",
-              "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
-              "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
-              "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+              "Display: Average by Pitch Type<br>",
+              "Pitches: ", n, "<br>",
               "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
               "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
-            )
-          },
-          rid = dplyr::row_number()
-        )
+            ),
+            rid = dplyr::row_number()
+          )
+      } else {
+        df_plot <- df_base %>%
+          dplyr::mutate(
+            tooltip = {
+              pr <- as.character(PlayResult)
+              result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
+                                           dplyr::coalesce(as.character(PitchCall), "—"))
+              paste0(
+                "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+                "Result: ", result_txt, "<br>",
+                "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
+                "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+                "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+                "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
+                "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
+              )
+            },
+            rid = dplyr::row_number()
+          )
+      }
       
       if (!nrow(df_plot)) {
         p_empty <- ggplot() +
@@ -9495,8 +9537,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
       col_vals <- cols[types_chr]
       col_vals[is.na(col_vals)] <- "gray70"
-      y_min <- floor(min(c(df_plot$ContactPositionX, -0.6), na.rm = TRUE))
-      y_max <- ceiling(max(c(df_plot$ContactPositionX, 1.0), na.rm = TRUE))
+      y_min <- floor(min(c(df_base$ContactPositionX, -0.6), na.rm = TRUE))
+      y_max <- ceiling(max(c(df_base$ContactPositionX, 1.0), na.rm = TRUE))
       if (!is.finite(y_min) || !is.finite(y_max) || y_max <= y_min) {
         y_min <- -1
         y_max <- 6
@@ -9566,31 +9608,56 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       line_col <- if (dark_on) "#e5e7eb" else "#111827"
       axis_col <- if (dark_on) "#e5e7eb" else "#111827"
       
-      df_plot <- df %>%
+      mode_3d <- input$contact3dMode %||% "individual"
+      df_base <- df %>%
         dplyr::mutate(
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
         ) %>%
         dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY), is.finite(ContactPositionZ)) %>%
-        dplyr::mutate(
-          TaggedPitchType = as.character(TaggedPitchType),
-          tooltip = {
-            pr <- as.character(PlayResult)
-            result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                         dplyr::coalesce(as.character(PitchCall), "—"))
-            paste0(
+        dplyr::mutate(TaggedPitchType = as.character(TaggedPitchType))
+      
+      if (identical(mode_3d, "average_pitch_type")) {
+        df_plot <- df_base %>%
+          dplyr::group_by(TaggedPitchType) %>%
+          dplyr::summarise(
+            ContactPositionX = mean(ContactPositionX, na.rm = TRUE),
+            ContactPositionY = mean(ContactPositionY, na.rm = TRUE),
+            ContactPositionZ = mean(ContactPositionZ, na.rm = TRUE),
+            n = dplyr::n(),
+            .groups = "drop"
+          ) %>%
+          dplyr::mutate(
+            tooltip = paste0(
               "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-              "Result: ", result_txt, "<br>",
-              "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
-              "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
-              "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+              "Display: Average by Pitch Type<br>",
+              "Pitches: ", n, "<br>",
               "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
               "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
               "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
             )
-          }
-        )
+          )
+      } else {
+        df_plot <- df_base %>%
+          dplyr::mutate(
+            tooltip = {
+              pr <- as.character(PlayResult)
+              result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
+                                           dplyr::coalesce(as.character(PitchCall), "—"))
+              paste0(
+                "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+                "Result: ", result_txt, "<br>",
+                "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
+                "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+                "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+                "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
+                "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
+                "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
+              )
+            }
+          )
+      }
       
       if (!nrow(df_plot)) {
         return(plotly::plot_ly() %>% plotly::layout(
@@ -9826,6 +9893,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       dark_on <- is_dark_mode()
       text_col <- if (dark_on) "#e5e7eb" else "#0f172a"
+      line_col <- if (dark_on) "#ffffff" else "black"
       grid_col <- if (dark_on) "#334155" else "#dbe2ea"
       plate_col <- if (dark_on) "#64748b" else "#94a3b8"
       zero_col <- if (dark_on) "#cbd5e1" else "#64748b"
@@ -9924,10 +9992,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = grid_col, linewidth = 0.8) +
+                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
           geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = grid_col, linewidth = 0.8) +
-          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
+                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
+          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
           geom_segment(aes(x = arrow_x, y = arrow_y, xend = arrow_x, yend = arrow_y + arrow_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
           geom_segment(
@@ -9953,7 +10021,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
           scale_linewidth_identity() +
-          coord_fixed(xlim = c(-2.2, 2.2), ylim = c(y_min, y_max)) +
+          coord_fixed(xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
           labs(x = "Side (ft)", y = "Forward (ft)") +
           theme_minimal(base_size = 12) +
           theme(
