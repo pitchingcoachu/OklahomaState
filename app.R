@@ -9697,12 +9697,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         )
     })
     
-    attack_angle_data <- reactive({
+    attack_angle_base <- reactive({
       df <- filtered_hit()
       req(is.data.frame(df))
       req(all(c("VerticalAttackAngle", "HorizontalAttackAngle",
                 "ContactPositionX", "ContactPositionY", "ContactPositionZ") %in% names(df)))
-      out <- df %>%
+      df %>%
         dplyr::mutate(
           VerticalAttackAngle = suppressWarnings(as.numeric(VerticalAttackAngle)),
           HorizontalAttackAngle = suppressWarnings(as.numeric(HorizontalAttackAngle)),
@@ -9711,14 +9711,28 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
           BatterSide = as.character(BatterSide),
           .attack_row_id = dplyr::row_number()
-        ) %>%
-        dplyr::filter(
-          is.finite(VerticalAttackAngle),
-          is.finite(HorizontalAttackAngle),
-          is.finite(ContactPositionX),
-          is.finite(ContactPositionY),
-          is.finite(ContactPositionZ)
-        ) %>%
+        )
+    })
+    
+    attack_angle_data <- reactive({
+      df <- attack_angle_base()
+      view_type <- input$attackAngleType %||% "Horizontal Attack"
+      if (identical(view_type, "Horizontal Attack")) {
+        df <- df %>%
+          dplyr::filter(
+            is.finite(HorizontalAttackAngle),
+            is.finite(ContactPositionX),
+            is.finite(ContactPositionZ)
+          )
+      } else {
+        df <- df %>%
+          dplyr::filter(
+            is.finite(VerticalAttackAngle),
+            is.finite(ContactPositionX),
+            is.finite(ContactPositionY)
+          )
+      }
+      df %>%
         dplyr::mutate(
           .attack_pitch_id = as.character(.attack_row_id),
           .attack_pitch_label = paste0(
@@ -9729,7 +9743,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             " | HAA ", sprintf("%.1f", HorizontalAttackAngle)
           )
         )
-      out
     })
     
     observe({
@@ -9746,21 +9759,37 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     
     selected_attack_row <- reactive({
       df <- attack_angle_data()
-      if (!nrow(df)) return(NULL)
+      base <- attack_angle_base()
+      view_type <- input$attackAngleType %||% "Horizontal Attack"
+      if (!nrow(df) || !nrow(base)) return(NULL)
       scope <- input$attackScope %||% "average"
       if (identical(scope, "pitch")) {
         sel <- input$attackPitchId %||% ""
         one <- df[df$.attack_pitch_id == sel, , drop = FALSE]
         if (nrow(one)) return(one[1, , drop = FALSE])
       }
-      side_tab <- table(df$BatterSide)
+
+      if (identical(view_type, "Horizontal Attack")) {
+        contact_pool <- base %>%
+          dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ))
+        angle_pool <- base %>%
+          dplyr::filter(is.finite(HorizontalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionZ))
+      } else {
+        contact_pool <- base %>%
+          dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY))
+        angle_pool <- base %>%
+          dplyr::filter(is.finite(VerticalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionY))
+      }
+      if (!nrow(contact_pool) || !nrow(angle_pool)) return(NULL)
+
+      side_tab <- table(contact_pool$BatterSide)
       side_mode <- if (length(side_tab)) names(which.max(side_tab)) else "Right"
       tibble::tibble(
-        VerticalAttackAngle = mean(df$VerticalAttackAngle, na.rm = TRUE),
-        HorizontalAttackAngle = mean(df$HorizontalAttackAngle, na.rm = TRUE),
-        ContactPositionX = mean(df$ContactPositionX, na.rm = TRUE),
-        ContactPositionY = mean(df$ContactPositionY, na.rm = TRUE),
-        ContactPositionZ = mean(df$ContactPositionZ, na.rm = TRUE),
+        VerticalAttackAngle = mean(angle_pool$VerticalAttackAngle, na.rm = TRUE),
+        HorizontalAttackAngle = mean(angle_pool$HorizontalAttackAngle, na.rm = TRUE),
+        ContactPositionX = mean(contact_pool$ContactPositionX, na.rm = TRUE),
+        ContactPositionY = mean(contact_pool$ContactPositionY, na.rm = TRUE),
+        ContactPositionZ = mean(contact_pool$ContactPositionZ, na.rm = TRUE),
         BatterSide = side_mode,
         .attack_pitch_label = "Average"
       )
@@ -9817,9 +9846,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         vec_len <- 1.2
         dx <- sin(rad) * vec_len
         dy <- cos(rad) * vec_len
-        attack_all <- attack_angle_data()
-        y_min <- floor(min(c(attack_all$ContactPositionX, -0.6), na.rm = TRUE))
-        y_max <- ceiling(max(c(attack_all$ContactPositionX, 1.0), na.rm = TRUE))
+        contact_axis_pool <- attack_angle_base() %>%
+          dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ))
+        y_min <- floor(min(c(contact_axis_pool$ContactPositionX, -0.6), na.rm = TRUE))
+        y_max <- ceiling(max(c(contact_axis_pool$ContactPositionX, 1.0), na.rm = TRUE))
         if (!is.finite(y_min) || !is.finite(y_max) || y_max <= y_min) {
           y_min <- -1
           y_max <- 6
@@ -9873,6 +9903,20 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         uby <- ifelse(bat_norm > 0, (barrel_y - handle_y) / bat_norm, 0)
         contact_x <- cx
         contact_y <- cy
+        bat_t <- seq(0, 1, length.out = 41)
+        bat_seg <- data.frame(
+          x = handle_x + (barrel_x - handle_x) * bat_t[-length(bat_t)],
+          y = handle_y + (barrel_y - handle_y) * bat_t[-length(bat_t)],
+          xend = handle_x + (barrel_x - handle_x) * bat_t[-1],
+          yend = handle_y + (barrel_y - handle_y) * bat_t[-1]
+        )
+        t_mid <- (bat_t[-length(bat_t)] + bat_t[-1]) / 2
+        bat_seg$lw <- ifelse(
+          t_mid <= 0.75,
+          6.0 + (t_mid / 0.75) * 2.0,
+          8.0 + ((t_mid - 0.75) / 0.25) * 4.6
+        )
+        bat_seg$lw_hi <- pmax(1.6, bat_seg$lw * 0.34)
         arrow_start_inset <- 0.12
         arrow_x <- barrel_x - ubx * arrow_start_inset
         arrow_y <- barrel_y - uby * arrow_start_inset
@@ -9886,13 +9930,17 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
           geom_segment(aes(x = arrow_x, y = arrow_y, xend = arrow_x, yend = arrow_y + arrow_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          # Smooth thicker bat body (no visible section joins).
-          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
-                       linewidth = 5.8, color = bat_col, lineend = "round") +
-          # Subtle top highlight for depth.
-          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
-                       linewidth = 2.1, color = "#cfa170", alpha = 0.45, lineend = "round") +
-          geom_point(aes(x = handle_x, y = handle_y), size = 4.3, color = "#8b5a2b") +
+          geom_segment(
+            data = bat_seg,
+            aes(x = x, y = y, xend = xend, yend = yend, linewidth = lw),
+            color = bat_col, lineend = "round", show.legend = FALSE
+          ) +
+          geom_segment(
+            data = bat_seg,
+            aes(x = x, y = y, xend = xend, yend = yend, linewidth = lw_hi),
+            color = "#cfa170", alpha = 0.42, lineend = "round", show.legend = FALSE
+          ) +
+          geom_point(aes(x = handle_x, y = handle_y), size = 4.8, color = "#8b5a2b") +
           geom_point(aes(x = contact_x, y = contact_y), size = 3.2, color = "#d1d5db") +
           geom_segment(
             aes(x = arrow_x, y = arrow_y, xend = arrow_x + ux * arrow_len, yend = arrow_y + uy * arrow_len),
@@ -9904,6 +9952,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
           annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
+          scale_linewidth_identity() +
           coord_fixed(xlim = c(-2.2, 2.2), ylim = c(y_min, y_max)) +
           labs(x = "Side (ft)", y = "Forward (ft)") +
           theme_minimal(base_size = 12) +
