@@ -5550,7 +5550,13 @@ read_one <- function(fp) {
     VertApprAngle    = c("VAA"),
     HorzApprAngle    = c("HAA"),
     PlateLocSide     = c("PlateX"),
-    PlateLocHeight   = c("PlateZ")
+    PlateLocHeight   = c("PlateZ"),
+    ContactPositionX = c("contactpositionx", "contact_position_x"),
+    ContactPositionY = c("contactpositiony", "contact_position_y"),
+    ContactPositionZ = c("contactpositionz", "contact_position_z"),
+    VerticalAttackAngle = c("verticalattackangle", "vertical_attack_angle"),
+    HorizontalAttackAngle = c("horizontalattackangle", "horizontal_attack_angle"),
+    BatSpeed = c("batspeed", "bat_speed")
   )
   
   nm <- names(df)
@@ -5792,6 +5798,8 @@ need_cols <- c(
   "ThrowSpeed","ExchangeTime","PopTime","TimeToBase",
   "BasePositionX","BasePositionY","BasePositionZ","TargetBase",
   "PlayResult","TaggedHitType","OutsOnPlay",
+  "ContactPositionX","ContactPositionY","ContactPositionZ",
+  "VerticalAttackAngle","HorizontalAttackAngle","BatSpeed",
   "Batter", "Catcher",
   "VideoClip","VideoClip2","VideoClip3",
   "SourceFile"
@@ -5822,6 +5830,12 @@ pitch_data <- pitch_data %>%
     HorzApprAngle   = as.numeric(HorzApprAngle),
     PlateLocSide    = as.numeric(PlateLocSide),
     PlateLocHeight  = as.numeric(PlateLocHeight),
+    ContactPositionX = as.numeric(ContactPositionX),
+    ContactPositionY = as.numeric(ContactPositionY),
+    ContactPositionZ = as.numeric(ContactPositionZ),
+    VerticalAttackAngle = as.numeric(VerticalAttackAngle),
+    HorizontalAttackAngle = as.numeric(HorizontalAttackAngle),
+    BatSpeed = as.numeric(BatSpeed),
     Extension       = as.numeric(Extension),
     ExitSpeed       = as.numeric(ExitSpeed),   # ← NEW
     Angle           = as.numeric(Angle),       # ← NEW
