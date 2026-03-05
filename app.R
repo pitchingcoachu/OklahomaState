@@ -9495,11 +9495,18 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
       col_vals <- cols[types_chr]
       col_vals[is.na(col_vals)] <- "gray70"
+      y_min <- floor(min(c(df_plot$ContactPositionX, -0.6), na.rm = TRUE))
+      y_max <- ceiling(max(c(df_plot$ContactPositionX, 1.0), na.rm = TRUE))
+      if (!is.finite(y_min) || !is.finite(y_max) || y_max <= y_min) {
+        y_min <- -1
+        y_max <- 6
+      }
+      y_breaks <- seq(y_min, y_max, by = 1)
       
       # Smaller home plate (shared with Attack Angles horizontal view), tip to bottom.
       home_plate <- data.frame(
-        x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-        y = c(0.47, 0.47, 0.26, 0.00, 0.26, 0.47)
+        x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
+        y = c(0.62, 0.62, 0.35, 0.00, 0.35, 0.62)
       )
       box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = -0.45, ymax = 0.90)
       box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = -0.45, ymax = 0.90)
@@ -9515,11 +9522,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           aes(ContactPositionZ, ContactPositionX,
               color = TaggedPitchType, fill = TaggedPitchType,
               tooltip = tooltip, data_id = rid),
-          size = 3.0, alpha = 0.9, shape = 21, stroke = 0.6
+          size = 2.4, alpha = 0.9, shape = 21, stroke = 0.45
         ) +
         scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
         scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
-        coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(-0.4, 6)) +
+        scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
+        coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
         labs(x = "Side (ft)", y = "Forward (ft)") +
         theme_minimal(base_size = 12) +
         theme(
@@ -9809,18 +9817,26 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         vec_len <- 1.2
         dx <- sin(rad) * vec_len
         dy <- cos(rad) * vec_len
+        attack_all <- attack_angle_data()
+        y_min <- floor(min(c(attack_all$ContactPositionX, -0.6), na.rm = TRUE))
+        y_max <- ceiling(max(c(attack_all$ContactPositionX, 1.0), na.rm = TRUE))
+        if (!is.finite(y_min) || !is.finite(y_max) || y_max <= y_min) {
+          y_min <- -1
+          y_max <- 6
+        }
+        y_breaks <- seq(y_min, y_max, by = 1)
         
-        bat_half <- 0.50
-        # Keep the bat mostly horizontal and only slightly tilted by HAA.
-        bat_theta <- max(min(rad * 0.30, 0.35), -0.35)
+        # 34" bat length => 2.833 ft total.
+        bat_half <- (34 / 12) / 2
+        bat_theta <- rad
         bat_x1 <- cx - cos(bat_theta) * bat_half
         bat_y1 <- cy - sin(bat_theta) * bat_half
         bat_x2 <- cx + cos(bat_theta) * bat_half
         bat_y2 <- cy + sin(bat_theta) * bat_half
         
         home_plate <- data.frame(
-          x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-          y = c(0.47, 0.47, 0.26, 0.00, 0.26, 0.47)
+          x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
+          y = c(0.62, 0.62, 0.35, 0.00, 0.35, 0.62)
         )
         box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = -0.45, ymax = 0.90)
         box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = -0.45, ymax = 0.90)
@@ -9828,16 +9844,35 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         pull_right <- if (is_lefty) "PULL" else "OPPO"
         pull_left <- if (is_lefty) "OPPO" else "PULL"
         
-        # Put ball at barrel end (end most aligned with attack direction).
-        proj1 <- (bat_x1 - cx) * dx + (bat_y1 - cy) * dy
-        proj2 <- (bat_x2 - cx) * dx + (bat_y2 - cy) * dy
-        if (proj1 >= proj2) {
-          barrel_x <- bat_x1; barrel_y <- bat_y1
-          handle_x <- bat_x2; handle_y <- bat_y2
+        # Put barrel on handedness side (RHH right side, LHH left side).
+        if (is_lefty) {
+          if (bat_x1 <= bat_x2) {
+            barrel_x <- bat_x1; barrel_y <- bat_y1
+            handle_x <- bat_x2; handle_y <- bat_y2
+          } else {
+            barrel_x <- bat_x2; barrel_y <- bat_y2
+            handle_x <- bat_x1; handle_y <- bat_y1
+          }
         } else {
-          barrel_x <- bat_x2; barrel_y <- bat_y2
-          handle_x <- bat_x1; handle_y <- bat_y1
+          if (bat_x1 >= bat_x2) {
+            barrel_x <- bat_x1; barrel_y <- bat_y1
+            handle_x <- bat_x2; handle_y <- bat_y2
+          } else {
+            barrel_x <- bat_x2; barrel_y <- bat_y2
+            handle_x <- bat_x1; handle_y <- bat_y1
+          }
         }
+        
+        dir_norm <- sqrt(dx^2 + dy^2)
+        ux <- ifelse(dir_norm > 0, dx / dir_norm, 0)
+        uy <- ifelse(dir_norm > 0, dy / dir_norm, 1)
+        ball_x <- barrel_x + ux * 0.05
+        ball_y <- barrel_y + uy * 0.05
+        arrow_x <- barrel_x + ux * 0.12
+        arrow_y <- barrel_y + uy * 0.12
+        arrow_len <- 1.0
+        shaft_end_x <- handle_x + (barrel_x - handle_x) * 0.74
+        shaft_end_y <- handle_y + (barrel_y - handle_y) * 0.74
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9845,29 +9880,33 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                     fill = NA, color = grid_col, linewidth = 0.8) +
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
-          geom_segment(aes(x = cx, y = cy, xend = cx, yend = cy + vec_len),
+          geom_segment(aes(x = arrow_x, y = arrow_y, xend = arrow_x, yend = arrow_y + arrow_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
-                       linewidth = 3.8, color = bat_col, lineend = "round") +
-          geom_segment(aes(x = handle_x, y = handle_y,
-                           xend = handle_x + (barrel_x - handle_x) * 0.30,
-                           yend = handle_y + (barrel_y - handle_y) * 0.30),
-                       linewidth = 3.0, color = "#c4a174", lineend = "round") +
-          geom_point(aes(x = barrel_x + dx * 0.10, y = barrel_y + dy * 0.10),
-                     size = 3.2, color = "#d1d5db") +
-          geom_point(aes(x = cx, y = cy), size = 3.2, color = "#d1d5db") +
+          geom_segment(aes(x = handle_x, y = handle_y, xend = shaft_end_x, yend = shaft_end_y),
+                       linewidth = 2.8, color = "#c8a173", lineend = "round") +
+          geom_segment(aes(x = shaft_end_x, y = shaft_end_y, xend = barrel_x, yend = barrel_y),
+                       linewidth = 4.2, color = bat_col, lineend = "round") +
+          geom_point(aes(x = handle_x, y = handle_y), size = 2.7, color = "#8b5a2b") +
+          geom_point(aes(x = ball_x, y = ball_y), size = 3.0, color = "#d1d5db") +
           geom_segment(
-            aes(x = cx, y = cy, xend = cx + dx, yend = cy + dy),
+            aes(x = arrow_x, y = arrow_y, xend = arrow_x + ux * arrow_len, yend = arrow_y + uy * arrow_len),
             linewidth = 1.8, color = angle_col,
             arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
           ) +
-          annotate("text", x = -2.05, y = 1.65, label = pull_left, color = "#22c55e", hjust = 0, size = 4) +
-          annotate("text", x = 2.05, y = 1.65, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
-          annotate("text", x = 0, y = 2.1, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
-          annotate("text", x = 0, y = 1.78, label = "Horizontal Attack", color = text_col, size = 5) +
-          coord_fixed(xlim = c(-2.2, 2.2), ylim = c(-0.35, 2.35)) +
-          theme_void() +
+          annotate("text", x = -2.05, y = y_max - 0.35, label = pull_left, color = "#22c55e", hjust = 0, size = 4) +
+          annotate("text", x = 2.05, y = y_max - 0.35, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
+          annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
+          annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
+          scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
+          coord_fixed(xlim = c(-2.2, 2.2), ylim = c(y_min, y_max)) +
+          labs(x = "Side (ft)", y = "Forward (ft)") +
+          theme_minimal(base_size = 12) +
           theme(
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.ticks = element_blank(),
+            axis.text = element_text(color = text_col),
+            axis.title = element_text(color = text_col, face = "bold"),
             plot.background = element_rect(fill = "transparent", color = NA),
             panel.background = element_rect(fill = "transparent", color = NA)
           )
