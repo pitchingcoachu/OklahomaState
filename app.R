@@ -6554,43 +6554,8 @@ compute_process_results <- function(df, mode = "All") {
       pitch_n   <- nrow(dfi)
       dfi_live  <- dfi %>% dplyr::filter(SessionType == "Live")
       # Use PA-ending outcomes so K%/BB% numerators align with BF denominator.
-      # Prefer structural PA keys when available; this is order-independent.
       kbb_from_terminal_pa <- function(d) {
         if (!nrow(d)) return(list(BF = 0L, K = 0L, BB = 0L))
-        playres  <- as.character(d$PlayResult)
-        korbb    <- as.character(d$KorBB)
-        terminal_ok <- (!is.na(playres) & playres != "Undefined") |
-          (!is.na(korbb) & korbb %in% c("Strikeout", "Walk"))
-
-        key_cols_game <- intersect(c("GameID", "GameUID", "GameForeignID"), names(d))
-        has_struct_cols <- all(c("Inning", "PAofInning") %in% names(d))
-        if (length(key_cols_game) && has_struct_cols) {
-          gvals <- rep("", nrow(d))
-          for (nm in key_cols_game) {
-            cand <- trimws(as.character(d[[nm]]))
-            cand[is.na(cand)] <- ""
-            use <- !nzchar(gvals) & nzchar(cand)
-            gvals[use] <- cand[use]
-          }
-          inning <- trimws(as.character(d$Inning))
-          pa_inn <- trimws(as.character(d$PAofInning))
-          valid_key <- nzchar(gvals) & nzchar(inning) & nzchar(pa_inn)
-          if (any(valid_key)) {
-            pa_key <- rep(NA_character_, nrow(d))
-            pa_key[valid_key] <- paste(gvals[valid_key], inning[valid_key], pa_inn[valid_key], sep = "::")
-            term_key <- pa_key[terminal_ok & !is.na(pa_key)]
-            bf <- length(unique(term_key))
-            k <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Strikeout", na.rm = TRUE)
-            bb <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Walk", na.rm = TRUE)
-            # Guard against malformed PA keys (e.g., repeated PAofInning values collapsing BF).
-            # If BF is implausibly low vs terminal events, fall back to count-transition parsing below.
-            term_n <- sum(terminal_ok & !is.na(pa_key), na.rm = TRUE)
-            if (bf >= 1L && (term_n <= 2L || bf >= ceiling(term_n * 0.5))) {
-              return(list(BF = as.integer(bf), K = as.integer(k), BB = as.integer(bb)))
-            }
-          }
-        }
-
         balls   <- suppressWarnings(as.numeric(d$Balls))
         strikes <- suppressWarnings(as.numeric(d$Strikes))
         valid   <- is.finite(balls) & is.finite(strikes)
@@ -6604,6 +6569,10 @@ compute_process_results <- function(df, mode = "All") {
 
         last_idx <- ave(seq_len(nrow(d)), pa_id, FUN = function(idx) rep(max(idx), length(idx)))
         is_last  <- seq_len(nrow(d)) == last_idx
+        playres  <- as.character(d$PlayResult)
+        korbb    <- as.character(d$KorBB)
+        terminal_ok <- (!is.na(playres) & playres != "Undefined") |
+          (!is.na(korbb) & korbb %in% c("Strikeout", "Walk"))
         term_last <- is_last & terminal_ok & !is.na(pa_id)
 
         d_term <- d[term_last, , drop = FALSE]
@@ -9126,7 +9095,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     output$hmNote <- renderUI({
       stat <- input$hmStat
       if (is.null(stat)) return(NULL)
-      if (identical(stat, "Whiff Rate")) {
+      if (identical(stat, "Exit Velocity")) {
+        HTML(sprintf("<small><em>Shows Live in-play balls with EV ≥ %d mph; lower-density areas are floored for readability.</em></small>", HEAT_EV_THRESHOLD))
+      } else if (identical(stat, "Whiff Rate")) {
         HTML("<small><em>Locations of swinging strikes.</em></small>")
       } else if (identical(stat, "GB Rate")) {
         HTML("<small><em>Locations of ground balls (Live only).</em></small>")
@@ -10169,12 +10140,18 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           df_all <- df
           df_all$SplitColumn <- "All"
           compute_process_results(df_all) %>%
-            dplyr::filter(PitchType == "All") %>%
             dplyr::mutate(
               xWOBA     = parse_num(xWOBA),
               xISO      = parse_num(xISO),
               BABIP     = parse_num(BABIP),
               `Barrel%` = parse_pct_prop(`Barrel%`)
+            ) %>%
+            dplyr::summarise(
+              xWOBA     = nz_mean(xWOBA),
+              xISO      = nz_mean(xISO),
+              BABIP     = nz_mean(BABIP),
+              `Barrel%` = nz_mean(`Barrel%`),
+              .groups = "drop"
             )
         }
         if (nrow(extras_all)) {
@@ -15881,14 +15858,20 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             df_all <- df_src
             df_all$SplitColumn <- "All"
             compute_process_results(df_all) %>%
-              dplyr::filter(PitchType == "All") %>%
               dplyr::mutate(
                 xWOBA     = suppressWarnings(as.numeric(xWOBA)),
                 xISO      = suppressWarnings(as.numeric(xISO)),
                 BABIP     = suppressWarnings(as.numeric(BABIP)),
                 `Barrel%` = parse_pct_prop(`Barrel%`)
               ) %>%
-              dplyr::mutate(`RV/100` = suppressWarnings(as.numeric(`RV/100`)))
+              dplyr::summarise(
+                xWOBA = nz_mean_local(xWOBA),
+                xISO  = nz_mean_local(xISO),
+                BABIP = nz_mean_local(BABIP),
+                `Barrel%` = nz_mean_local(`Barrel%`),
+                `RV/100` = nz_mean_local(suppressWarnings(as.numeric(`RV/100`))),
+                .groups = "drop"
+              )
           }
           if (nrow(extras_all)) {
             all_row$xWOBA     <- extras_all$xWOBA[1]
@@ -31049,11 +31032,8 @@ deg_to_clock <- function(x) {
       
       # ---------- BATTED BALL DATA TABLE ----------
       if (identical(mode, "Batted Ball Data")) {
-        # Helper function: baseball-style rates (.230 / -.230)
-        fmt_avg <- function(x) {
-          s <- sprintf("%.3f", x)
-          sub("^(-?)0\\.", "\\1.", s)
-        }
+        # Helper function
+        fmt_avg <- function(x) sprintf("%.3f", x)
         
         # Filter for completed PAs only (like Results table does)
         is_term <- (
@@ -31094,17 +31074,7 @@ deg_to_clock <- function(x) {
             BABIP = safe_div(H, Inplay_All)
           )
         
-        # Calculate xWOBA/xISO from shared process calculator (same logic as Pitching suite)
-        proc_extras <- compute_process_results(df, mode) %>%
-          dplyr::rename(SplitColumn = PitchType) %>%
-          dplyr::mutate(
-            SplitColumn = as.character(SplitColumn),
-            xWOBA = suppressWarnings(as.numeric(xWOBA)),
-            xISO  = suppressWarnings(as.numeric(xISO))
-          ) %>%
-          dplyr::select(SplitColumn, xWOBA, xISO)
-
-        # Calculate Barrel% per split locally for this batted-ball table
+        # Calculate xWOBA, xISO, and Barrel% per split
         splits <- unique(df$SplitColumn)
         xstats_list <- lapply(splits, function(spl) {
           split_df <- df[df$SplitColumn == spl, , drop = FALSE]
@@ -31140,10 +31110,11 @@ deg_to_clock <- function(x) {
             xSLG <- safe_div(xTB, split_AB)
             xISO <- xSLG - xAVG
             
-            proc_row <- proc_extras[proc_extras$SplitColumn == as.character(spl), , drop = FALSE]
-            if (nrow(proc_row)) {
-              xWOBA <- proc_row$xWOBA[[1]]
-              xISO  <- proc_row$xISO[[1]]
+            # xWOBA calculation
+            split_BB <- per_type$BB[per_type$SplitColumn == spl]
+            BF_live <- sum(split_df$SessionType == "Live" & split_df$Balls == 0 & split_df$Strikes == 0, na.rm = TRUE)
+            if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
+              xWOBA <- safe_div(W_BB*split_BB + W_1B*x1B + W_2B*x2B + W_3B*x3B + W_HR*xHR, BF_live)
             }
           }
           
@@ -31230,10 +31201,9 @@ deg_to_clock <- function(x) {
           xSLG_all <- safe_div(xTB_all, AB_all)
           xISO_all <- xSLG_all - xAVG_all
           
-          proc_all <- proc_extras[proc_extras$SplitColumn == "All", , drop = FALSE]
-          if (nrow(proc_all)) {
-            xWOBA_all <- proc_all$xWOBA[[1]]
-            xISO_all  <- proc_all$xISO[[1]]
+          BF_live_all <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+          if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
+            xWOBA_all <- safe_div(W_BB*BB_all + W_1B*x1B_all + W_2B*x2B_all + W_3B*x3B_all + W_HR*xHR_all, BF_live_all)
           }
         }
         
@@ -32540,11 +32510,8 @@ deg_to_clock <- function(x) {
     
     # ---------- BATTED BALL DATA TABLE ----------
     if (identical(mode, "Batted Ball Data")) {
-      # Helper function: baseball-style rates (.230 / -.230)
-      fmt_avg <- function(x) {
-        s <- sprintf("%.3f", x)
-        sub("^(-?)0\\.", "\\1.", s)
-      }
+      # Helper function
+      fmt_avg <- function(x) sprintf("%.3f", x)
       
       # Filter for completed PAs only (like Results table does)
       is_term <- (
@@ -32585,17 +32552,7 @@ deg_to_clock <- function(x) {
           BABIP = safe_div(H, Inplay_All)
         )
       
-      # Calculate xWOBA/xISO from shared process calculator (same logic as Pitching suite)
-      proc_extras <- compute_process_results(df, mode) %>%
-        dplyr::rename(SplitColumn = PitchType) %>%
-        dplyr::mutate(
-          SplitColumn = as.character(SplitColumn),
-          xWOBA = suppressWarnings(as.numeric(xWOBA)),
-          xISO  = suppressWarnings(as.numeric(xISO))
-        ) %>%
-        dplyr::select(SplitColumn, xWOBA, xISO)
-
-      # Calculate Barrel% per split locally for this batted-ball table
+      # Calculate xWOBA, xISO, and Barrel% per split
       splits <- unique(term$SplitColumn)
       xstats_list <- lapply(splits, function(spl) {
         split_df <- term[term$SplitColumn == spl, , drop = FALSE]
@@ -32631,10 +32588,11 @@ deg_to_clock <- function(x) {
           xSLG <- safe_div(xTB, split_AB)
           xISO <- xSLG - xAVG
           
-          proc_row <- proc_extras[proc_extras$SplitColumn == as.character(spl), , drop = FALSE]
-          if (nrow(proc_row)) {
-            xWOBA <- proc_row$xWOBA[[1]]
-            xISO  <- proc_row$xISO[[1]]
+          # xWOBA calculation
+          split_BB <- per_type$BB[per_type$SplitColumn == spl]
+          BF_live <- sum(split_df$SessionType == "Live" & split_df$Balls == 0 & split_df$Strikes == 0, na.rm = TRUE)
+          if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
+            xWOBA <- safe_div(W_BB*split_BB + W_1B*x1B + W_2B*x2B + W_3B*x3B + W_HR*xHR, BF_live)
           }
         }
         
@@ -32721,10 +32679,9 @@ deg_to_clock <- function(x) {
         xSLG_all <- safe_div(xTB_all, AB_all)
         xISO_all <- xSLG_all - xAVG_all
         
-        proc_all <- proc_extras[proc_extras$SplitColumn == "All", , drop = FALSE]
-        if (nrow(proc_all)) {
-          xWOBA_all <- proc_all$xWOBA[[1]]
-          xISO_all  <- proc_all$xISO[[1]]
+        PA_live_all <- sum(term$SessionType == "Live" & term$Balls == 0 & term$Strikes == 0, na.rm = TRUE)
+        if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
+          xWOBA_all <- safe_div(W_BB*BB_all + W_1B*x1B_all + W_2B*x2B_all + W_3B*x3B_all + W_HR*xHR_all, PA_live_all)
         }
       }
       
