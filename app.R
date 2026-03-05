@@ -8144,6 +8144,33 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                 )
               )
             )
+          ),
+          tabPanel(
+            "Contact Point",
+            tabsetPanel(
+              id = ns("contactTabs"),
+              tabPanel(
+                "2D Visual",
+                fluidRow(
+                  column(
+                    9,
+                    ggiraph::girafeOutput(ns("contactPoint2d"), height = "560px")
+                  ),
+                  column(
+                    3,
+                    tags$div(
+                      style = "font-weight:bold; text-align:center; margin-bottom:6px;",
+                      "Pitch Type Key"
+                    ),
+                    plotOutput(ns("contact_pitch_type_key"), height = 180)
+                  )
+                )
+              ),
+              tabPanel(
+                "3D Visual",
+                plotly::plotlyOutput(ns("contactPoint3d"), height = "620px")
+              )
+            )
           )
         )
       )
@@ -8846,6 +8873,29 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     
     # Helper to create location plot with green box
     make_location_plot <- function(df_subset) {
+      make_hitting_summary_hover <- function(df_in, include_contact = FALSE) {
+        pr <- as.character(df_in$PlayResult)
+        pc <- as.character(df_in$PitchCall)
+        result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
+                                     dplyr::coalesce(pc, "—"))
+        tip <- paste0(
+          "<b>", dplyr::coalesce(as.character(df_in$TaggedPitchType), "—"), "</b><br>",
+          "PitchCall: ", dplyr::coalesce(pc, "—"), "<br>",
+          "Result: ", result_txt, "<br>",
+          "Velo: ", ifelse(is.finite(as.numeric(df_in$RelSpeed)), sprintf("%.1f mph", as.numeric(df_in$RelSpeed)), "—"), "<br>",
+          "EV: ", ifelse(is.finite(as.numeric(df_in$ExitSpeed)), sprintf("%.1f mph", as.numeric(df_in$ExitSpeed)), "—"), "<br>",
+          "LA: ", ifelse(is.finite(as.numeric(df_in$Angle)), sprintf("%.1f°", as.numeric(df_in$Angle)), "—")
+        )
+        if (isTRUE(include_contact)) {
+          tip <- paste0(
+            tip,
+            "<br>Height: ", ifelse(is.finite(as.numeric(df_in$ContactPositionY)), sprintf("%.1f ft", round(as.numeric(df_in$ContactPositionY), 1)), "—"),
+            "<br>Side: ", ifelse(is.finite(as.numeric(df_in$ContactPositionZ)), sprintf("%.1f ft", round(as.numeric(df_in$ContactPositionZ), 1)), "—")
+          )
+        }
+        tip
+      }
+      
       if (!"Result" %in% names(df_subset)) {
         df_subset$Result <- compute_result(df_subset$PitchCall, df_subset$PlayResult)
       }
@@ -8876,14 +8926,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             TRUE ~ NA_character_
           ),
           ResultDisplay = factor(ResultDisplay, levels = hit_result_levels),
-          tooltip = paste0(
-            "<b>", TaggedPitchType, "</b><br>",
-            "PitchCall: ", ifelse(is.na(PitchCall), "—", as.character(PitchCall)), "<br>",
-            "Result: ", ifelse(is.na(ResultDisplay), "—", as.character(ResultDisplay)), "<br>",
-            "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
-            "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
-            "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—")
-          ),
+          tooltip = make_hitting_summary_hover(., include_contact = FALSE),
           rid = dplyr::row_number()
         )
       
@@ -9352,6 +9395,248 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       make_location_plot(df)
     })
     
+    # ---- Contact Point 2D ----
+    output$contactPoint2d <- ggiraph::renderGirafe({
+      df <- filtered_hit()
+      if (!all(c("ContactPositionY", "ContactPositionZ") %in% names(df))) {
+        p_missing <- ggplot() +
+          annotate("text", x = 0, y = 0, label = "Missing ContactPositionY/ContactPositionZ columns", size = 5) +
+          theme_void()
+        return(girafe_transparent(ggobj = p_missing))
+      }
+      
+      dark_on <- is_dark_mode()
+      line_col <- if (dark_on) "#ffffff" else "black"
+      text_col <- if (dark_on) "#e5e7eb" else "#111827"
+      cols <- colors_for_mode(dark_on)
+      
+      df_plot <- df %>%
+        dplyr::mutate(
+          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+        ) %>%
+        dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ)) %>%
+        dplyr::mutate(
+          TaggedPitchType = as.character(TaggedPitchType),
+          tooltip = {
+            pr <- as.character(PlayResult)
+            pc <- as.character(PitchCall)
+            result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
+                                         dplyr::coalesce(pc, "—"))
+            paste0(
+              "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+              "PitchCall: ", dplyr::coalesce(pc, "—"), "<br>",
+              "Result: ", result_txt, "<br>",
+              "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
+              "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+              "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+              "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
+              "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
+            )
+          },
+          rid = dplyr::row_number()
+        )
+      
+      if (!nrow(df_plot)) {
+        p_empty <- ggplot() +
+          annotate("text", x = 0, y = 2, label = "No contact-position data for current filters", size = 5, color = text_col) +
+          theme_void()
+        return(girafe_transparent(ggobj = p_empty))
+      }
+      
+      types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
+      if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
+      col_vals <- cols[types_chr]
+      col_vals[is.na(col_vals)] <- "gray70"
+      
+      # Home plate with the point toward the bottom of the chart.
+      home_plate <- data.frame(
+        x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
+        y = c(0.45, 0.45, 0.15, -0.20, 0.15, 0.45)
+      )
+      
+      p <- ggplot() +
+        geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
+        ggiraph::geom_point_interactive(
+          data = df_plot,
+          aes(ContactPositionZ, ContactPositionY,
+              color = TaggedPitchType, fill = TaggedPitchType,
+              tooltip = tooltip, data_id = rid),
+          size = 4.3, alpha = 0.9, shape = 21, stroke = 0.7
+        ) +
+        scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
+        scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
+        coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(-0.4, 6)) +
+        labs(x = "Side (ft)", y = "Height (ft)") +
+        theme_minimal(base_size = 12) +
+        theme(
+          legend.position = "none",
+          axis.title = element_text(color = text_col, face = "bold"),
+          axis.text = element_text(color = text_col),
+          panel.grid.minor = element_blank(),
+          panel.grid.major = element_line(color = if (dark_on) "#374151" else "#e5e7eb"),
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.background = element_rect(fill = "transparent", color = NA)
+        )
+      
+      girafe_transparent(
+        ggobj = p,
+        options = list(
+          ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
+                                css = "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.4);"),
+          ggiraph::opts_hover(css = "stroke-width:1.5px;"),
+          ggiraph::opts_hover_inv(css = "opacity:0.15;")
+        )
+      )
+    })
+    
+    # ---- Contact Point 3D ----
+    output$contactPoint3d <- plotly::renderPlotly({
+      df <- filtered_hit()
+      if (!all(c("ContactPositionX", "ContactPositionY", "ContactPositionZ") %in% names(df))) {
+        return(plotly::plot_ly() %>% plotly::layout(
+          title = "Missing ContactPositionX/ContactPositionY/ContactPositionZ columns"
+        ))
+      }
+      
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      line_col <- if (dark_on) "#e5e7eb" else "#111827"
+      axis_col <- if (dark_on) "#e5e7eb" else "#111827"
+      
+      df_plot <- df %>%
+        dplyr::mutate(
+          ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
+          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+        ) %>%
+        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY), is.finite(ContactPositionZ)) %>%
+        dplyr::mutate(
+          TaggedPitchType = as.character(TaggedPitchType),
+          tooltip = {
+            pr <- as.character(PlayResult)
+            pc <- as.character(PitchCall)
+            result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
+                                         dplyr::coalesce(pc, "—"))
+            paste0(
+              "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+              "PitchCall: ", dplyr::coalesce(pc, "—"), "<br>",
+              "Result: ", result_txt, "<br>",
+              "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
+              "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+              "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
+              "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
+              "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
+              "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
+            )
+          }
+        )
+      
+      if (!nrow(df_plot)) {
+        return(plotly::plot_ly() %>% plotly::layout(
+          title = "No contact-position data for current filters"
+        ))
+      }
+      
+      types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
+      if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
+      col_vals <- cols[types_chr]
+      col_vals[is.na(col_vals)] <- "gray70"
+      
+      plate <- data.frame(
+        x = c(0.00, 0.58, 1.42, 1.42, 0.58, 0.00),
+        y = c(0.00, 0.71, 0.71, -0.71, -0.71, 0.00),
+        z = 0
+      )
+      
+      zone_x <- 1.42
+      zone_left <- ZONE_LEFT
+      zone_right <- ZONE_RIGHT
+      zone_bottom <- ZONE_BOTTOM
+      zone_top <- ZONE_TOP
+      zone_dx <- (zone_right - zone_left) / 3
+      zone_dy <- (zone_top - zone_bottom) / 3
+      
+      zone_outer <- data.frame(
+        x = c(zone_x, zone_x, zone_x, zone_x, zone_x),
+        y = c(zone_left, zone_right, zone_right, zone_left, zone_left),
+        z = c(zone_bottom, zone_bottom, zone_top, zone_top, zone_bottom)
+      )
+      zone_v1 <- data.frame(x = zone_x, y = zone_left + zone_dx, z = c(zone_bottom, zone_top))
+      zone_v2 <- data.frame(x = zone_x, y = zone_left + 2 * zone_dx, z = c(zone_bottom, zone_top))
+      zone_h1 <- data.frame(x = zone_x, y = c(zone_left, zone_right), z = zone_bottom + zone_dy)
+      zone_h2 <- data.frame(x = zone_x, y = c(zone_left, zone_right), z = zone_bottom + 2 * zone_dy)
+      
+      p <- plotly::plot_ly()
+      for (pt in types_chr) {
+        dpt <- df_plot[df_plot$TaggedPitchType == pt, , drop = FALSE]
+        p <- p %>%
+          plotly::add_markers(
+            data = dpt,
+            x = ~ContactPositionX, y = ~ContactPositionZ, z = ~ContactPositionY,
+            type = "scatter3d", mode = "markers",
+            name = pt,
+            marker = list(size = 4.5, color = unname(col_vals[[pt]]), opacity = 0.88),
+            text = ~tooltip,
+            hoverinfo = "text"
+          )
+      }
+      
+      p %>%
+        plotly::add_trace(
+          data = plate,
+          x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 6),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::add_trace(
+          data = zone_outer, x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 5),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::add_trace(
+          data = zone_v1, x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 3),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::add_trace(
+          data = zone_v2, x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 3),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::add_trace(
+          data = zone_h1, x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 3),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::add_trace(
+          data = zone_h2, x = ~x, y = ~y, z = ~z,
+          type = "scatter3d", mode = "lines",
+          line = list(color = line_col, width = 3),
+          hoverinfo = "skip", showlegend = FALSE
+        ) %>%
+        plotly::layout(
+          paper_bgcolor = "rgba(0,0,0,0)",
+          plot_bgcolor = "rgba(0,0,0,0)",
+          scene = list(
+            xaxis = list(title = "Forward (ft)", color = axis_col, gridcolor = if (dark_on) "#374151" else "#e5e7eb"),
+            yaxis = list(title = "Side (ft)", color = axis_col, gridcolor = if (dark_on) "#374151" else "#e5e7eb"),
+            zaxis = list(title = "Height (ft)", color = axis_col, gridcolor = if (dark_on) "#374151" else "#e5e7eb"),
+            dragmode = "orbit",
+            aspectmode = "manual",
+            aspectratio = list(x = 1.4, y = 1.2, z = 1.1),
+            camera = list(eye = list(x = 1.6, y = -1.5, z = 0.9)),
+            bgcolor = "rgba(0,0,0,0)"
+          ),
+          legend = list(orientation = "h", x = 0, y = 1.02)
+        )
+    })
+    
     # ---- Result key (legend for pitch results) ----
     output$result_key <- renderPlot({
       dark_on <- is_dark_mode()
@@ -9414,6 +9699,56 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         } else {
           if (dark_on) "#e5e7eb" else "gray50"
         }
+      })
+      names(type_colors) <- types
+      
+      leg_df <- data.frame(
+        TaggedPitchType = factor(types, levels = types),
+        x = seq_along(types),
+        stringsAsFactors = FALSE
+      )
+      
+      ggplot(leg_df, aes(x = x, y = 0)) +
+        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = text_col) +
+        scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
+        coord_cartesian(xlim = c(0.5, length(types) + 0.5), ylim = c(-0.9, 0.35)) +
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+    }, bg = "transparent")
+    
+    output$contact_pitch_type_key <- renderPlot({
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#333333"
+      stroke_col <- text_col
+      df <- filtered_hit() %>%
+        dplyr::mutate(
+          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+        ) %>%
+        dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ))
+      if (is.null(df) || !nrow(df)) return(NULL)
+      
+      types <- tryCatch({
+        unique_types <- unique(df$TaggedPitchType)
+        unique_types[!is.na(unique_types) & nzchar(as.character(unique_types))]
+      }, error = function(e) {
+        character(0)
+      })
+      
+      if (!length(types)) return(NULL)
+      types <- as.character(types)
+      canonical_order <- names(all_colors)
+      known_types <- canonical_order[canonical_order %in% types]
+      unknown_types <- setdiff(types, canonical_order)
+      types <- c(known_types, sort(unknown_types))
+      
+      cols <- colors_for_mode(dark_on)
+      type_colors <- sapply(types, function(t) {
+        if (t %in% names(cols)) cols[t] else if (dark_on) "#e5e7eb" else "gray50"
       })
       names(type_colors) <- types
       
@@ -31033,7 +31368,7 @@ deg_to_clock <- function(x) {
       # ---------- BATTED BALL DATA TABLE ----------
       if (identical(mode, "Batted Ball Data")) {
         # Helper function
-        fmt_avg <- function(x) sprintf("%.3f", x)
+        fmt_avg <- function(x) gsub("^(-?)0\\.", "\\1.", sprintf("%.3f", x))
         
         # Filter for completed PAs only (like Results table does)
         is_term <- (
@@ -32511,7 +32846,7 @@ deg_to_clock <- function(x) {
     # ---------- BATTED BALL DATA TABLE ----------
     if (identical(mode, "Batted Ball Data")) {
       # Helper function
-      fmt_avg <- function(x) sprintf("%.3f", x)
+      fmt_avg <- function(x) gsub("^(-?)0\\.", "\\1.", sprintf("%.3f", x))
       
       # Filter for completed PAs only (like Results table does)
       is_term <- (
