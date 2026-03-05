@@ -8160,11 +8160,11 @@ mod_hit_ui <- function(id, show_header = FALSE) {
             )
           ),
           tabPanel(
-            "Contact Point",
+            "Swing Data",
             tabsetPanel(
               id = ns("contactTabs"),
               tabPanel(
-                "2D Visual",
+                "2D Contact",
                 fluidRow(
                   column(
                     3,
@@ -8181,7 +8181,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                 )
               ),
               tabPanel(
-                "3D Visual",
+                "3D Contact",
                 plotly::plotlyOutput(ns("contactPoint3d"), height = "620px")
               ),
               tabPanel(
@@ -9828,7 +9828,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         
         # 34" bat length => 2.833 ft total.
         bat_half <- (34 / 12) / 2
-        bat_theta <- rad
+        # Plot-space tilt is opposite the attack-angle sign convention used in data.
+        bat_theta <- -rad
         bat_x1 <- cx - cos(bat_theta) * bat_half
         bat_y1 <- cy - sin(bat_theta) * bat_half
         bat_x2 <- cx + cos(bat_theta) * bat_half
@@ -9866,13 +9867,24 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         dir_norm <- sqrt(dx^2 + dy^2)
         ux <- ifelse(dir_norm > 0, dx / dir_norm, 0)
         uy <- ifelse(dir_norm > 0, dy / dir_norm, 1)
-        ball_x <- barrel_x + ux * 0.05
-        ball_y <- barrel_y + uy * 0.05
-        arrow_x <- barrel_x + ux * 0.12
-        arrow_y <- barrel_y + uy * 0.12
+        # Move contact slightly in from the bat end (not at extreme tip).
+        bat_norm <- sqrt((barrel_x - handle_x)^2 + (barrel_y - handle_y)^2)
+        ubx <- ifelse(bat_norm > 0, (barrel_x - handle_x) / bat_norm, 1)
+        uby <- ifelse(bat_norm > 0, (barrel_y - handle_y) / bat_norm, 0)
+        contact_inset <- 0.16
+        ball_x <- barrel_x - ubx * contact_inset
+        ball_y <- barrel_y - uby * contact_inset
+        arrow_x <- ball_x + ux * 0.08
+        arrow_y <- ball_y + uy * 0.08
         arrow_len <- 1.0
-        shaft_end_x <- handle_x + (barrel_x - handle_x) * 0.74
-        shaft_end_y <- handle_y + (barrel_y - handle_y) * 0.74
+        
+        # Gradual taper from handle to thicker barrel.
+        p1x <- handle_x + (barrel_x - handle_x) * 0.22
+        p1y <- handle_y + (barrel_y - handle_y) * 0.22
+        p2x <- handle_x + (barrel_x - handle_x) * 0.48
+        p2y <- handle_y + (barrel_y - handle_y) * 0.48
+        p3x <- handle_x + (barrel_x - handle_x) * 0.73
+        p3y <- handle_y + (barrel_y - handle_y) * 0.73
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9882,11 +9894,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
           geom_segment(aes(x = arrow_x, y = arrow_y, xend = arrow_x, yend = arrow_y + arrow_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          geom_segment(aes(x = handle_x, y = handle_y, xend = shaft_end_x, yend = shaft_end_y),
-                       linewidth = 2.8, color = "#c8a173", lineend = "round") +
-          geom_segment(aes(x = shaft_end_x, y = shaft_end_y, xend = barrel_x, yend = barrel_y),
-                       linewidth = 4.2, color = bat_col, lineend = "round") +
-          geom_point(aes(x = handle_x, y = handle_y), size = 2.7, color = "#8b5a2b") +
+          geom_segment(aes(x = handle_x, y = handle_y, xend = p1x, yend = p1y),
+                       linewidth = 3.2, color = "#b98853", lineend = "round") +
+          geom_segment(aes(x = p1x, y = p1y, xend = p2x, yend = p2y),
+                       linewidth = 3.9, color = "#bf8e58", lineend = "round") +
+          geom_segment(aes(x = p2x, y = p2y, xend = p3x, yend = p3y),
+                       linewidth = 4.7, color = "#c89863", lineend = "round") +
+          geom_segment(aes(x = p3x, y = p3y, xend = barrel_x, yend = barrel_y),
+                       linewidth = 5.6, color = bat_col, lineend = "round") +
+          geom_point(aes(x = handle_x, y = handle_y), size = 4.1, color = "#8b5a2b") +
           geom_point(aes(x = ball_x, y = ball_y), size = 3.0, color = "#d1d5db") +
           geom_segment(
             aes(x = arrow_x, y = arrow_y, xend = arrow_x + ux * arrow_len, yend = arrow_y + uy * arrow_len),
