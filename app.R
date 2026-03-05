@@ -9867,24 +9867,16 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         dir_norm <- sqrt(dx^2 + dy^2)
         ux <- ifelse(dir_norm > 0, dx / dir_norm, 0)
         uy <- ifelse(dir_norm > 0, dy / dir_norm, 1)
-        # Move contact slightly in from the bat end (not at extreme tip).
+        # Keep displayed contact tied to actual average/selected contact location.
         bat_norm <- sqrt((barrel_x - handle_x)^2 + (barrel_y - handle_y)^2)
         ubx <- ifelse(bat_norm > 0, (barrel_x - handle_x) / bat_norm, 1)
         uby <- ifelse(bat_norm > 0, (barrel_y - handle_y) / bat_norm, 0)
-        contact_inset <- 0.16
-        ball_x <- barrel_x - ubx * contact_inset
-        ball_y <- barrel_y - uby * contact_inset
-        arrow_x <- ball_x + ux * 0.08
-        arrow_y <- ball_y + uy * 0.08
+        contact_x <- cx
+        contact_y <- cy
+        arrow_start_inset <- 0.12
+        arrow_x <- barrel_x - ubx * arrow_start_inset
+        arrow_y <- barrel_y - uby * arrow_start_inset
         arrow_len <- 1.0
-        
-        # Gradual taper from handle to thicker barrel.
-        p1x <- handle_x + (barrel_x - handle_x) * 0.22
-        p1y <- handle_y + (barrel_y - handle_y) * 0.22
-        p2x <- handle_x + (barrel_x - handle_x) * 0.48
-        p2y <- handle_y + (barrel_y - handle_y) * 0.48
-        p3x <- handle_x + (barrel_x - handle_x) * 0.73
-        p3y <- handle_y + (barrel_y - handle_y) * 0.73
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9894,16 +9886,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
           geom_segment(aes(x = arrow_x, y = arrow_y, xend = arrow_x, yend = arrow_y + arrow_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          geom_segment(aes(x = handle_x, y = handle_y, xend = p1x, yend = p1y),
-                       linewidth = 3.2, color = "#b98853", lineend = "round") +
-          geom_segment(aes(x = p1x, y = p1y, xend = p2x, yend = p2y),
-                       linewidth = 3.9, color = "#bf8e58", lineend = "round") +
-          geom_segment(aes(x = p2x, y = p2y, xend = p3x, yend = p3y),
-                       linewidth = 4.7, color = "#c89863", lineend = "round") +
-          geom_segment(aes(x = p3x, y = p3y, xend = barrel_x, yend = barrel_y),
-                       linewidth = 5.6, color = bat_col, lineend = "round") +
-          geom_point(aes(x = handle_x, y = handle_y), size = 4.1, color = "#8b5a2b") +
-          geom_point(aes(x = ball_x, y = ball_y), size = 3.0, color = "#d1d5db") +
+          # Smooth thicker bat body (no visible section joins).
+          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
+                       linewidth = 5.8, color = bat_col, lineend = "round") +
+          # Subtle top highlight for depth.
+          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
+                       linewidth = 2.1, color = "#cfa170", alpha = 0.45, lineend = "round") +
+          geom_point(aes(x = handle_x, y = handle_y), size = 4.3, color = "#8b5a2b") +
+          geom_point(aes(x = contact_x, y = contact_y), size = 3.2, color = "#d1d5db") +
           geom_segment(
             aes(x = arrow_x, y = arrow_y, xend = arrow_x + ux * arrow_len, yend = arrow_y + uy * arrow_len),
             linewidth = 1.8, color = angle_col,
