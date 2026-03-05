@@ -6582,7 +6582,12 @@ compute_process_results <- function(df, mode = "All") {
             bf <- length(unique(term_key))
             k <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Strikeout", na.rm = TRUE)
             bb <- sum(korbb[terminal_ok & !is.na(pa_key)] == "Walk", na.rm = TRUE)
-            return(list(BF = as.integer(bf), K = as.integer(k), BB = as.integer(bb)))
+            # Guard against malformed PA keys (e.g., repeated PAofInning values collapsing BF).
+            # If BF is implausibly low vs terminal events, fall back to count-transition parsing below.
+            term_n <- sum(terminal_ok & !is.na(pa_key), na.rm = TRUE)
+            if (bf >= 1L && (term_n <= 2L || bf >= ceiling(term_n * 0.5))) {
+              return(list(BF = as.integer(bf), K = as.integer(k), BB = as.integer(bb)))
+            }
           }
         }
 
@@ -10164,18 +10169,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           df_all <- df
           df_all$SplitColumn <- "All"
           compute_process_results(df_all) %>%
+            dplyr::filter(PitchType == "All") %>%
             dplyr::mutate(
               xWOBA     = parse_num(xWOBA),
               xISO      = parse_num(xISO),
               BABIP     = parse_num(BABIP),
               `Barrel%` = parse_pct_prop(`Barrel%`)
-            ) %>%
-            dplyr::summarise(
-              xWOBA     = nz_mean(xWOBA),
-              xISO      = nz_mean(xISO),
-              BABIP     = nz_mean(BABIP),
-              `Barrel%` = nz_mean(`Barrel%`),
-              .groups = "drop"
             )
         }
         if (nrow(extras_all)) {
@@ -15882,20 +15881,14 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             df_all <- df_src
             df_all$SplitColumn <- "All"
             compute_process_results(df_all) %>%
+              dplyr::filter(PitchType == "All") %>%
               dplyr::mutate(
                 xWOBA     = suppressWarnings(as.numeric(xWOBA)),
                 xISO      = suppressWarnings(as.numeric(xISO)),
                 BABIP     = suppressWarnings(as.numeric(BABIP)),
                 `Barrel%` = parse_pct_prop(`Barrel%`)
               ) %>%
-              dplyr::summarise(
-                xWOBA = nz_mean_local(xWOBA),
-                xISO  = nz_mean_local(xISO),
-                BABIP = nz_mean_local(BABIP),
-                `Barrel%` = nz_mean_local(`Barrel%`),
-                `RV/100` = nz_mean_local(suppressWarnings(as.numeric(`RV/100`))),
-                .groups = "drop"
-              )
+              dplyr::mutate(`RV/100` = suppressWarnings(as.numeric(`RV/100`)))
           }
           if (nrow(extras_all)) {
             all_row$xWOBA     <- extras_all$xWOBA[1]
