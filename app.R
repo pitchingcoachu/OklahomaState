@@ -9764,12 +9764,22 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         )
     })
     
+    attack_hand_selected <- reactive({
+      hand <- input$batterSide %||% "All"
+      hand %in% c("Left", "Right")
+    })
+    
     attack_angle_base <- reactive({
       df <- filtered_hit()
       req(is.data.frame(df))
       req(all(c("VerticalAttackAngle", "HorizontalAttackAngle",
                 "ContactPositionX", "ContactPositionY", "ContactPositionZ") %in% names(df)))
+      if (!attack_hand_selected()) {
+        return(df[0, , drop = FALSE])
+      }
+      hand <- input$batterSide %||% "All"
       df %>%
+        dplyr::filter(BatterSide == hand) %>%
         dplyr::mutate(
           VerticalAttackAngle = suppressWarnings(as.numeric(VerticalAttackAngle)),
           HorizontalAttackAngle = suppressWarnings(as.numeric(HorizontalAttackAngle)),
@@ -9814,6 +9824,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     
     observe({
       df <- attack_angle_data()
+      if (!attack_hand_selected()) {
+        updateSelectInput(session, "attackPitchId", choices = c("Select Left or Right batter hand" = ""), selected = "")
+        return()
+      }
       if (!nrow(df)) {
         updateSelectInput(session, "attackPitchId", choices = c("No pitches available" = ""), selected = "")
         return()
@@ -9863,6 +9877,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     })
     
     output$attackAngleSummary <- renderUI({
+      if (!attack_hand_selected()) {
+        return(tags$div(style = "margin-top:10px; color:#9ca3af;", "Select Batter Hand = Left or Right to view Attack Angles."))
+      }
       row <- selected_attack_row()
       if (is.null(row) || !nrow(row)) {
         return(tags$div(style = "margin-top:10px; color:#9ca3af;", "No attack-angle contact data for current filters."))
@@ -9882,6 +9899,13 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     })
     
     output$attackAnglePlot <- renderPlot({
+      if (!attack_hand_selected()) {
+        return(
+          ggplot() +
+            annotate("text", x = 0, y = 0, label = "Select Batter Hand = Left or Right to view Attack Angles", size = 5) +
+            theme_void()
+        )
+      }
       row <- selected_attack_row()
       if (is.null(row) || !nrow(row)) {
         return(
