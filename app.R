@@ -9774,12 +9774,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       req(is.data.frame(df))
       req(all(c("VerticalAttackAngle", "HorizontalAttackAngle",
                 "ContactPositionX", "ContactPositionY", "ContactPositionZ") %in% names(df)))
-      if (!attack_hand_selected()) {
-        return(df[0, , drop = FALSE])
-      }
-      hand <- input$batterSide %||% "All"
-      df %>%
-        dplyr::filter(BatterSide == hand) %>%
+      df <- df %>%
         dplyr::mutate(
           VerticalAttackAngle = suppressWarnings(as.numeric(VerticalAttackAngle)),
           HorizontalAttackAngle = suppressWarnings(as.numeric(HorizontalAttackAngle)),
@@ -9789,6 +9784,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           BatterSide = as.character(BatterSide),
           .attack_row_id = dplyr::row_number()
         )
+      if (!attack_hand_selected()) {
+        return(df[0, , drop = FALSE])
+      }
+      hand <- input$batterSide %||% "All"
+      df %>% dplyr::filter(BatterSide == hand)
     })
     
     attack_angle_data <- reactive({
