@@ -9447,9 +9447,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     # ---- Contact Point 2D ----
     output$contactPoint2d <- ggiraph::renderGirafe({
       df <- filtered_hit()
-      if (!all(c("ContactPositionY", "ContactPositionZ") %in% names(df))) {
+      if (!all(c("ContactPositionX", "ContactPositionZ") %in% names(df))) {
         p_missing <- ggplot() +
-          annotate("text", x = 0, y = 0, label = "Missing ContactPositionY/ContactPositionZ columns", size = 5) +
+          annotate("text", x = 0, y = 0, label = "Missing ContactPositionX/ContactPositionZ columns", size = 5) +
           theme_void()
         return(girafe_transparent(ggobj = p_missing))
       }
@@ -9461,10 +9461,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       df_plot <- df %>%
         dplyr::mutate(
-          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
         ) %>%
-        dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ)) %>%
+        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ)) %>%
         dplyr::mutate(
           TaggedPitchType = as.character(TaggedPitchType),
           tooltip = {
@@ -9479,7 +9479,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
               "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
               "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
               "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
-              "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
+              "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
               "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
             )
           },
@@ -9501,7 +9501,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       # Smaller home plate (shared with Attack Angles horizontal view), tip to bottom.
       home_plate <- data.frame(
         x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-        y = c(0.34, 0.34, 0.13, -0.13, 0.13, 0.34)
+        y = c(0.98, 0.98, 0.77, 0.51, 0.77, 0.98)
       )
       box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
       box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
@@ -9514,7 +9514,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
         ggiraph::geom_point_interactive(
           data = df_plot,
-          aes(ContactPositionZ, ContactPositionY,
+          aes(ContactPositionZ, ContactPositionX,
               color = TaggedPitchType, fill = TaggedPitchType,
               tooltip = tooltip, data_id = rid),
           size = 4.3, alpha = 0.9, shape = 21, stroke = 0.7
@@ -9522,7 +9522,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
         scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
         coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(-0.4, 6)) +
-        labs(x = "Side (ft)", y = "Height (ft)") +
+        labs(x = "Side (ft)", y = "Forward (ft)") +
         theme_minimal(base_size = 12) +
         theme(
           legend.position = "none",
@@ -9822,7 +9822,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         
         home_plate <- data.frame(
           x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-          y = c(0.34, 0.34, 0.13, -0.13, 0.13, 0.34)
+          y = c(0.98, 0.98, 0.77, 0.51, 0.77, 0.98)
         )
         box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
         box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
@@ -9990,20 +9990,19 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       leg_df <- data.frame(
         TaggedPitchType = factor(types, levels = types),
-        y = rev(seq_along(types)),
+        x = seq_along(types),
         stringsAsFactors = FALSE
       )
       
-      ggplot(leg_df, aes(x = 0, y = y)) +
-        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
-        geom_text(aes(x = 0.30, label = TaggedPitchType), hjust = 0, size = 4, fontface = "bold", color = text_col) +
+      ggplot(leg_df, aes(x = x, y = 0)) +
+        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = text_col) +
         scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
-        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(types) + 0.7), clip = "off") +
+        coord_cartesian(xlim = c(0.5, length(types) + 0.5), ylim = c(-0.9, 0.35)) +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
-          panel.background = element_rect(fill = "transparent", color = NA),
-          plot.margin = margin(5, 35, 5, 5)
+          panel.background = element_rect(fill = "transparent", color = NA)
         )
     }, bg = "transparent")
     
@@ -10013,10 +10012,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       stroke_col <- text_col
       df <- filtered_hit() %>%
         dplyr::mutate(
-          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
         ) %>%
-        dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ))
+        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ))
       if (is.null(df) || !nrow(df)) return(NULL)
       
       types <- tryCatch({
@@ -10041,19 +10040,20 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       leg_df <- data.frame(
         TaggedPitchType = factor(types, levels = types),
-        x = seq_along(types),
+        y = rev(seq_along(types)),
         stringsAsFactors = FALSE
       )
       
-      ggplot(leg_df, aes(x = x, y = 0)) +
-        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = stroke_col, stroke = 1.1) +
-        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = text_col) +
+      ggplot(leg_df, aes(x = 0, y = y)) +
+        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(x = 0.30, label = TaggedPitchType), hjust = 0, size = 4, fontface = "bold", color = text_col) +
         scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
-        coord_cartesian(xlim = c(0.5, length(types) + 0.5), ylim = c(-0.9, 0.35)) +
+        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(types) + 0.7), clip = "off") +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
-          panel.background = element_rect(fill = "transparent", color = NA)
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.margin = margin(5, 35, 5, 5)
         )
     }, bg = "transparent")
     
