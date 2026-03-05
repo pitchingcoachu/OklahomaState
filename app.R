@@ -8183,6 +8183,41 @@ mod_hit_ui <- function(id, show_header = FALSE) {
               tabPanel(
                 "3D Visual",
                 plotly::plotlyOutput(ns("contactPoint3d"), height = "620px")
+              ),
+              tabPanel(
+                "Attack Angles",
+                fluidRow(
+                  column(
+                    3,
+                    selectInput(
+                      ns("attackAngleType"),
+                      "Angle View:",
+                      choices = c("Horizontal Attack", "Vertical Attack"),
+                      selected = "Horizontal Attack"
+                    ),
+                    radioButtons(
+                      ns("attackScope"),
+                      "Display:",
+                      choices = c("Average" = "average", "Individual Pitch" = "pitch"),
+                      selected = "average",
+                      inline = FALSE
+                    ),
+                    conditionalPanel(
+                      sprintf("input['%s']=='pitch'", ns("attackScope")),
+                      selectInput(
+                        ns("attackPitchId"),
+                        "Pitch:",
+                        choices = c("No pitches available" = ""),
+                        selected = ""
+                      )
+                    ),
+                    uiOutput(ns("attackAngleSummary"))
+                  ),
+                  column(
+                    9,
+                    plotOutput(ns("attackAnglePlot"), height = "620px")
+                  )
+                )
               )
             )
           )
@@ -9650,6 +9685,236 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           legend = list(orientation = "h", x = 0, y = 1.02)
         )
     })
+    
+    attack_angle_data <- reactive({
+      df <- filtered_hit()
+      req(is.data.frame(df))
+      req(all(c("VerticalAttackAngle", "HorizontalAttackAngle",
+                "ContactPositionX", "ContactPositionY", "ContactPositionZ") %in% names(df)))
+      out <- df %>%
+        dplyr::mutate(
+          VerticalAttackAngle = suppressWarnings(as.numeric(VerticalAttackAngle)),
+          HorizontalAttackAngle = suppressWarnings(as.numeric(HorizontalAttackAngle)),
+          ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
+          ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
+          BatterSide = as.character(BatterSide),
+          .attack_row_id = dplyr::row_number()
+        ) %>%
+        dplyr::filter(
+          is.finite(VerticalAttackAngle),
+          is.finite(HorizontalAttackAngle),
+          is.finite(ContactPositionX),
+          is.finite(ContactPositionY),
+          is.finite(ContactPositionZ)
+        ) %>%
+        dplyr::mutate(
+          .attack_pitch_id = as.character(.attack_row_id),
+          .attack_pitch_label = paste0(
+            "#", .attack_row_id, " | ",
+            if ("Date" %in% names(.)) format(as.Date(Date), "%m/%d/%y") else "Date N/A",
+            " | ", dplyr::coalesce(as.character(TaggedPitchType), "Unknown"),
+            " | VAA ", sprintf("%.1f", VerticalAttackAngle),
+            " | HAA ", sprintf("%.1f", HorizontalAttackAngle)
+          )
+        )
+      out
+    })
+    
+    observe({
+      df <- attack_angle_data()
+      if (!nrow(df)) {
+        updateSelectInput(session, "attackPitchId", choices = c("No pitches available" = ""), selected = "")
+        return()
+      }
+      choices <- stats::setNames(df$.attack_pitch_id, df$.attack_pitch_label)
+      cur <- isolate(input$attackPitchId)
+      sel <- if (!is.null(cur) && nzchar(cur) && cur %in% df$.attack_pitch_id) cur else df$.attack_pitch_id[[1]]
+      updateSelectInput(session, "attackPitchId", choices = choices, selected = sel)
+    })
+    
+    selected_attack_row <- reactive({
+      df <- attack_angle_data()
+      if (!nrow(df)) return(NULL)
+      scope <- input$attackScope %||% "average"
+      if (identical(scope, "pitch")) {
+        sel <- input$attackPitchId %||% ""
+        one <- df[df$.attack_pitch_id == sel, , drop = FALSE]
+        if (nrow(one)) return(one[1, , drop = FALSE])
+      }
+      side_tab <- table(df$BatterSide)
+      side_mode <- if (length(side_tab)) names(which.max(side_tab)) else "Right"
+      tibble::tibble(
+        VerticalAttackAngle = mean(df$VerticalAttackAngle, na.rm = TRUE),
+        HorizontalAttackAngle = mean(df$HorizontalAttackAngle, na.rm = TRUE),
+        ContactPositionX = mean(df$ContactPositionX, na.rm = TRUE),
+        ContactPositionY = mean(df$ContactPositionY, na.rm = TRUE),
+        ContactPositionZ = mean(df$ContactPositionZ, na.rm = TRUE),
+        BatterSide = side_mode,
+        .attack_pitch_label = "Average"
+      )
+    })
+    
+    output$attackAngleSummary <- renderUI({
+      row <- selected_attack_row()
+      if (is.null(row) || !nrow(row)) {
+        return(tags$div(style = "margin-top:10px; color:#9ca3af;", "No attack-angle contact data for current filters."))
+      }
+      title <- if (identical(input$attackScope, "pitch")) "Selected Pitch" else "Average"
+      tags$div(
+        style = "margin-top:10px; padding:10px; border:1px solid rgba(148,163,184,.35); border-radius:8px;",
+        tags$div(style = "font-weight:700; margin-bottom:4px;", title),
+        tags$div(paste0("VAA: ", sprintf("%.1f", row$VerticalAttackAngle[[1]]), "°")),
+        tags$div(paste0("HAA: ", sprintf("%.1f", row$HorizontalAttackAngle[[1]]), "°")),
+        tags$div(paste0("Contact X/Y/Z: ",
+                        sprintf("%.1f", row$ContactPositionX[[1]]), ", ",
+                        sprintf("%.1f", row$ContactPositionY[[1]]), ", ",
+                        sprintf("%.1f", row$ContactPositionZ[[1]]), " ft")),
+        tags$div(paste0("Batter Side: ", row$BatterSide[[1]] %||% "Unknown"))
+      )
+    })
+    
+    output$attackAnglePlot <- renderPlot({
+      row <- selected_attack_row()
+      if (is.null(row) || !nrow(row)) {
+        return(
+          ggplot() +
+            annotate("text", x = 0, y = 0, label = "No attack-angle contact data for current filters", size = 5) +
+            theme_void()
+        )
+      }
+      
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#0f172a"
+      grid_col <- if (dark_on) "#334155" else "#dbe2ea"
+      plate_col <- if (dark_on) "#64748b" else "#94a3b8"
+      zero_col <- if (dark_on) "#cbd5e1" else "#64748b"
+      bat_col <- "#d2b48c"
+      angle_col <- "#ef4444"
+      side <- tolower(trimws(as.character(row$BatterSide[[1]] %||% "right")))
+      is_lefty <- startsWith(side, "l")
+      
+      view_type <- input$attackAngleType %||% "Horizontal Attack"
+      
+      if (identical(view_type, "Horizontal Attack")) {
+        # Overhead view: x = side, y = toward pitcher
+        cx <- as.numeric(row$ContactPositionZ[[1]])
+        cy <- as.numeric(row$ContactPositionX[[1]])
+        haa <- as.numeric(row$HorizontalAttackAngle[[1]])
+        if (is_lefty) haa <- -haa
+        rad <- haa * pi / 180
+        vec_len <- 1.2
+        dx <- sin(rad) * vec_len
+        dy <- cos(rad) * vec_len
+        
+        bat_half <- 0.50
+        bat_x1 <- cx - sin(rad) * bat_half
+        bat_y1 <- cy - cos(rad) * bat_half
+        bat_x2 <- cx + sin(rad) * bat_half
+        bat_y2 <- cy + cos(rad) * bat_half
+        
+        home_plate <- data.frame(
+          x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
+          y = c(0.45, 0.45, 0.15, -0.20, 0.15, 0.45)
+        )
+        box_left <- data.frame(xmin = -1.95, xmax = -0.95, ymin = 0.18, ymax = 1.45)
+        box_right <- data.frame(xmin = 0.95, xmax = 1.95, ymin = 0.18, ymax = 1.45)
+        
+        pull_right <- if (is_lefty) "OPPO" else "PULL"
+        pull_left <- if (is_lefty) "PULL" else "OPPO"
+        
+        ggplot() +
+          geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = grid_col, linewidth = 0.8) +
+          geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = grid_col, linewidth = 0.8) +
+          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
+          geom_segment(aes(x = cx, y = cy, xend = cx, yend = cy + vec_len),
+                       linewidth = 1.2, color = zero_col, linetype = "dashed") +
+          geom_segment(aes(x = bat_x1, y = bat_y1, xend = bat_x2, yend = bat_y2),
+                       linewidth = 3.2, color = bat_col, lineend = "round") +
+          geom_point(aes(x = cx, y = cy), size = 3.2, color = "#d1d5db") +
+          geom_segment(
+            aes(x = cx, y = cy, xend = cx + dx, yend = cy + dy),
+            linewidth = 1.8, color = angle_col,
+            arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
+          ) +
+          annotate("text", x = -2.05, y = 1.65, label = pull_left, color = "#22c55e", hjust = 0, size = 4) +
+          annotate("text", x = 2.05, y = 1.65, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
+          annotate("text", x = 0, y = 2.1, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
+          annotate("text", x = 0, y = 1.78, label = "Horizontal Attack", color = text_col, size = 5) +
+          coord_fixed(xlim = c(-2.2, 2.2), ylim = c(-0.35, 2.35)) +
+          theme_void() +
+          theme(
+            plot.background = element_rect(fill = "transparent", color = NA),
+            panel.background = element_rect(fill = "transparent", color = NA)
+          )
+      } else {
+        # Side view: x = toward pitcher, y = height
+        cx <- as.numeric(row$ContactPositionX[[1]])
+        cy <- as.numeric(row$ContactPositionY[[1]])
+        vaa <- as.numeric(row$VerticalAttackAngle[[1]])
+        
+        # Mirror side-view for handedness to keep batter facing direction consistent.
+        if (is_lefty) cx <- -cx
+        
+        rad <- vaa * pi / 180
+        vec_len <- 1.15
+        dx <- cos(rad) * vec_len
+        dy <- sin(rad) * vec_len
+        if (is_lefty) dx <- -dx
+        
+        bat_half <- 0.50
+        bat_x1 <- cx - cos(rad) * bat_half * ifelse(is_lefty, -1, 1)
+        bat_y1 <- cy - sin(rad) * bat_half
+        bat_x2 <- cx + cos(rad) * bat_half * ifelse(is_lefty, -1, 1)
+        bat_y2 <- cy + sin(rad) * bat_half
+        
+        plate <- data.frame(
+          x = c(-0.35, 0.35, 0.55, 0.0, -0.55, -0.35),
+          y = c(0.0, 0.0, 0.08, 0.16, 0.08, 0.0)
+        )
+        
+        # Simple stick batter (optional figure)
+        body_x <- if (is_lefty) 0.55 else -0.55
+        head <- data.frame(x = body_x, y = 2.05)
+        torso <- data.frame(x = c(body_x, body_x), y = c(1.25, 1.95))
+        leg1 <- data.frame(x = c(body_x, body_x - 0.35), y = c(1.25, 0.05))
+        leg2 <- data.frame(x = c(body_x, body_x + 0.45), y = c(1.25, 0.05))
+        arm <- data.frame(x = c(body_x, cx), y = c(1.7, cy))
+        
+        ggplot() +
+          geom_polygon(data = plate, aes(x, y), fill = plate_col, alpha = 0.35, color = NA) +
+          geom_hline(yintercept = 0, color = grid_col, linewidth = 0.7) +
+          geom_segment(data = torso, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
+                       linewidth = 2.2, color = "#67e8f9") +
+          geom_segment(data = leg1, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
+                       linewidth = 2.2, color = "#67e8f9") +
+          geom_segment(data = leg2, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
+                       linewidth = 2.2, color = "#67e8f9") +
+          geom_segment(data = arm, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
+                       linewidth = 1.6, color = "#67e8f9", alpha = 0.9) +
+          geom_point(data = head, aes(x, y), size = 4.2, color = "#67e8f9") +
+          geom_segment(aes(x = cx, y = cy, xend = cx + ifelse(is_lefty, -vec_len, vec_len), yend = cy),
+                       linewidth = 1.2, color = zero_col, linetype = "dashed") +
+          geom_segment(aes(x = bat_x1, y = bat_y1, xend = bat_x2, yend = bat_y2),
+                       linewidth = 3.2, color = bat_col, lineend = "round") +
+          geom_point(aes(x = cx, y = cy), size = 3.2, color = "#d1d5db") +
+          geom_segment(
+            aes(x = cx, y = cy, xend = cx + dx, yend = cy + dy),
+            linewidth = 1.9, color = angle_col,
+            arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
+          ) +
+          annotate("text", x = 0, y = 4.15, label = paste0(sprintf("%.1f", vaa), "°"), color = text_col, size = 8, fontface = "bold") +
+          annotate("text", x = 0, y = 3.78, label = "Vertical Attack", color = text_col, size = 5) +
+          coord_fixed(xlim = c(-2.4, 2.4), ylim = c(0, 4.4)) +
+          theme_void() +
+          theme(
+            plot.background = element_rect(fill = "transparent", color = NA),
+            panel.background = element_rect(fill = "transparent", color = NA)
+          )
+      }
+    }, bg = "transparent")
     
     # ---- Result key (legend for pitch results) ----
     output$result_key <- renderPlot({
