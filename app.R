@@ -9469,12 +9469,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           TaggedPitchType = as.character(TaggedPitchType),
           tooltip = {
             pr <- as.character(PlayResult)
-            pc <- as.character(PitchCall)
             result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                         dplyr::coalesce(pc, "—"))
+                                         dplyr::coalesce(as.character(PitchCall), "—"))
             paste0(
               "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-              "PitchCall: ", dplyr::coalesce(pc, "—"), "<br>",
               "Result: ", result_txt, "<br>",
               "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
               "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
@@ -9501,10 +9499,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       # Smaller home plate (shared with Attack Angles horizontal view), tip to bottom.
       home_plate <- data.frame(
         x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-        y = c(0.98, 0.98, 0.77, 0.51, 0.77, 0.98)
+        y = c(0.47, 0.47, 0.26, 0.00, 0.26, 0.47)
       )
-      box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
-      box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
+      box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = -0.45, ymax = 0.90)
+      box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = -0.45, ymax = 0.90)
       
       p <- ggplot() +
         geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9517,7 +9515,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           aes(ContactPositionZ, ContactPositionX,
               color = TaggedPitchType, fill = TaggedPitchType,
               tooltip = tooltip, data_id = rid),
-          size = 4.3, alpha = 0.9, shape = 21, stroke = 0.7
+          size = 3.0, alpha = 0.9, shape = 21, stroke = 0.6
         ) +
         scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
         scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
@@ -9571,12 +9569,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           TaggedPitchType = as.character(TaggedPitchType),
           tooltip = {
             pr <- as.character(PlayResult)
-            pc <- as.character(PitchCall)
             result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                         dplyr::coalesce(pc, "—"))
+                                         dplyr::coalesce(as.character(PitchCall), "—"))
             paste0(
               "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-              "PitchCall: ", dplyr::coalesce(pc, "—"), "<br>",
               "Result: ", result_txt, "<br>",
               "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
               "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
@@ -9815,20 +9811,33 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         dy <- cos(rad) * vec_len
         
         bat_half <- 0.50
-        bat_x1 <- cx - sin(rad) * bat_half
-        bat_y1 <- cy - cos(rad) * bat_half
-        bat_x2 <- cx + sin(rad) * bat_half
-        bat_y2 <- cy + cos(rad) * bat_half
+        # Keep the bat mostly horizontal and only slightly tilted by HAA.
+        bat_theta <- max(min(rad * 0.30, 0.35), -0.35)
+        bat_x1 <- cx - cos(bat_theta) * bat_half
+        bat_y1 <- cy - sin(bat_theta) * bat_half
+        bat_x2 <- cx + cos(bat_theta) * bat_half
+        bat_y2 <- cy + sin(bat_theta) * bat_half
         
         home_plate <- data.frame(
           x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
-          y = c(0.98, 0.98, 0.77, 0.51, 0.77, 0.98)
+          y = c(0.47, 0.47, 0.26, 0.00, 0.26, 0.47)
         )
-        box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
-        box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
+        box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = -0.45, ymax = 0.90)
+        box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = -0.45, ymax = 0.90)
         
         pull_right <- if (is_lefty) "PULL" else "OPPO"
         pull_left <- if (is_lefty) "OPPO" else "PULL"
+        
+        # Put ball at barrel end (end most aligned with attack direction).
+        proj1 <- (bat_x1 - cx) * dx + (bat_y1 - cy) * dy
+        proj2 <- (bat_x2 - cx) * dx + (bat_y2 - cy) * dy
+        if (proj1 >= proj2) {
+          barrel_x <- bat_x1; barrel_y <- bat_y1
+          handle_x <- bat_x2; handle_y <- bat_y2
+        } else {
+          barrel_x <- bat_x2; barrel_y <- bat_y2
+          handle_x <- bat_x1; handle_y <- bat_y1
+        }
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9838,8 +9847,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = plate_col, alpha = 0.35, color = NA) +
           geom_segment(aes(x = cx, y = cy, xend = cx, yend = cy + vec_len),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          geom_segment(aes(x = bat_x1, y = bat_y1, xend = bat_x2, yend = bat_y2),
-                       linewidth = 3.2, color = bat_col, lineend = "round") +
+          geom_segment(aes(x = handle_x, y = handle_y, xend = barrel_x, yend = barrel_y),
+                       linewidth = 3.8, color = bat_col, lineend = "round") +
+          geom_segment(aes(x = handle_x, y = handle_y,
+                           xend = handle_x + (barrel_x - handle_x) * 0.30,
+                           yend = handle_y + (barrel_y - handle_y) * 0.30),
+                       linewidth = 3.0, color = "#c4a174", lineend = "round") +
+          geom_point(aes(x = barrel_x + dx * 0.10, y = barrel_y + dy * 0.10),
+                     size = 3.2, color = "#d1d5db") +
           geom_point(aes(x = cx, y = cy), size = 3.2, color = "#d1d5db") +
           geom_segment(
             aes(x = cx, y = cy, xend = cx + dx, yend = cy + dy),
