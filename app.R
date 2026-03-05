@@ -8167,16 +8167,16 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                 "2D Visual",
                 fluidRow(
                   column(
-                    9,
-                    ggiraph::girafeOutput(ns("contactPoint2d"), height = "560px")
-                  ),
-                  column(
                     3,
                     tags$div(
-                      style = "font-weight:bold; text-align:center; margin-bottom:6px;",
+                      style = "font-weight:bold; text-align:left; margin-bottom:6px;",
                       "Pitch Type Key"
                     ),
-                    plotOutput(ns("contact_pitch_type_key"), height = 180)
+                    plotOutput(ns("contact_pitch_type_key"), height = "560px")
+                  ),
+                  column(
+                    9,
+                    ggiraph::girafeOutput(ns("contactPoint2d"), height = "560px")
                   )
                 )
               ),
@@ -9498,13 +9498,19 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       col_vals <- cols[types_chr]
       col_vals[is.na(col_vals)] <- "gray70"
       
-      # Home plate with the point toward the bottom of the chart.
+      # Smaller home plate (shared with Attack Angles horizontal view), tip to bottom.
       home_plate <- data.frame(
-        x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
-        y = c(0.45, 0.45, 0.15, -0.20, 0.15, 0.45)
+        x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
+        y = c(0.34, 0.34, 0.13, -0.13, 0.13, 0.34)
       )
+      box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
+      box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
       
       p <- ggplot() +
+        geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                  inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
+        geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                  inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
         geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
         ggiraph::geom_point_interactive(
           data = df_plot,
@@ -9522,8 +9528,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           legend.position = "none",
           axis.title = element_text(color = text_col, face = "bold"),
           axis.text = element_text(color = text_col),
+          axis.ticks = element_blank(),
+          panel.grid.major = element_blank(),
           panel.grid.minor = element_blank(),
-          panel.grid.major = element_line(color = if (dark_on) "#374151" else "#e5e7eb"),
           panel.background = element_rect(fill = "transparent", color = NA),
           plot.background = element_rect(fill = "transparent", color = NA)
         )
@@ -9814,14 +9821,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         bat_y2 <- cy + cos(rad) * bat_half
         
         home_plate <- data.frame(
-          x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
-          y = c(0.45, 0.45, 0.15, -0.20, 0.15, 0.45)
+          x = c(-0.54, 0.54, 0.54, 0.00, -0.54, -0.54),
+          y = c(0.34, 0.34, 0.13, -0.13, 0.13, 0.34)
         )
-        box_left <- data.frame(xmin = -1.95, xmax = -0.95, ymin = 0.18, ymax = 1.45)
-        box_right <- data.frame(xmin = 0.95, xmax = 1.95, ymin = 0.18, ymax = 1.45)
+        box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.10, ymax = 1.45)
+        box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.10, ymax = 1.45)
         
-        pull_right <- if (is_lefty) "OPPO" else "PULL"
-        pull_left <- if (is_lefty) "PULL" else "OPPO"
+        pull_right <- if (is_lefty) "PULL" else "OPPO"
+        pull_left <- if (is_lefty) "OPPO" else "PULL"
         
         ggplot() +
           geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
@@ -9983,19 +9990,20 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       
       leg_df <- data.frame(
         TaggedPitchType = factor(types, levels = types),
-        x = seq_along(types),
+        y = rev(seq_along(types)),
         stringsAsFactors = FALSE
       )
       
-      ggplot(leg_df, aes(x = x, y = 0)) +
-        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 6, color = stroke_col, stroke = 1.1) +
-        geom_text(aes(label = TaggedPitchType, y = -0.48), size = 4, fontface = "bold", color = text_col) +
+      ggplot(leg_df, aes(x = 0, y = y)) +
+        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(x = 0.30, label = TaggedPitchType), hjust = 0, size = 4, fontface = "bold", color = text_col) +
         scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
-        coord_cartesian(xlim = c(0.5, length(types) + 0.5), ylim = c(-0.9, 0.35)) +
+        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(types) + 0.7), clip = "off") +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
-          panel.background = element_rect(fill = "transparent", color = NA)
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.margin = margin(5, 35, 5, 5)
         )
     }, bg = "transparent")
     
