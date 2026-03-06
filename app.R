@@ -9992,6 +9992,16 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         bat_norm <- sqrt((barrel_x - handle_x)^2 + (barrel_y - handle_y)^2)
         ubx <- ifelse(bat_norm > 0, (barrel_x - handle_x) / bat_norm, 1)
         uby <- ifelse(bat_norm > 0, (barrel_y - handle_y) / bat_norm, 0)
+        # Align reported contact coordinate to the arrow origin (near barrel), not bat midpoint.
+        arrow_start_inset <- 0.17
+        current_arrow_x <- barrel_x - ubx * arrow_start_inset
+        current_arrow_y <- barrel_y - uby * arrow_start_inset
+        shift_x <- cx - current_arrow_x
+        shift_y <- cy - current_arrow_y
+        barrel_x <- barrel_x + shift_x
+        barrel_y <- barrel_y + shift_y
+        handle_x <- handle_x + shift_x
+        handle_y <- handle_y + shift_y
         contact_x <- cx
         contact_y <- cy
         bat_t <- seq(0, 1, length.out = 41)
@@ -10005,10 +10015,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         bat_seg$lw <- ifelse(
           t_mid <= 0.75,
           6.0 + (t_mid / 0.75) * 2.0,
-          8.0 + ((t_mid - 0.75) / 0.25) * 4.6
+          8.0 + ((t_mid - 0.75) / 0.25) * 6.8
         )
         bat_seg$lw_hi <- pmax(1.6, bat_seg$lw * 0.34)
-        arrow_start_inset <- 0.12
         arrow_x <- barrel_x - ubx * arrow_start_inset
         arrow_y <- barrel_y - uby * arrow_start_inset
         arrow_len <- 1.0
@@ -10032,7 +10041,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             color = "#cfa170", alpha = 0.42, lineend = "round", show.legend = FALSE
           ) +
           geom_point(aes(x = handle_x, y = handle_y), size = 4.8, color = "#8b5a2b") +
-          geom_point(aes(x = contact_x, y = contact_y), size = 3.2, color = "#d1d5db") +
           geom_segment(
             aes(x = arrow_x, y = arrow_y, xend = arrow_x + ux * arrow_len, yend = arrow_y + uy * arrow_len),
             linewidth = 1.8, color = angle_col,
@@ -10042,14 +10050,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 2.05, y = y_max - 0.35, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
           annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
           annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
-          annotate(
-            "text",
-            x = cx,
-            y = max(y_min + 0.12, cy - 0.16),
-            label = paste0("Side(Z): ", sprintf("%.1f", cx), " | Forward(X): ", sprintf("%.1f", cy)),
-            color = text_col,
-            size = 3.4
-          ) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
           scale_linewidth_identity() +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
