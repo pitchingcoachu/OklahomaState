@@ -9805,8 +9805,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         df <- df %>%
           dplyr::filter(
             is.finite(VerticalAttackAngle),
-            is.finite(ContactPositionX),
-            is.finite(ContactPositionY)
+            is.finite(ContactPositionY),
+            is.finite(ContactPositionZ)
           )
       }
       df %>%
@@ -9857,9 +9857,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           dplyr::filter(is.finite(HorizontalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionZ))
       } else {
         contact_pool <- base %>%
-          dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY))
+          dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ))
         angle_pool <- base %>%
-          dplyr::filter(is.finite(VerticalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionY))
+          dplyr::filter(is.finite(VerticalAttackAngle), is.finite(ContactPositionY), is.finite(ContactPositionZ))
       }
       if (!nrow(contact_pool) || !nrow(angle_pool)) return(NULL)
 
@@ -10013,9 +10013,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         )
         t_mid <- (bat_t[-length(bat_t)] + bat_t[-1]) / 2
         bat_seg$lw <- ifelse(
-          t_mid <= 0.75,
-          6.0 + (t_mid / 0.75) * 2.0,
-          8.0 + ((t_mid - 0.75) / 0.25) * 6.8
+          t_mid <= (2/3),
+          6.0 + (t_mid / (2/3)) * 2.0,
+          8.0 + ((t_mid - (2/3)) / (1/3)) * 6.8
         )
         bat_seg$lw_hi <- pmax(1.6, bat_seg$lw * 0.34)
         arrow_x <- barrel_x - ubx * arrow_start_inset
@@ -10065,66 +10065,57 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             panel.background = element_rect(fill = "transparent", color = NA)
           )
       } else {
-        # Side view: x = toward pitcher, y = height
-        cx <- as.numeric(row$ContactPositionX[[1]])
+        # Side view from batter-box perspective: x = side (Z), y = height (Y)
+        cx <- as.numeric(row$ContactPositionZ[[1]])
         cy <- as.numeric(row$ContactPositionY[[1]])
         vaa <- as.numeric(row$VerticalAttackAngle[[1]])
-        
-        # Mirror side-view for handedness to keep batter facing direction consistent.
-        if (is_lefty) cx <- -cx
-        
+        x_plot <- if (is_lefty) -cx else cx
         rad <- vaa * pi / 180
         vec_len <- 1.15
-        dx <- cos(rad) * vec_len
-        dy <- sin(rad) * vec_len
-        if (is_lefty) dx <- -dx
-        
-        bat_half <- 0.50
-        bat_x1 <- cx - cos(rad) * bat_half * ifelse(is_lefty, -1, 1)
-        bat_y1 <- cy - sin(rad) * bat_half
-        bat_x2 <- cx + cos(rad) * bat_half * ifelse(is_lefty, -1, 1)
-        bat_y2 <- cy + sin(rad) * bat_half
-        
-        plate <- data.frame(
-          x = c(-0.35, 0.35, 0.55, 0.0, -0.55, -0.35),
-          y = c(0.0, 0.0, 0.08, 0.16, 0.08, 0.0)
+        face_dir <- ifelse(is_lefty, -1, 1)
+        # End-cap only in true side view.
+        cap_x <- x_plot
+        cap_y <- cy
+        zero_len <- 0.95
+        zero_xend <- cap_x + face_dir * zero_len
+        zero_yend <- cap_y
+        arrow_xend <- cap_x + face_dir * cos(rad) * vec_len
+        arrow_yend <- cap_y + sin(rad) * vec_len
+
+        home_plate <- data.frame(
+          x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
+          y = c(0.28, 0.28, 0.15, 0.00, 0.15, 0.28)
         )
-        
-        # Simple stick batter (optional figure)
-        body_x <- if (is_lefty) 0.55 else -0.55
-        head <- data.frame(x = body_x, y = 2.05)
-        torso <- data.frame(x = c(body_x, body_x), y = c(1.25, 1.95))
-        leg1 <- data.frame(x = c(body_x, body_x - 0.35), y = c(1.25, 0.05))
-        leg2 <- data.frame(x = c(body_x, body_x + 0.45), y = c(1.25, 0.05))
-        arm <- data.frame(x = c(body_x, cx), y = c(1.7, cy))
-        
+        box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.00, ymax = 0.90)
+        box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.00, ymax = 0.90)
+        y_max_v <- 4.4
+
         ggplot() +
-          geom_polygon(data = plate, aes(x, y), fill = plate_col, alpha = 0.35, color = NA) +
-          geom_hline(yintercept = 0, color = grid_col, linewidth = 0.7) +
-          geom_segment(data = torso, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
-                       linewidth = 2.2, color = "#67e8f9") +
-          geom_segment(data = leg1, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
-                       linewidth = 2.2, color = "#67e8f9") +
-          geom_segment(data = leg2, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
-                       linewidth = 2.2, color = "#67e8f9") +
-          geom_segment(data = arm, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]),
-                       linewidth = 1.6, color = "#67e8f9", alpha = 0.9) +
-          geom_point(data = head, aes(x, y), size = 4.2, color = "#67e8f9") +
-          geom_segment(aes(x = cx, y = cy, xend = cx + ifelse(is_lefty, -vec_len, vec_len), yend = cy),
+          geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
+          geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
+          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
+          geom_segment(aes(x = cap_x, y = cap_y, xend = zero_xend, yend = zero_yend),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
-          geom_segment(aes(x = bat_x1, y = bat_y1, xend = bat_x2, yend = bat_y2),
-                       linewidth = 3.2, color = bat_col, lineend = "round") +
-          geom_point(aes(x = cx, y = cy), size = 3.2, color = "#d1d5db") +
+          geom_point(aes(x = cap_x, y = cap_y), size = 8.2, color = "#a16207") +
+          geom_point(aes(x = cap_x, y = cap_y), size = 5.6, color = "#b7791f", alpha = 0.92) +
           geom_segment(
-            aes(x = cx, y = cy, xend = cx + dx, yend = cy + dy),
+            aes(x = cap_x, y = cap_y, xend = arrow_xend, yend = arrow_yend),
             linewidth = 1.9, color = angle_col,
             arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
           ) +
-          annotate("text", x = 0, y = 4.15, label = paste0(sprintf("%.1f", vaa), "°"), color = text_col, size = 8, fontface = "bold") +
-          annotate("text", x = 0, y = 3.78, label = "Vertical Attack", color = text_col, size = 5) +
-          coord_fixed(xlim = c(-2.4, 2.4), ylim = c(0, 4.4)) +
-          theme_void() +
+          annotate("text", x = 0, y = y_max_v - 0.25, label = paste0(sprintf("%.1f", vaa), "°"), color = text_col, size = 8, fontface = "bold") +
+          annotate("text", x = 0, y = y_max_v - 0.55, label = "Vertical Attack", color = text_col, size = 5) +
+          coord_fixed(xlim = c(-2.5, 2.5), ylim = c(0, y_max_v)) +
+          labs(x = "Side (ft)", y = "Height (ft)") +
+          theme_minimal(base_size = 12) +
           theme(
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.ticks = element_blank(),
+            axis.text = element_text(color = text_col),
+            axis.title = element_text(color = text_col, face = "bold"),
             plot.background = element_rect(fill = "transparent", color = NA),
             panel.background = element_rect(fill = "transparent", color = NA)
           )
