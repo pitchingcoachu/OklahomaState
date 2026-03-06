@@ -10228,31 +10228,26 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         arrow_xend <- cap_x + face_dir * cos(rad) * vec_len
         arrow_yend <- cap_y + sin(rad) * vec_len
 
-        # Side-view field scaffold. For RHH view from left-handed box; for LHH mirrored.
-        near_sign <- ifelse(is_lefty, 1, -1)
-        near_center <- near_sign * 1.25
-        far_center <- -near_center
-        box_w <- 1.05
-        box_h <- 0.62
-        near_box <- data.frame(
-          xmin = near_center - box_w / 2, xmax = near_center + box_w / 2,
-          ymin = 0.10, ymax = 0.10 + box_h
-        )
-        far_box <- data.frame(
-          xmin = far_center - box_w / 2, xmax = far_center + box_w / 2,
-          ymin = 0.14, ymax = 0.14 + (box_h * 0.92)
-        )
+        # Side-view scaffold: plate tip points toward pitcher-side by handedness.
+        tip_dir <- ifelse(is_lefty, -1, 1)
         home_plate <- data.frame(
-          x = c(-0.42, 0.42, 0.56, -0.28, -0.42),
-          y = c(0.03, 0.03, 0.14, 0.14, 0.03)
+          x = c(-0.52, 0.02, 0.44, 0.02, -0.52, -0.52) * tip_dir,
+          y = c(0.08, 0.08, 0.16, 0.24, 0.24, 0.08)
+        )
+        # Batter boxes stacked vertically to reinforce side perspective.
+        box_lower <- data.frame(
+          x = c(-1.45, 1.45, 1.20, -1.20, -1.45),
+          y = c(0.02, 0.02, 0.22, 0.22, 0.02)
+        )
+        box_upper <- data.frame(
+          x = c(-1.18, 1.18, 0.98, -0.98, -1.18),
+          y = c(0.34, 0.34, 0.52, 0.52, 0.34)
         )
         y_max_v <- 4.4
 
         ggplot() +
-          geom_rect(data = far_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = line_col, linewidth = 0.6, alpha = 0.38) +
-          geom_rect(data = near_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = line_col, linewidth = 0.9, alpha = 0.78) +
+          geom_polygon(data = box_upper, aes(x, y), fill = NA, color = line_col, linewidth = 0.6, alpha = 0.40) +
+          geom_polygon(data = box_lower, aes(x, y), fill = NA, color = line_col, linewidth = 0.95, alpha = 0.80) +
           geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE,
                        fill = plate_col, alpha = 0.22, color = line_col, linewidth = 0.7) +
           geom_segment(aes(x = cap_x, y = cap_y, xend = zero_xend, yend = zero_yend),
