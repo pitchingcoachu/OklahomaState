@@ -8174,9 +8174,15 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                       choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
                       selected = "individual"
                     ),
+                    selectInput(
+                      ns("contact2dColorBy"),
+                      "Color By:",
+                      choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
+                      selected = "pitch_type"
+                    ),
                     tags$div(
                       style = "font-weight:bold; text-align:left; margin-bottom:6px;",
-                      "Pitch Type Key"
+                      "Color Key"
                     ),
                     plotOutput(ns("contact_pitch_type_key"), height = "560px")
                   ),
@@ -8196,6 +8202,12 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                       "Display:",
                       choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
                       selected = "individual"
+                    ),
+                    selectInput(
+                      ns("contact3dColorBy"),
+                      "Color By:",
+                      choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
+                      selected = "pitch_type"
                     )
                   ),
                   column(9)
@@ -9476,15 +9488,52 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       line_col <- if (dark_on) "#ffffff" else "black"
       text_col <- if (dark_on) "#e5e7eb" else "#111827"
       cols <- colors_for_mode(dark_on)
+      ev_palette <- c(
+        "<70" = "#1f4e79", "70-75" = "#2f6fa3", "75-80" = "#3f8fc6", "80-85" = "#59b4d8",
+        "85-90" = "#7ccf9b", "90-95" = "#f4d35e", "95-100" = "#f59e0b", ">100" = "#ef4444",
+        "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      result_palette <- c(
+        "Single" = "#22c55e", "Double" = "#3b82f6", "Triple" = "#a855f7", "HomeRun" = "#ef4444",
+        "Out" = if (dark_on) "#e5e7eb" else "#111827", "Error" = "#f59e0b", "FieldersChoice" = "#06b6d4",
+        "Sacrifice" = "#14b8a6", "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      ev_bin <- function(x) {
+        dplyr::case_when(
+          !is.finite(x) ~ "Unknown",
+          x < 70 ~ "<70",
+          x < 75 ~ "70-75",
+          x < 80 ~ "75-80",
+          x < 85 ~ "80-85",
+          x < 90 ~ "85-90",
+          x < 95 ~ "90-95",
+          x < 100 ~ "95-100",
+          TRUE ~ ">100"
+        )
+      }
+      result_label <- function(x) {
+        out <- trimws(as.character(x))
+        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out
+      }
+      mode_chr <- function(x) {
+        x <- result_label(x)
+        x <- x[x != "Unknown"]
+        if (!length(x)) return("Unknown")
+        names(sort(table(x), decreasing = TRUE))[1]
+      }
       
       mode_2d <- input$contact2dMode %||% "individual"
+      color_by_2d <- input$contact2dColorBy %||% "pitch_type"
       df_base <- df %>%
         dplyr::mutate(
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
-          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          TaggedPitchType = as.character(TaggedPitchType),
+          ResultLabel = result_label(PlayResult)
         ) %>%
-        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ)) %>%
-        dplyr::mutate(TaggedPitchType = as.character(TaggedPitchType))
+        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ))
       
       if (identical(mode_2d, "average_pitch_type")) {
         df_plot <- df_base %>%
@@ -9492,6 +9541,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           dplyr::summarise(
             ContactPositionX = mean(ContactPositionX, na.rm = TRUE),
             ContactPositionZ = mean(ContactPositionZ, na.rm = TRUE),
+            ExitSpeed = mean(ExitSpeed, na.rm = TRUE),
+            ResultLabel = mode_chr(ResultLabel),
             n = dplyr::n(),
             .groups = "drop"
           ) %>%
@@ -9509,14 +9560,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         df_plot <- df_base %>%
           dplyr::mutate(
             tooltip = {
-              pr <- as.character(PlayResult)
-              result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                           dplyr::coalesce(as.character(PitchCall), "—"))
               paste0(
                 "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-                "Result: ", result_txt, "<br>",
+                "Result: ", ResultLabel, "<br>",
                 "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
-                "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+                "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f mph", ExitSpeed), "—"), "<br>",
                 "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
                 "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
                 "Side: ", ifelse(is.finite(ContactPositionZ), sprintf("%.1f ft", round(ContactPositionZ, 1)), "—")
@@ -9533,9 +9581,27 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         return(girafe_transparent(ggobj = p_empty))
       }
       
-      types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
-      if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
-      col_vals <- cols[types_chr]
+      df_plot <- df_plot %>%
+        dplyr::mutate(
+          ColorGroup = dplyr::case_when(
+            color_by_2d == "exit_velocity" ~ ev_bin(ExitSpeed),
+            color_by_2d == "result" ~ ResultLabel,
+            TRUE ~ dplyr::coalesce(TaggedPitchType, "Unknown")
+          )
+        )
+      groups <- unique(as.character(df_plot$ColorGroup))
+      if (color_by_2d == "exit_velocity") {
+        groups <- names(ev_palette)[names(ev_palette) %in% groups]
+        col_vals <- ev_palette[groups]
+      } else if (color_by_2d == "result") {
+        known <- names(result_palette)[names(result_palette) %in% groups]
+        unknown <- setdiff(groups, names(result_palette))
+        col_vals <- c(result_palette[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      } else {
+        groups <- intersect(names(cols), groups)
+        extra <- setdiff(unique(as.character(df_plot$ColorGroup)), names(cols))
+        col_vals <- c(cols[groups], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(extra)), extra))
+      }
       col_vals[is.na(col_vals)] <- "gray70"
       y_min <- floor(min(c(df_base$ContactPositionX, -0.6), na.rm = TRUE))
       y_max <- ceiling(max(c(df_base$ContactPositionX, 1.0), na.rm = TRUE))
@@ -9562,12 +9628,12 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         ggiraph::geom_point_interactive(
           data = df_plot,
           aes(ContactPositionZ, ContactPositionX,
-              color = TaggedPitchType, fill = TaggedPitchType,
+              color = ColorGroup, fill = ColorGroup,
               tooltip = tooltip, data_id = rid),
           size = 2.4, alpha = 0.9, shape = 21, stroke = 0.45
         ) +
-        scale_color_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
-        scale_fill_manual(values = col_vals, limits = types_chr, drop = FALSE, name = NULL) +
+        scale_color_manual(values = col_vals, limits = names(col_vals), drop = FALSE, name = NULL) +
+        scale_fill_manual(values = col_vals, limits = names(col_vals), drop = FALSE, name = NULL) +
         scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
         coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
         labs(x = "Side (ft)", y = "Forward (ft)") +
@@ -9607,16 +9673,53 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       cols <- colors_for_mode(dark_on)
       line_col <- if (dark_on) "#e5e7eb" else "#111827"
       axis_col <- if (dark_on) "#e5e7eb" else "#111827"
+      ev_palette <- c(
+        "<70" = "#1f4e79", "70-75" = "#2f6fa3", "75-80" = "#3f8fc6", "80-85" = "#59b4d8",
+        "85-90" = "#7ccf9b", "90-95" = "#f4d35e", "95-100" = "#f59e0b", ">100" = "#ef4444",
+        "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      result_palette <- c(
+        "Single" = "#22c55e", "Double" = "#3b82f6", "Triple" = "#a855f7", "HomeRun" = "#ef4444",
+        "Out" = if (dark_on) "#e5e7eb" else "#111827", "Error" = "#f59e0b", "FieldersChoice" = "#06b6d4",
+        "Sacrifice" = "#14b8a6", "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      ev_bin <- function(x) {
+        dplyr::case_when(
+          !is.finite(x) ~ "Unknown",
+          x < 70 ~ "<70",
+          x < 75 ~ "70-75",
+          x < 80 ~ "75-80",
+          x < 85 ~ "80-85",
+          x < 90 ~ "85-90",
+          x < 95 ~ "90-95",
+          x < 100 ~ "95-100",
+          TRUE ~ ">100"
+        )
+      }
+      result_label <- function(x) {
+        out <- trimws(as.character(x))
+        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out
+      }
+      mode_chr <- function(x) {
+        x <- result_label(x)
+        x <- x[x != "Unknown"]
+        if (!length(x)) return("Unknown")
+        names(sort(table(x), decreasing = TRUE))[1]
+      }
       
       mode_3d <- input$contact3dMode %||% "individual"
+      color_by_3d <- input$contact3dColorBy %||% "pitch_type"
       df_base <- df %>%
         dplyr::mutate(
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
-          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          TaggedPitchType = as.character(TaggedPitchType),
+          ResultLabel = result_label(PlayResult)
         ) %>%
-        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY), is.finite(ContactPositionZ)) %>%
-        dplyr::mutate(TaggedPitchType = as.character(TaggedPitchType))
+        dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY), is.finite(ContactPositionZ))
       
       if (identical(mode_3d, "average_pitch_type")) {
         df_plot <- df_base %>%
@@ -9625,6 +9728,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             ContactPositionX = mean(ContactPositionX, na.rm = TRUE),
             ContactPositionY = mean(ContactPositionY, na.rm = TRUE),
             ContactPositionZ = mean(ContactPositionZ, na.rm = TRUE),
+            ExitSpeed = mean(ExitSpeed, na.rm = TRUE),
+            ResultLabel = mode_chr(ResultLabel),
             n = dplyr::n(),
             .groups = "drop"
           ) %>%
@@ -9642,14 +9747,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         df_plot <- df_base %>%
           dplyr::mutate(
             tooltip = {
-              pr <- as.character(PlayResult)
-              result_txt <- dplyr::if_else(!is.na(pr) & nzchar(pr) & pr != "Undefined", pr,
-                                           dplyr::coalesce(as.character(PitchCall), "—"))
               paste0(
                 "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-                "Result: ", result_txt, "<br>",
+                "Result: ", ResultLabel, "<br>",
                 "Velo: ", ifelse(is.finite(as.numeric(RelSpeed)), sprintf("%.1f mph", as.numeric(RelSpeed)), "—"), "<br>",
-                "EV: ", ifelse(is.finite(as.numeric(ExitSpeed)), sprintf("%.1f mph", as.numeric(ExitSpeed)), "—"), "<br>",
+                "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f mph", ExitSpeed), "—"), "<br>",
                 "LA: ", ifelse(is.finite(as.numeric(Angle)), sprintf("%.1f°", as.numeric(Angle)), "—"), "<br>",
                 "Forward: ", ifelse(is.finite(ContactPositionX), sprintf("%.1f ft", round(ContactPositionX, 1)), "—"), "<br>",
                 "Height: ", ifelse(is.finite(ContactPositionY), sprintf("%.1f ft", round(ContactPositionY, 1)), "—"), "<br>",
@@ -9665,9 +9767,27 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         ))
       }
       
-      types_chr <- intersect(names(cols), unique(df_plot$TaggedPitchType))
-      if (!length(types_chr)) types_chr <- unique(df_plot$TaggedPitchType)
-      col_vals <- cols[types_chr]
+      df_plot <- df_plot %>%
+        dplyr::mutate(
+          ColorGroup = dplyr::case_when(
+            color_by_3d == "exit_velocity" ~ ev_bin(ExitSpeed),
+            color_by_3d == "result" ~ ResultLabel,
+            TRUE ~ dplyr::coalesce(TaggedPitchType, "Unknown")
+          )
+        )
+      groups <- unique(as.character(df_plot$ColorGroup))
+      if (color_by_3d == "exit_velocity") {
+        groups <- names(ev_palette)[names(ev_palette) %in% groups]
+        col_vals <- ev_palette[groups]
+      } else if (color_by_3d == "result") {
+        known <- names(result_palette)[names(result_palette) %in% groups]
+        unknown <- setdiff(groups, names(result_palette))
+        col_vals <- c(result_palette[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      } else {
+        groups <- intersect(names(cols), groups)
+        extra <- setdiff(unique(as.character(df_plot$ColorGroup)), names(cols))
+        col_vals <- c(cols[groups], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(extra)), extra))
+      }
       col_vals[is.na(col_vals)] <- "gray70"
       
       plate <- data.frame(
@@ -9695,15 +9815,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       zone_h2 <- data.frame(x = zone_x, y = c(zone_left, zone_right), z = zone_bottom + 2 * zone_dy)
       
       p <- plotly::plot_ly()
-      for (pt in types_chr) {
-        dpt <- df_plot[df_plot$TaggedPitchType == pt, , drop = FALSE]
+      for (grp in names(col_vals)) {
+        dpt <- df_plot[df_plot$ColorGroup == grp, , drop = FALSE]
         p <- p %>%
           plotly::add_markers(
             data = dpt,
             x = ~ContactPositionX, y = ~ContactPositionZ, z = ~ContactPositionY,
             type = "scatter3d", mode = "markers",
-            name = pt,
-            marker = list(size = 4.5, color = unname(col_vals[[pt]]), opacity = 0.88),
+            name = grp,
+            marker = list(size = 4.5, color = unname(col_vals[[grp]]), opacity = 0.88),
             text = ~tooltip,
             hoverinfo = "text"
           )
@@ -9781,6 +9901,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
           ContactPositionY = suppressWarnings(as.numeric(ContactPositionY)),
           ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          Angle = suppressWarnings(as.numeric(Angle)),
+          PlayResult = as.character(PlayResult),
           BatterSide = as.character(BatterSide),
           .attack_row_id = dplyr::row_number()
         )
@@ -9865,12 +9988,17 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
 
       side_tab <- table(contact_pool$BatterSide)
       side_mode <- if (length(side_tab)) names(which.max(side_tab)) else "Right"
+      avg_ev <- if ("ExitSpeed" %in% names(contact_pool)) mean(contact_pool$ExitSpeed, na.rm = TRUE) else NA_real_
+      avg_la <- if ("Angle" %in% names(contact_pool)) mean(contact_pool$Angle, na.rm = TRUE) else NA_real_
       tibble::tibble(
         VerticalAttackAngle = mean(angle_pool$VerticalAttackAngle, na.rm = TRUE),
         HorizontalAttackAngle = mean(angle_pool$HorizontalAttackAngle, na.rm = TRUE),
         ContactPositionX = mean(contact_pool$ContactPositionX, na.rm = TRUE),
         ContactPositionY = mean(contact_pool$ContactPositionY, na.rm = TRUE),
         ContactPositionZ = mean(contact_pool$ContactPositionZ, na.rm = TRUE),
+        ExitSpeed = avg_ev,
+        Angle = avg_la,
+        PlayResult = NA_character_,
         BatterSide = side_mode,
         .attack_pitch_label = "Average"
       )
@@ -9922,6 +10050,23 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       zero_col <- if (dark_on) "#cbd5e1" else "#64748b"
       bat_col <- "#d2b48c"
       angle_col <- "#ef4444"
+      scope <- input$attackScope %||% "average"
+      ev_val <- suppressWarnings(as.numeric(row$ExitSpeed[[1]]))
+      la_val <- suppressWarnings(as.numeric(row$Angle[[1]]))
+      result_val <- trimws(as.character(row$PlayResult[[1]] %||% ""))
+      if (!nzchar(result_val) || identical(result_val, "Undefined")) result_val <- "—"
+      top_stats <- if (identical(scope, "pitch")) {
+        paste0(
+          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
+          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—"),
+          " | Result ", result_val
+        )
+      } else {
+        paste0(
+          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
+          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—")
+        )
+      }
       side <- tolower(trimws(as.character(row$BatterSide[[1]] %||% "right")))
       is_lefty <- startsWith(side, "l")
       
@@ -10050,6 +10195,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 2.05, y = y_max - 0.35, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
           annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
           annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
+          annotate("text", x = 0, y = y_max - 0.70, label = top_stats, color = text_col, size = 4.1) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
           scale_linewidth_identity() +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
@@ -10076,26 +10222,39 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         # End-cap only in true side view.
         cap_x <- x_plot
         cap_y <- cy
-        zero_len <- 0.95
+        zero_len <- vec_len
         zero_xend <- cap_x + face_dir * zero_len
         zero_yend <- cap_y
         arrow_xend <- cap_x + face_dir * cos(rad) * vec_len
         arrow_yend <- cap_y + sin(rad) * vec_len
 
-        home_plate <- data.frame(
-          x = c(-0.708, 0.708, 0.708, 0.000, -0.708, -0.708),
-          y = c(0.28, 0.28, 0.15, 0.00, 0.15, 0.28)
+        # Side-view field scaffold. For RHH view from left-handed box; for LHH mirrored.
+        near_sign <- ifelse(is_lefty, 1, -1)
+        near_center <- near_sign * 1.25
+        far_center <- -near_center
+        box_w <- 1.05
+        box_h <- 0.62
+        near_box <- data.frame(
+          xmin = near_center - box_w / 2, xmax = near_center + box_w / 2,
+          ymin = 0.10, ymax = 0.10 + box_h
         )
-        box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = 0.00, ymax = 0.90)
-        box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = 0.00, ymax = 0.90)
+        far_box <- data.frame(
+          xmin = far_center - box_w / 2, xmax = far_center + box_w / 2,
+          ymin = 0.14, ymax = 0.14 + (box_h * 0.92)
+        )
+        home_plate <- data.frame(
+          x = c(-0.42, 0.42, 0.56, -0.28, -0.42),
+          y = c(0.03, 0.03, 0.14, 0.14, 0.03)
+        )
         y_max_v <- 4.4
 
         ggplot() +
-          geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
-          geom_rect(data = box_right, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                    fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
-          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7) +
+          geom_rect(data = far_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = line_col, linewidth = 0.6, alpha = 0.38) +
+          geom_rect(data = near_box, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                    fill = NA, color = line_col, linewidth = 0.9, alpha = 0.78) +
+          geom_polygon(data = home_plate, aes(x, y), inherit.aes = FALSE,
+                       fill = plate_col, alpha = 0.22, color = line_col, linewidth = 0.7) +
           geom_segment(aes(x = cap_x, y = cap_y, xend = zero_xend, yend = zero_yend),
                        linewidth = 1.2, color = zero_col, linetype = "dashed") +
           geom_point(aes(x = cap_x, y = cap_y), size = 8.2, color = "#a16207") +
@@ -10107,6 +10266,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           ) +
           annotate("text", x = 0, y = y_max_v - 0.25, label = paste0(sprintf("%.1f", vaa), "°"), color = text_col, size = 8, fontface = "bold") +
           annotate("text", x = 0, y = y_max_v - 0.55, label = "Vertical Attack", color = text_col, size = 5) +
+          annotate("text", x = 0, y = y_max_v - 0.83, label = top_stats, color = text_col, size = 4.1) +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(0, y_max_v)) +
           labs(x = "Side (ft)", y = "Height (ft)") +
           theme_minimal(base_size = 12) +
@@ -10209,45 +10369,99 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       dark_on <- is_dark_mode()
       text_col <- if (dark_on) "#e5e7eb" else "#333333"
       stroke_col <- text_col
+      cols <- colors_for_mode(dark_on)
+      ev_palette <- c(
+        "<70" = "#1f4e79", "70-75" = "#2f6fa3", "75-80" = "#3f8fc6", "80-85" = "#59b4d8",
+        "85-90" = "#7ccf9b", "90-95" = "#f4d35e", "95-100" = "#f59e0b", ">100" = "#ef4444",
+        "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      result_palette <- c(
+        "Single" = "#22c55e", "Double" = "#3b82f6", "Triple" = "#a855f7", "HomeRun" = "#ef4444",
+        "Out" = if (dark_on) "#e5e7eb" else "#111827", "Error" = "#f59e0b", "FieldersChoice" = "#06b6d4",
+        "Sacrifice" = "#14b8a6", "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      ev_bin <- function(x) {
+        dplyr::case_when(
+          !is.finite(x) ~ "Unknown",
+          x < 70 ~ "<70",
+          x < 75 ~ "70-75",
+          x < 80 ~ "75-80",
+          x < 85 ~ "80-85",
+          x < 90 ~ "85-90",
+          x < 95 ~ "90-95",
+          x < 100 ~ "95-100",
+          TRUE ~ ">100"
+        )
+      }
+      result_label <- function(x) {
+        out <- trimws(as.character(x))
+        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out
+      }
+      mode_2d <- input$contact2dMode %||% "individual"
+      color_by_2d <- input$contact2dColorBy %||% "pitch_type"
+      
       df <- filtered_hit() %>%
         dplyr::mutate(
           ContactPositionX = suppressWarnings(as.numeric(ContactPositionX)),
-          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ))
+          ContactPositionZ = suppressWarnings(as.numeric(ContactPositionZ)),
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          TaggedPitchType = as.character(TaggedPitchType),
+          ResultLabel = result_label(PlayResult)
         ) %>%
         dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionZ))
       if (is.null(df) || !nrow(df)) return(NULL)
-      
-      types <- tryCatch({
-        unique_types <- unique(df$TaggedPitchType)
-        unique_types[!is.na(unique_types) & nzchar(as.character(unique_types))]
-      }, error = function(e) {
-        character(0)
-      })
-      
-      if (!length(types)) return(NULL)
-      types <- as.character(types)
-      canonical_order <- names(all_colors)
-      known_types <- canonical_order[canonical_order %in% types]
-      unknown_types <- setdiff(types, canonical_order)
-      types <- c(known_types, sort(unknown_types))
-      
-      cols <- colors_for_mode(dark_on)
-      type_colors <- sapply(types, function(t) {
-        if (t %in% names(cols)) cols[t] else if (dark_on) "#e5e7eb" else "gray50"
-      })
-      names(type_colors) <- types
-      
+
+      if (identical(mode_2d, "average_pitch_type")) {
+        mode_chr <- function(x) {
+          x <- x[x != "Unknown"]
+          if (!length(x)) return("Unknown")
+          names(sort(table(x), decreasing = TRUE))[1]
+        }
+        df <- df %>%
+          dplyr::group_by(TaggedPitchType) %>%
+          dplyr::summarise(
+            ExitSpeed = mean(ExitSpeed, na.rm = TRUE),
+            ResultLabel = mode_chr(ResultLabel),
+            .groups = "drop"
+          )
+      }
+
+      groups <- if (color_by_2d == "exit_velocity") {
+        unique(ev_bin(df$ExitSpeed))
+      } else if (color_by_2d == "result") {
+        unique(df$ResultLabel)
+      } else {
+        unique(df$TaggedPitchType)
+      }
+      groups <- as.character(groups)
+      groups <- groups[!is.na(groups) & nzchar(groups)]
+      if (!length(groups)) return(NULL)
+
+      if (color_by_2d == "exit_velocity") {
+        groups <- names(ev_palette)[names(ev_palette) %in% groups]
+        key_colors <- ev_palette[groups]
+      } else if (color_by_2d == "result") {
+        known <- names(result_palette)[names(result_palette) %in% groups]
+        unknown <- setdiff(groups, names(result_palette))
+        key_colors <- c(result_palette[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      } else {
+        known <- names(cols)[names(cols) %in% groups]
+        unknown <- setdiff(groups, names(cols))
+        key_colors <- c(cols[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      }
+
       leg_df <- data.frame(
-        TaggedPitchType = factor(types, levels = types),
-        y = rev(seq_along(types)),
+        KeyGroup = factor(names(key_colors), levels = rev(names(key_colors))),
+        y = seq_along(key_colors),
         stringsAsFactors = FALSE
       )
       
       ggplot(leg_df, aes(x = 0, y = y)) +
-        geom_point(aes(fill = TaggedPitchType), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
-        geom_text(aes(x = 0.30, label = TaggedPitchType), hjust = 0, size = 4, fontface = "bold", color = text_col) +
-        scale_fill_manual(values = type_colors, limits = types, drop = FALSE, guide = "none") +
-        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(types) + 0.7), clip = "off") +
+        geom_point(aes(fill = KeyGroup), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(x = 0.30, label = KeyGroup), hjust = 0, size = 4, fontface = "bold", color = text_col) +
+        scale_fill_manual(values = key_colors, limits = names(key_colors), drop = FALSE, guide = "none") +
+        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(key_colors) + 0.7), clip = "off") +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
