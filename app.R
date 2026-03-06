@@ -8248,6 +8248,36 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                     plotOutput(ns("attackAnglePlot"), height = "620px")
                   )
                 )
+              ),
+              tabPanel(
+                "Bat Speed",
+                fluidRow(
+                  column(
+                    3,
+                    selectInput(
+                      ns("batSpeedDisplay"),
+                      "Display:",
+                      choices = c("Average" = "average", "Individual Pitches" = "individual"),
+                      selected = "average"
+                    ),
+                    selectInput(
+                      ns("batSpeedColorBy"),
+                      "Color By:",
+                      choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
+                      selected = "pitch_type"
+                    ),
+                    uiOutput(ns("batSpeedSummary")),
+                    tags$div(
+                      style = "font-weight:bold; text-align:left; margin:8px 0 6px 0;",
+                      "Color Key"
+                    ),
+                    plotOutput(ns("batSpeedKey"), height = "250px")
+                  ),
+                  column(
+                    9,
+                    ggiraph::girafeOutput(ns("batSpeedGauge"), height = "620px")
+                  )
+                )
               )
             )
           )
@@ -10229,10 +10259,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         arrow_yend <- cap_y + sin(rad) * vec_len
 
         # Side-view scaffold: plate tip points toward pitcher-side by handedness.
-        tip_dir <- ifelse(is_lefty, -1, 1)
+        tip_dir <- ifelse(is_lefty, 1, -1)
         home_plate <- data.frame(
-          x = c(-0.52, 0.02, 0.44, 0.02, -0.52, -0.52) * tip_dir,
-          y = c(0.08, 0.08, 0.16, 0.24, 0.24, 0.08)
+          x = c(-0.42, 0.08, 0.40, 0.08, -0.42, -0.42) * tip_dir,
+          y = c(0.14, 0.14, 0.21, 0.28, 0.28, 0.14)
         )
         # Batter boxes stacked vertically to reinforce side perspective.
         box_lower <- data.frame(
@@ -10276,6 +10306,268 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           )
       }
     }, bg = "transparent")
+    
+    bat_speed_base <- reactive({
+      df <- filtered_hit()
+      req(is.data.frame(df))
+      result_label <- function(x) {
+        out <- trimws(as.character(x))
+        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out
+      }
+      df %>%
+        dplyr::mutate(
+          BatSpeed = suppressWarnings(as.numeric(BatSpeed)),
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          Angle = suppressWarnings(as.numeric(Angle)),
+          TaggedPitchType = as.character(TaggedPitchType),
+          ResultLabel = result_label(PlayResult)
+        ) %>%
+        dplyr::filter(is.finite(BatSpeed))
+    })
+    
+    bat_speed_colored <- reactive({
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      ev_palette <- c(
+        "<70" = "#1f4e79", "70-75" = "#2f6fa3", "75-80" = "#3f8fc6", "80-85" = "#59b4d8",
+        "85-90" = "#7ccf9b", "90-95" = "#f4d35e", "95-100" = "#f59e0b", ">100" = "#ef4444",
+        "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      result_palette <- c(
+        "Single" = "#22c55e", "Double" = "#3b82f6", "Triple" = "#a855f7", "HomeRun" = "#ef4444",
+        "Out" = if (dark_on) "#e5e7eb" else "#111827", "Error" = "#f59e0b", "FieldersChoice" = "#06b6d4",
+        "Sacrifice" = "#14b8a6", "Unknown" = if (dark_on) "#94a3b8" else "gray60"
+      )
+      ev_bin <- function(x) {
+        dplyr::case_when(
+          !is.finite(x) ~ "Unknown",
+          x < 70 ~ "<70",
+          x < 75 ~ "70-75",
+          x < 80 ~ "75-80",
+          x < 85 ~ "80-85",
+          x < 90 ~ "85-90",
+          x < 95 ~ "90-95",
+          x < 100 ~ "95-100",
+          TRUE ~ ">100"
+        )
+      }
+      
+      df <- bat_speed_base()
+      if (!nrow(df)) return(list(df = df, palette = c()))
+      mode <- input$batSpeedDisplay %||% "average"
+      color_by <- input$batSpeedColorBy %||% "pitch_type"
+      if (identical(mode, "average")) {
+        mode_chr <- function(x) {
+          x <- x[x != "Unknown"]
+          if (!length(x)) return("Unknown")
+          names(sort(table(x), decreasing = TRUE))[1]
+        }
+        df <- dplyr::summarise(
+          df,
+          BatSpeed = mean(BatSpeed, na.rm = TRUE),
+          ExitSpeed = mean(ExitSpeed, na.rm = TRUE),
+          Angle = mean(Angle, na.rm = TRUE),
+          TaggedPitchType = mode_chr(TaggedPitchType),
+          ResultLabel = mode_chr(ResultLabel),
+          n = dplyr::n()
+        )
+      } else {
+        df <- df %>%
+          dplyr::mutate(
+            tooltip = paste0(
+              "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+              "Bat Speed: ", ifelse(is.finite(BatSpeed), sprintf("%.1f mph", BatSpeed), "—"), "<br>",
+              "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f mph", ExitSpeed), "—"), "<br>",
+              "LA: ", ifelse(is.finite(Angle), sprintf("%.1f°", Angle), "—"), "<br>",
+              "Result: ", ResultLabel
+            ),
+            rid = dplyr::row_number()
+          )
+      }
+      df <- df %>%
+        dplyr::mutate(
+          ColorGroup = dplyr::case_when(
+            color_by == "exit_velocity" ~ ev_bin(ExitSpeed),
+            color_by == "result" ~ ResultLabel,
+            TRUE ~ dplyr::coalesce(TaggedPitchType, "Unknown")
+          )
+        )
+      groups <- unique(as.character(df$ColorGroup))
+      if (color_by == "exit_velocity") {
+        groups <- names(ev_palette)[names(ev_palette) %in% groups]
+        palette <- ev_palette[groups]
+      } else if (color_by == "result") {
+        known <- names(result_palette)[names(result_palette) %in% groups]
+        unknown <- setdiff(groups, names(result_palette))
+        palette <- c(result_palette[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      } else {
+        known <- names(cols)[names(cols) %in% groups]
+        unknown <- setdiff(groups, names(cols))
+        palette <- c(cols[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      }
+      list(df = df, palette = palette)
+    })
+    
+    output$batSpeedSummary <- renderUI({
+      base <- bat_speed_base()
+      if (!nrow(base)) {
+        return(tags$div(style = "margin-top:8px; color:#9ca3af;", "No bat-speed data for current filters."))
+      }
+      mode <- input$batSpeedDisplay %||% "average"
+      avg_bs <- mean(base$BatSpeed, na.rm = TRUE)
+      avg_ev <- mean(base$ExitSpeed, na.rm = TRUE)
+      avg_la <- mean(base$Angle, na.rm = TRUE)
+      if (identical(mode, "average")) {
+        tags$div(
+          style = "margin-top:8px; padding:10px; border:1px solid rgba(148,163,184,.35); border-radius:8px;",
+          tags$div(style = "font-weight:700; margin-bottom:4px;", "Average"),
+          tags$div(paste0("Bat Speed: ", ifelse(is.finite(avg_bs), sprintf("%.1f mph", avg_bs), "—"))),
+          tags$div(paste0("EV: ", ifelse(is.finite(avg_ev), sprintf("%.1f mph", avg_ev), "—"))),
+          tags$div(paste0("LA: ", ifelse(is.finite(avg_la), sprintf("%.1f°", avg_la), "—")))
+        )
+      } else {
+        tags$div(
+          style = "margin-top:8px; padding:10px; border:1px solid rgba(148,163,184,.35); border-radius:8px;",
+          tags$div(style = "font-weight:700; margin-bottom:4px;", "Individual Pitches"),
+          tags$div(paste0("Pitches: ", nrow(base))),
+          tags$div(paste0("Avg Bat Speed: ", ifelse(is.finite(avg_bs), sprintf("%.1f mph", avg_bs), "—"))),
+          tags$div("Dashed line is fixed at 68 mph")
+        )
+      }
+    })
+    
+    output$batSpeedKey <- renderPlot({
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#333333"
+      stroke_col <- text_col
+      out <- bat_speed_colored()
+      df <- out$df
+      pal <- out$palette
+      if (!nrow(df) || !length(pal)) return(NULL)
+      groups <- names(pal)
+      leg_df <- data.frame(KeyGroup = factor(groups, levels = rev(groups)), y = seq_along(groups), stringsAsFactors = FALSE)
+      ggplot(leg_df, aes(x = 0, y = y)) +
+        geom_point(aes(fill = KeyGroup), shape = 21, size = 5.5, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(x = 0.30, label = KeyGroup), hjust = 0, size = 4, fontface = "bold", color = text_col) +
+        scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(groups) + 0.7), clip = "off") +
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.margin = margin(5, 35, 5, 5)
+        )
+    }, bg = "transparent")
+    
+    output$batSpeedGauge <- ggiraph::renderGirafe({
+      out <- bat_speed_colored()
+      df <- out$df
+      pal <- out$palette
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#0f172a"
+      gauge_bg <- if (dark_on) "#334155" else "#d1d5db"
+      ref_col <- if (dark_on) "#94a3b8" else "#64748b"
+      needle_col <- "#ef4444"
+      mode <- input$batSpeedDisplay %||% "average"
+      if (!nrow(df)) {
+        p_empty <- ggplot() +
+          annotate("text", x = 0, y = 0.5, label = "No bat-speed data for current filters", size = 5, color = text_col) +
+          theme_void()
+        return(girafe_transparent(ggobj = p_empty))
+      }
+      
+      speed_min <- 40
+      speed_max <- 110
+      to_theta <- function(s) {
+        s <- pmax(speed_min, pmin(speed_max, s))
+        pi * (1 - (s - speed_min) / (speed_max - speed_min))
+      }
+      arc <- data.frame(t = seq(pi, 0, length.out = 240))
+      arc$x <- cos(arc$t)
+      arc$y <- sin(arc$t)
+      ticks <- seq(speed_min, speed_max, by = 10)
+      tick_df <- data.frame(
+        s = ticks,
+        t = to_theta(ticks)
+      )
+      tick_df$x1 <- 0.88 * cos(tick_df$t); tick_df$y1 <- 0.88 * sin(tick_df$t)
+      tick_df$x2 <- 1.00 * cos(tick_df$t); tick_df$y2 <- 1.00 * sin(tick_df$t)
+      tick_df$xl <- 1.10 * cos(tick_df$t); tick_df$yl <- 1.10 * sin(tick_df$t)
+      
+      ref_speed <- 68
+      ref_t <- to_theta(ref_speed)
+      ref_x <- 0.85 * cos(ref_t)
+      ref_y <- 0.85 * sin(ref_t)
+      
+      avg_bs <- mean(suppressWarnings(as.numeric(df$BatSpeed)), na.rm = TRUE)
+      avg_ev <- mean(suppressWarnings(as.numeric(df$ExitSpeed)), na.rm = TRUE)
+      avg_la <- mean(suppressWarnings(as.numeric(df$Angle)), na.rm = TRUE)
+      title_line <- if (identical(mode, "average")) {
+        paste0(
+          ifelse(is.finite(avg_bs), sprintf("%.1f", avg_bs), "—"), " mph",
+          "  |  EV ", ifelse(is.finite(avg_ev), sprintf("%.1f", avg_ev), "—"),
+          "  |  LA ", ifelse(is.finite(avg_la), sprintf("%.1f", avg_la), "—")
+        )
+      } else {
+        paste0("Individual Bat Speeds (n=", nrow(df), ")")
+      }
+      
+      p <- ggplot() +
+        geom_path(data = arc, aes(x, y), linewidth = 15, color = gauge_bg, lineend = "round") +
+        geom_path(data = arc, aes(x, y), linewidth = 2.2, color = if (dark_on) "#475569" else "#9ca3af") +
+        geom_segment(data = tick_df, aes(x = x1, y = y1, xend = x2, yend = y2), linewidth = 0.8, color = text_col, alpha = 0.6) +
+        geom_text(data = tick_df, aes(x = xl, y = yl, label = s), color = text_col, size = 3.8, fontface = "bold") +
+        geom_segment(aes(x = 0, y = 0, xend = ref_x, yend = ref_y),
+                     linewidth = 1.3, color = ref_col, linetype = "dashed") +
+        geom_point(aes(x = 0, y = 0), size = 4.5, color = if (dark_on) "#e5e7eb" else "#111827") +
+        annotate("text", x = 0, y = 1.18, label = title_line, color = text_col, size = 6, fontface = "bold") +
+        annotate("text", x = 0, y = 1.02, label = "Bat Speed Gauge", color = text_col, size = 4.7)
+      
+      if (identical(mode, "average")) {
+        avg_t <- to_theta(avg_bs)
+        p <- p +
+          geom_segment(
+            aes(x = 0, y = 0, xend = 0.86 * cos(avg_t), yend = 0.86 * sin(avg_t)),
+            linewidth = 2.3, color = needle_col,
+            arrow = grid::arrow(length = grid::unit(0.16, "inches"), type = "closed")
+          )
+      } else {
+        df <- df %>%
+          dplyr::mutate(
+            t = to_theta(BatSpeed),
+            gx = 0.90 * cos(t),
+            gy = 0.90 * sin(t)
+          )
+        p <- p +
+          ggiraph::geom_point_interactive(
+            data = df,
+            aes(gx, gy, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
+            shape = 21, size = 3.0, stroke = 0.45, alpha = 0.95
+          ) +
+          scale_color_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+          scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none")
+      }
+      
+      p <- p +
+        coord_fixed(xlim = c(-1.25, 1.25), ylim = c(-0.05, 1.25)) +
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+      
+      girafe_transparent(
+        ggobj = p,
+        options = list(
+          ggiraph::opts_sizing(rescale = TRUE),
+          ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
+                                css = "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.35);"),
+          ggiraph::opts_hover(css = "stroke-width:1.4px;"),
+          ggiraph::opts_hover_inv(css = "opacity:0.18;")
+        )
+      )
+    })
     
     # ---- Result key (legend for pitch results) ----
     output$result_key <- renderPlot({
