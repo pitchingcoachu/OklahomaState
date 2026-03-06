@@ -10333,14 +10333,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
           ) +
           scale_x_continuous(
-            breaks = seq(-2.0, 4.0, by = 0.5),
+            breaks = seq(if (is_lefty) -4.0 else -2.0, if (is_lefty) 2.0 else 4.0, by = 0.5),
             labels = function(v) {
               out <- if (is_lefty) -v else v
               ifelse(abs(out) < 1e-9, "0", sprintf("%.1f", out))
             }
           ) +
           scale_y_continuous(breaks = seq(0, 4, by = 0.5)) +
-          coord_fixed(xlim = c(-2.1, 4.0), ylim = c(0, y_max_v)) +
+          coord_fixed(xlim = if (is_lefty) c(-4.0, 2.1) else c(-2.1, 4.0), ylim = c(0, y_max_v)) +
           labs(x = "Forward (ft)", y = "Height (ft)") +
           theme_minimal(base_size = 12) +
           theme(
@@ -10742,7 +10742,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       guide_df$lab <- paste0(guide_df$ang, "°")
       
       p <- ggplot() +
-        geom_polygon(data = rbind(data.frame(x = 0, y = -1), semi, data.frame(x = 0, y = 1)),
+        geom_polygon(data = rbind(data.frame(x = 0, y = -1), semi[, c("x", "y")], data.frame(x = 0, y = 1)),
                      aes(x, y), fill = fill_col, alpha = 0.35, color = NA) +
         geom_path(data = semi, aes(x, y), linewidth = 1.2, color = guide_col, alpha = 0.75) +
         geom_segment(data = guide_df, aes(x = 0, y = 0, xend = x, yend = y),
