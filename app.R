@@ -9890,10 +9890,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         tags$div(style = "font-weight:700; margin-bottom:4px;", title),
         tags$div(paste0("VAA: ", sprintf("%.1f", row$VerticalAttackAngle[[1]]), "°")),
         tags$div(paste0("HAA: ", sprintf("%.1f", row$HorizontalAttackAngle[[1]]), "°")),
-        tags$div(paste0("Contact X/Y/Z: ",
-                        sprintf("%.1f", row$ContactPositionX[[1]]), ", ",
-                        sprintf("%.1f", row$ContactPositionY[[1]]), ", ",
-                        sprintf("%.1f", row$ContactPositionZ[[1]]), " ft")),
+        tags$div(paste0("Forward (X): ", sprintf("%.1f", row$ContactPositionX[[1]]), " ft")),
+        tags$div(paste0("Height (Y): ", sprintf("%.1f", row$ContactPositionY[[1]]), " ft")),
+        tags$div(paste0("Side (Z): ", sprintf("%.1f", row$ContactPositionZ[[1]]), " ft")),
         tags$div(paste0("Batter Side: ", row$BatterSide[[1]] %||% "Unknown"))
       )
     })
@@ -10043,6 +10042,14 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 2.05, y = y_max - 0.35, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
           annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
           annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
+          annotate(
+            "text",
+            x = cx,
+            y = max(y_min + 0.12, cy - 0.16),
+            label = paste0("Side(Z): ", sprintf("%.1f", cx), " | Forward(X): ", sprintf("%.1f", cy)),
+            color = text_col,
+            size = 3.4
+          ) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
           scale_linewidth_identity() +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
