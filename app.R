@@ -8245,6 +8245,7 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                   ),
                   column(
                     9,
+                    uiOutput(ns("attackAngleHeader")),
                     plotOutput(ns("attackAnglePlot"), height = "620px")
                   )
                 )
@@ -9543,7 +9544,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       result_label <- function(x) {
         out <- trimws(as.character(x))
-        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out[!is.na(out) & out == "Undefined"] <- "Foul Ball"
+        out[is.na(out) | !nzchar(out)] <- "Unknown"
         out
       }
       mode_chr <- function(x) {
@@ -9728,7 +9730,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       result_label <- function(x) {
         out <- trimws(as.character(x))
-        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out[!is.na(out) & out == "Undefined"] <- "Foul Ball"
+        out[is.na(out) | !nzchar(out)] <- "Unknown"
         out
       }
       mode_chr <- function(x) {
@@ -10056,6 +10059,41 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       )
     })
     
+    output$attackAngleHeader <- renderUI({
+      if (!attack_hand_selected()) return(NULL)
+      row <- selected_attack_row()
+      if (is.null(row) || !nrow(row)) return(NULL)
+      view_type <- input$attackAngleType %||% "Horizontal Attack"
+      scope <- input$attackScope %||% "average"
+      angle_val <- if (identical(view_type, "Horizontal Attack")) {
+        suppressWarnings(as.numeric(row$HorizontalAttackAngle[[1]]))
+      } else {
+        suppressWarnings(as.numeric(row$VerticalAttackAngle[[1]]))
+      }
+      ev_val <- suppressWarnings(as.numeric(row$ExitSpeed[[1]]))
+      la_val <- suppressWarnings(as.numeric(row$Angle[[1]]))
+      result_val <- trimws(as.character(row$PlayResult[[1]] %||% ""))
+      if (!nzchar(result_val) || identical(result_val, "Undefined")) result_val <- "Foul Ball"
+      stats_line <- if (identical(scope, "pitch")) {
+        paste0(
+          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
+          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—"),
+          " | Result ", result_val
+        )
+      } else {
+        paste0(
+          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
+          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—")
+        )
+      }
+      tags$div(
+        style = "text-align:center; margin-bottom:8px;",
+        tags$div(style = "font-size:52px; font-weight:800; line-height:1;", paste0(ifelse(is.finite(angle_val), sprintf("%.1f", angle_val), "—"), "°")),
+        tags$div(style = "font-size:18px; margin-top:4px;", view_type),
+        tags$div(style = "font-size:15px; margin-top:3px;", stats_line)
+      )
+    })
+    
     output$attackAnglePlot <- renderPlot({
       if (!attack_hand_selected()) {
         return(
@@ -10081,23 +10119,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       zero_col <- if (dark_on) "#cbd5e1" else "#64748b"
       bat_col <- "#d2b48c"
       angle_col <- "#ef4444"
-      scope <- input$attackScope %||% "average"
-      ev_val <- suppressWarnings(as.numeric(row$ExitSpeed[[1]]))
-      la_val <- suppressWarnings(as.numeric(row$Angle[[1]]))
-      result_val <- trimws(as.character(row$PlayResult[[1]] %||% ""))
-      if (!nzchar(result_val) || identical(result_val, "Undefined")) result_val <- "—"
-      top_stats <- if (identical(scope, "pitch")) {
-        paste0(
-          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
-          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—"),
-          " | Result ", result_val
-        )
-      } else {
-        paste0(
-          "EV ", ifelse(is.finite(ev_val), sprintf("%.1f", ev_val), "—"),
-          " | LA ", ifelse(is.finite(la_val), sprintf("%.1f", la_val), "—")
-        )
-      }
       side <- tolower(trimws(as.character(row$BatterSide[[1]] %||% "right")))
       is_lefty <- startsWith(side, "l")
       
@@ -10224,9 +10245,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           ) +
           annotate("text", x = -2.05, y = y_max - 0.35, label = pull_left, color = "#22c55e", hjust = 0, size = 4) +
           annotate("text", x = 2.05, y = y_max - 0.35, label = pull_right, color = "#22c55e", hjust = 1, size = 4) +
-          annotate("text", x = 0, y = y_max - 0.10, label = paste0(sprintf("%.1f", haa), "°"), color = text_col, size = 8, fontface = "bold") +
-          annotate("text", x = 0, y = y_max - 0.42, label = "Horizontal Attack", color = text_col, size = 5) +
-          annotate("text", x = 0, y = y_max - 0.70, label = top_stats, color = text_col, size = 4.1) +
           scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
           scale_linewidth_identity() +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
@@ -10246,7 +10264,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         cx <- as.numeric(row$ContactPositionX[[1]])
         cy <- as.numeric(row$ContactPositionY[[1]])
         vaa <- as.numeric(row$VerticalAttackAngle[[1]])
-        x_plot <- cx
+        x_plot <- if (is_lefty) -cx else cx
         rad <- vaa * pi / 180
         vec_len <- 1.15
         face_dir <- ifelse(is_lefty, -1, 1)
@@ -10261,8 +10279,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
 
         # Side-view scaffold: plate tip points toward pitcher-side by handedness.
         tip_dir <- ifelse(is_lefty, 1, -1)
+        plate_x_template <- c(-0.36, -0.08, 0.00, -0.08, -0.36, -0.36)
         home_plate <- data.frame(
-          x = c(-0.34, 0.08, 0.33, 0.08, -0.34, -0.34) * tip_dir,
+          x = plate_x_template * tip_dir,
           y = c(0.22, 0.22, 0.26, 0.30, 0.30, 0.22)
         )
         # Batter boxes stacked vertically to reinforce side perspective.
@@ -10290,10 +10309,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             linewidth = 1.9, color = angle_col,
             arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
           ) +
-          annotate("text", x = 0, y = y_max_v - 0.25, label = paste0(sprintf("%.1f", vaa), "°"), color = text_col, size = 8, fontface = "bold") +
-          annotate("text", x = 0, y = y_max_v - 0.55, label = "Vertical Attack", color = text_col, size = 5) +
-          annotate("text", x = 0, y = y_max_v - 0.83, label = top_stats, color = text_col, size = 4.1) +
-          coord_fixed(xlim = c(-2.5, 2.5), ylim = c(0, y_max_v)) +
+          scale_x_continuous(breaks = seq(-2.0, 2.0, by = 0.5)) +
+          scale_y_continuous(breaks = seq(0, 4, by = 0.5)) +
+          coord_fixed(xlim = c(-2.1, 2.1), ylim = c(0, y_max_v)) +
           labs(x = "Forward (ft)", y = "Height (ft)") +
           theme_minimal(base_size = 12) +
           theme(
@@ -10313,7 +10331,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       req(is.data.frame(df))
       result_label <- function(x) {
         out <- trimws(as.character(x))
-        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out[!is.na(out) & out == "Undefined"] <- "Foul Ball"
+        out[is.na(out) | !nzchar(out)] <- "Unknown"
         out
       }
       df %>%
@@ -10487,10 +10506,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       arc$t <- to_theta(arc$s)
       arc$x <- cos(arc$t)
       arc$y <- sin(arc$t)
-      arc_1 <- arc[arc$s <= 55, , drop = FALSE]
-      arc_2 <- arc[arc$s > 55 & arc$s <= 65, , drop = FALSE]
-      arc_3 <- arc[arc$s > 65 & arc$s <= 72, , drop = FALSE]
-      arc_4 <- arc[arc$s > 72, , drop = FALSE]
+      blend_cols <- grDevices::colorRampPalette(c("#1d4ed8", "#ffffff", "#dc2626"))(nrow(arc) - 1)
+      arc_seg <- data.frame(
+        x = arc$x[-nrow(arc)],
+        y = arc$y[-nrow(arc)],
+        xend = arc$x[-1],
+        yend = arc$y[-1],
+        col = blend_cols,
+        stringsAsFactors = FALSE
+      )
       ticks <- seq(speed_min, speed_max, by = 5)
       tick_df <- data.frame(
         s = ticks,
@@ -10515,22 +10539,19 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           "  |  LA ", ifelse(is.finite(avg_la), sprintf("%.1f", avg_la), "—")
         )
       } else {
-        paste0("Individual Bat Speeds (n=", nrow(df), ")")
+        ""
       }
       
       p <- ggplot() +
-        geom_path(data = arc_1, aes(x, y), linewidth = 15, color = "#1d4ed8", lineend = "round") +
-        geom_path(data = arc_2, aes(x, y), linewidth = 15, color = "#22c55e", lineend = "round") +
-        geom_path(data = arc_3, aes(x, y), linewidth = 15, color = "#f59e0b", lineend = "round") +
-        geom_path(data = arc_4, aes(x, y), linewidth = 15, color = "#ef4444", lineend = "round") +
+        annotate("segment", x = arc_seg$x, y = arc_seg$y, xend = arc_seg$xend, yend = arc_seg$yend,
+                 color = arc_seg$col, linewidth = 15, lineend = "round") +
         geom_path(data = arc, aes(x, y), linewidth = 2.2, color = if (dark_on) "#475569" else "#9ca3af") +
         geom_segment(data = tick_df, aes(x = x1, y = y1, xend = x2, yend = y2), linewidth = 0.8, color = text_col, alpha = 0.6) +
         geom_text(data = tick_df, aes(x = xl, y = yl, label = s), color = text_col, size = 3.8, fontface = "bold") +
         geom_segment(aes(x = 0, y = 0, xend = ref_x, yend = ref_y),
                      linewidth = 1.3, color = ref_col, linetype = "dashed") +
         geom_point(aes(x = 0, y = 0), size = 4.5, color = if (dark_on) "#e5e7eb" else "#111827") +
-        annotate("text", x = 0, y = 1.44, label = title_line, color = text_col, size = 6, fontface = "bold") +
-        annotate("text", x = 0, y = 1.28, label = "Bat Speed Gauge", color = text_col, size = 4.7)
+        annotate("text", x = 0, y = 1.44, label = title_line, color = text_col, size = 6, fontface = "bold")
       
       if (identical(mode, "average")) {
         avg_t <- to_theta(avg_bs)
@@ -10690,7 +10711,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       result_label <- function(x) {
         out <- trimws(as.character(x))
-        out[is.na(out) | !nzchar(out) | out == "Undefined"] <- "Unknown"
+        out[!is.na(out) & out == "Undefined"] <- "Foul Ball"
+        out[is.na(out) | !nzchar(out)] <- "Unknown"
         out
       }
       mode_2d <- input$contact2dMode %||% "individual"
