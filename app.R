@@ -8279,6 +8279,29 @@ mod_hit_ui <- function(id, show_header = FALSE) {
                     ggiraph::girafeOutput(ns("batSpeedGauge"), height = "620px")
                   )
                 )
+              ),
+              tabPanel(
+                "EV and LA",
+                fluidRow(
+                  column(
+                    3,
+                    selectInput(
+                      ns("evlaColorBy"),
+                      "Color By:",
+                      choices = c("Result" = "result", "Pitch Type" = "pitch_type"),
+                      selected = "result"
+                    ),
+                    tags$div(
+                      style = "font-weight:bold; text-align:left; margin:8px 0 6px 0;",
+                      "Color Key"
+                    ),
+                    plotOutput(ns("evlaKey"), height = "300px")
+                  ),
+                  column(
+                    9,
+                    ggiraph::girafeOutput(ns("evlaPlot"), height = "620px")
+                  )
+                )
               )
             )
           )
@@ -10309,9 +10332,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             linewidth = 1.9, color = angle_col,
             arrow = grid::arrow(length = grid::unit(0.18, "inches"), type = "closed")
           ) +
-          scale_x_continuous(breaks = seq(-2.0, 2.0, by = 0.5)) +
+          scale_x_continuous(
+            breaks = seq(-2.0, 4.0, by = 0.5),
+            labels = function(v) {
+              out <- if (is_lefty) -v else v
+              ifelse(abs(out) < 1e-9, "0", sprintf("%.1f", out))
+            }
+          ) +
           scale_y_continuous(breaks = seq(0, 4, by = 0.5)) +
-          coord_fixed(xlim = c(-2.1, 2.1), ylim = c(0, y_max_v)) +
+          coord_fixed(xlim = c(-2.1, 4.0), ylim = c(0, y_max_v)) +
           labs(x = "Forward (ft)", y = "Height (ft)") +
           theme_minimal(base_size = 12) +
           theme(
@@ -10553,15 +10582,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         geom_point(aes(x = 0, y = 0), size = 4.5, color = if (dark_on) "#e5e7eb" else "#111827") +
         annotate("text", x = 0, y = 1.44, label = title_line, color = text_col, size = 6, fontface = "bold")
       
-      if (identical(mode, "average")) {
-        avg_t <- to_theta(avg_bs)
-        p <- p +
-          geom_segment(
-            aes(x = 0, y = 0, xend = 0.86 * cos(avg_t), yend = 0.86 * sin(avg_t)),
-            linewidth = 2.3, color = needle_col,
-            arrow = grid::arrow(length = grid::unit(0.16, "inches"), type = "closed")
-          )
-      } else {
+      avg_t <- to_theta(avg_bs)
+      p <- p +
+        geom_segment(
+          aes(x = 0, y = 0, xend = 0.86 * cos(avg_t), yend = 0.86 * sin(avg_t)),
+          linewidth = 2.3, color = needle_col,
+          arrow = grid::arrow(length = grid::unit(0.16, "inches"), type = "closed")
+        )
+      
+      if (!identical(mode, "average")) {
         df <- df %>%
           dplyr::mutate(
             t = to_theta(BatSpeed),
@@ -10594,6 +10623,156 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                                 css = "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.35);"),
           ggiraph::opts_hover(css = "stroke-width:1.4px;"),
           ggiraph::opts_hover_inv(css = "opacity:0.18;")
+        )
+      )
+    })
+    
+    evla_base <- reactive({
+      df <- filtered_hit()
+      req(is.data.frame(df))
+      df %>%
+        dplyr::mutate(
+          ExitSpeed = suppressWarnings(as.numeric(ExitSpeed)),
+          Angle = suppressWarnings(as.numeric(Angle)),
+          TaggedPitchType = as.character(TaggedPitchType),
+          PlayResult = as.character(PlayResult)
+        ) %>%
+        dplyr::filter(
+          is.finite(ExitSpeed),
+          is.finite(Angle),
+          Angle >= -90, Angle <= 90,
+          !is.na(PlayResult),
+          nzchar(trimws(PlayResult)),
+          trimws(PlayResult) != "Undefined"
+        )
+    })
+    
+    evla_colored <- reactive({
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      result_palette <- c(
+        "Single" = "#f97316", "Double" = "#6366f1", "Triple" = "#eab308", "HomeRun" = "#db2777",
+        "Out" = if (dark_on) "#e5e7eb" else "#9ca3af", "Field Out" = if (dark_on) "#e5e7eb" else "#9ca3af",
+        "Sacrifice" = "#d97706", "Foul Ball" = "#94a3b8"
+      )
+      color_by <- input$evlaColorBy %||% "result"
+      df <- evla_base()
+      if (!nrow(df)) return(list(df = df, palette = c()))
+      
+      df <- df %>%
+        dplyr::mutate(
+          ColorGroup = if (identical(color_by, "pitch_type")) dplyr::coalesce(TaggedPitchType, "Unknown")
+          else dplyr::coalesce(PlayResult, "Unknown"),
+          theta = Angle * pi / 180,
+          r = pmax(0, pmin(120, ExitSpeed)) / 120,
+          x = r * cos(theta),
+          y = r * sin(theta),
+          rid = dplyr::row_number(),
+          tooltip = paste0(
+            "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+            "Result: ", dplyr::coalesce(PlayResult, "—"), "<br>",
+            "EV: ", sprintf("%.1f mph", ExitSpeed), "<br>",
+            "LA: ", sprintf("%.1f°", Angle)
+          )
+        )
+      
+      groups <- unique(as.character(df$ColorGroup))
+      if (identical(color_by, "pitch_type")) {
+        known <- names(cols)[names(cols) %in% groups]
+        unknown <- setdiff(groups, names(cols))
+        pal <- c(cols[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      } else {
+        known <- names(result_palette)[names(result_palette) %in% groups]
+        unknown <- setdiff(groups, names(result_palette))
+        pal <- c(result_palette[known], setNames(rep(if (dark_on) "#94a3b8" else "gray60", length(unknown)), unknown))
+      }
+      list(df = df, palette = pal)
+    })
+    
+    output$evlaKey <- renderPlot({
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#333333"
+      stroke_col <- text_col
+      out <- evla_colored()
+      df <- out$df
+      pal <- out$palette
+      if (!nrow(df) || !length(pal)) return(NULL)
+      groups <- names(pal)
+      leg_df <- data.frame(KeyGroup = factor(groups, levels = rev(groups)), y = seq_along(groups), stringsAsFactors = FALSE)
+      ggplot(leg_df, aes(x = 0, y = y)) +
+        geom_point(aes(fill = KeyGroup), shape = 21, size = 5.8, color = stroke_col, stroke = 1.1) +
+        geom_text(aes(x = 0.30, label = KeyGroup), hjust = 0, size = 4, fontface = "bold", color = text_col) +
+        scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+        coord_cartesian(xlim = c(-0.2, 2.8), ylim = c(0.3, length(groups) + 0.7), clip = "off") +
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA),
+          plot.margin = margin(5, 35, 5, 5)
+        )
+    }, bg = "transparent")
+    
+    output$evlaPlot <- ggiraph::renderGirafe({
+      out <- evla_colored()
+      df <- out$df
+      pal <- out$palette
+      dark_on <- is_dark_mode()
+      text_col <- if (dark_on) "#e5e7eb" else "#0f172a"
+      guide_col <- if (dark_on) "#94a3b8" else "#9ca3af"
+      fill_col <- if (dark_on) "#1f2937" else "#d1ecf1"
+      if (!nrow(df)) {
+        p_empty <- ggplot() +
+          annotate("text", x = 0.5, y = 0.5, label = "No EV/LA data for current filters", size = 5, color = text_col) +
+          theme_void()
+        return(girafe_transparent(ggobj = p_empty))
+      }
+      
+      semi <- data.frame(t = seq(-pi/2, pi/2, length.out = 320))
+      semi$x <- cos(semi$t)
+      semi$y <- sin(semi$t)
+      guide_angles <- c(90, 45, 0, -45, -90)
+      guide_df <- data.frame(
+        ang = guide_angles,
+        t = guide_angles * pi / 180
+      )
+      guide_df$x <- cos(guide_df$t)
+      guide_df$y <- sin(guide_df$t)
+      guide_df$lx <- 1.08 * guide_df$x
+      guide_df$ly <- 1.08 * guide_df$y
+      guide_df$lab <- paste0(guide_df$ang, "°")
+      
+      p <- ggplot() +
+        geom_polygon(data = rbind(data.frame(x = 0, y = -1), semi, data.frame(x = 0, y = 1)),
+                     aes(x, y), fill = fill_col, alpha = 0.35, color = NA) +
+        geom_path(data = semi, aes(x, y), linewidth = 1.2, color = guide_col, alpha = 0.75) +
+        geom_segment(data = guide_df, aes(x = 0, y = 0, xend = x, yend = y),
+                     linewidth = 0.9, color = guide_col, alpha = 0.45) +
+        geom_text(data = guide_df, aes(x = lx, y = ly, label = lab),
+                  color = text_col, size = 4, alpha = 0.85) +
+        annotate("text", x = 0, y = 1.16, label = "120 MPH", color = text_col, size = 4.2, fontface = "bold") +
+        annotate("text", x = 0, y = -1.16, label = "120 MPH", color = text_col, size = 4.2, fontface = "bold") +
+        ggiraph::geom_point_interactive(
+          data = df,
+          aes(x, y, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
+          shape = 21, size = 4.2, stroke = 0.6, alpha = 0.92
+        ) +
+        scale_color_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+        scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+        coord_fixed(xlim = c(-0.02, 1.22), ylim = c(-1.2, 1.2)) +
+        theme_void() +
+        theme(
+          plot.background = element_rect(fill = "transparent", color = NA),
+          panel.background = element_rect(fill = "transparent", color = NA)
+        )
+      
+      girafe_transparent(
+        ggobj = p,
+        options = list(
+          ggiraph::opts_sizing(rescale = TRUE),
+          ggiraph::opts_tooltip(use_fill = TRUE, use_stroke = TRUE,
+                                css = "color:#fff !important;font-weight:600;padding:6px;border-radius:8px;text-shadow:0 1px 1px rgba(0,0,0,.35);"),
+          ggiraph::opts_hover(css = "stroke-width:1.5px;"),
+          ggiraph::opts_hover_inv(css = "opacity:0.15;")
         )
       )
     })
