@@ -9958,6 +9958,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         df <- df %>%
           dplyr::filter(
             is.finite(VerticalAttackAngle),
+            is.finite(ContactPositionX),
             is.finite(ContactPositionY),
             is.finite(ContactPositionZ)
           )
@@ -10010,9 +10011,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           dplyr::filter(is.finite(HorizontalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionZ))
       } else {
         contact_pool <- base %>%
-          dplyr::filter(is.finite(ContactPositionY), is.finite(ContactPositionZ))
+          dplyr::filter(is.finite(ContactPositionX), is.finite(ContactPositionY))
         angle_pool <- base %>%
-          dplyr::filter(is.finite(VerticalAttackAngle), is.finite(ContactPositionY), is.finite(ContactPositionZ))
+          dplyr::filter(is.finite(VerticalAttackAngle), is.finite(ContactPositionX), is.finite(ContactPositionY))
       }
       if (!nrow(contact_pool) || !nrow(angle_pool)) return(NULL)
 
@@ -10241,11 +10242,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             panel.background = element_rect(fill = "transparent", color = NA)
           )
       } else {
-        # Side view from batter-box perspective: x = side (Z), y = height (Y)
-        cx <- as.numeric(row$ContactPositionZ[[1]])
+        # Side view from batter-box perspective: x = forward (X), y = height (Y)
+        cx <- as.numeric(row$ContactPositionX[[1]])
         cy <- as.numeric(row$ContactPositionY[[1]])
         vaa <- as.numeric(row$VerticalAttackAngle[[1]])
-        x_plot <- if (is_lefty) -cx else cx
+        x_plot <- cx
         rad <- vaa * pi / 180
         vec_len <- 1.15
         face_dir <- ifelse(is_lefty, -1, 1)
@@ -10261,17 +10262,17 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         # Side-view scaffold: plate tip points toward pitcher-side by handedness.
         tip_dir <- ifelse(is_lefty, 1, -1)
         home_plate <- data.frame(
-          x = c(-0.42, 0.08, 0.40, 0.08, -0.42, -0.42) * tip_dir,
-          y = c(0.14, 0.14, 0.21, 0.28, 0.28, 0.14)
+          x = c(-0.34, 0.08, 0.33, 0.08, -0.34, -0.34) * tip_dir,
+          y = c(0.22, 0.22, 0.26, 0.30, 0.30, 0.22)
         )
         # Batter boxes stacked vertically to reinforce side perspective.
         box_lower <- data.frame(
-          x = c(-1.45, 1.45, 1.20, -1.20, -1.45),
-          y = c(0.02, 0.02, 0.22, 0.22, 0.02)
+          x = c(-1.45, 1.45, 1.18, -1.18, -1.45),
+          y = c(0.02, 0.02, 0.18, 0.18, 0.02)
         )
         box_upper <- data.frame(
           x = c(-1.18, 1.18, 0.98, -0.98, -1.18),
-          y = c(0.34, 0.34, 0.52, 0.52, 0.34)
+          y = c(0.36, 0.36, 0.50, 0.50, 0.36)
         )
         y_max_v <- 4.4
 
@@ -10293,7 +10294,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           annotate("text", x = 0, y = y_max_v - 0.55, label = "Vertical Attack", color = text_col, size = 5) +
           annotate("text", x = 0, y = y_max_v - 0.83, label = top_stats, color = text_col, size = 4.1) +
           coord_fixed(xlim = c(-2.5, 2.5), ylim = c(0, y_max_v)) +
-          labs(x = "Side (ft)", y = "Height (ft)") +
+          labs(x = "Forward (ft)", y = "Height (ft)") +
           theme_minimal(base_size = 12) +
           theme(
             panel.grid.major = element_blank(),
@@ -10466,7 +10467,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       pal <- out$palette
       dark_on <- is_dark_mode()
       text_col <- if (dark_on) "#e5e7eb" else "#0f172a"
-      gauge_bg <- if (dark_on) "#334155" else "#d1d5db"
       ref_col <- if (dark_on) "#94a3b8" else "#64748b"
       needle_col <- "#ef4444"
       mode <- input$batSpeedDisplay %||% "average"
@@ -10478,15 +10478,20 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       
       speed_min <- 40
-      speed_max <- 110
+      speed_max <- 80
       to_theta <- function(s) {
         s <- pmax(speed_min, pmin(speed_max, s))
         pi * (1 - (s - speed_min) / (speed_max - speed_min))
       }
-      arc <- data.frame(t = seq(pi, 0, length.out = 240))
+      arc <- data.frame(s = seq(speed_min, speed_max, length.out = 280))
+      arc$t <- to_theta(arc$s)
       arc$x <- cos(arc$t)
       arc$y <- sin(arc$t)
-      ticks <- seq(speed_min, speed_max, by = 10)
+      arc_1 <- arc[arc$s <= 55, , drop = FALSE]
+      arc_2 <- arc[arc$s > 55 & arc$s <= 65, , drop = FALSE]
+      arc_3 <- arc[arc$s > 65 & arc$s <= 72, , drop = FALSE]
+      arc_4 <- arc[arc$s > 72, , drop = FALSE]
+      ticks <- seq(speed_min, speed_max, by = 5)
       tick_df <- data.frame(
         s = ticks,
         t = to_theta(ticks)
@@ -10514,15 +10519,18 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       
       p <- ggplot() +
-        geom_path(data = arc, aes(x, y), linewidth = 15, color = gauge_bg, lineend = "round") +
+        geom_path(data = arc_1, aes(x, y), linewidth = 15, color = "#1d4ed8", lineend = "round") +
+        geom_path(data = arc_2, aes(x, y), linewidth = 15, color = "#22c55e", lineend = "round") +
+        geom_path(data = arc_3, aes(x, y), linewidth = 15, color = "#f59e0b", lineend = "round") +
+        geom_path(data = arc_4, aes(x, y), linewidth = 15, color = "#ef4444", lineend = "round") +
         geom_path(data = arc, aes(x, y), linewidth = 2.2, color = if (dark_on) "#475569" else "#9ca3af") +
         geom_segment(data = tick_df, aes(x = x1, y = y1, xend = x2, yend = y2), linewidth = 0.8, color = text_col, alpha = 0.6) +
         geom_text(data = tick_df, aes(x = xl, y = yl, label = s), color = text_col, size = 3.8, fontface = "bold") +
         geom_segment(aes(x = 0, y = 0, xend = ref_x, yend = ref_y),
                      linewidth = 1.3, color = ref_col, linetype = "dashed") +
         geom_point(aes(x = 0, y = 0), size = 4.5, color = if (dark_on) "#e5e7eb" else "#111827") +
-        annotate("text", x = 0, y = 1.18, label = title_line, color = text_col, size = 6, fontface = "bold") +
-        annotate("text", x = 0, y = 1.02, label = "Bat Speed Gauge", color = text_col, size = 4.7)
+        annotate("text", x = 0, y = 1.44, label = title_line, color = text_col, size = 6, fontface = "bold") +
+        annotate("text", x = 0, y = 1.28, label = "Bat Speed Gauge", color = text_col, size = 4.7)
       
       if (identical(mode, "average")) {
         avg_t <- to_theta(avg_bs)
@@ -10550,7 +10558,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       }
       
       p <- p +
-        coord_fixed(xlim = c(-1.25, 1.25), ylim = c(-0.05, 1.25)) +
+        coord_fixed(xlim = c(-1.25, 1.25), ylim = c(-0.05, 1.55)) +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
