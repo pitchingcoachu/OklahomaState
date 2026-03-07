@@ -159,6 +159,31 @@ zone_nine_square_layers <- function(color = "black", linewidth = 0.5, alpha = 1)
   )
 }
 
+comp_zone_connector_layers <- function(color = "black", linewidth = 0.6, alpha = 1) {
+  mid_x <- (ZONE_LEFT + ZONE_RIGHT) / 2
+  mid_y <- (ZONE_BOTTOM + ZONE_TOP) / 2
+  comp_left <- -1.5
+  comp_right <- 1.5
+  comp_bottom <- mid_y - 1.5
+  comp_top <- mid_y + 1.5
+  seg_df <- data.frame(
+    x = c(mid_x, mid_x, ZONE_LEFT, ZONE_RIGHT),
+    y = c(ZONE_BOTTOM, ZONE_TOP, mid_y, mid_y),
+    xend = c(mid_x, mid_x, comp_left, comp_right),
+    yend = c(comp_bottom, comp_top, mid_y, mid_y)
+  )
+  list(
+    geom_segment(
+      data = seg_df,
+      aes(x = x, y = y, xend = xend, yend = yend),
+      inherit.aes = FALSE,
+      color = color,
+      linewidth = linewidth,
+      alpha = alpha
+    )
+  )
+}
+
 # Frequency (keep multi-color)
 heat_pal_freq <- function(n = HEAT_BINS) colorRampPalette(
   c("white","pink","red")
@@ -269,7 +294,7 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     scale_fill_manual(values = fill_vals, guide = "none") +
     geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = line_col, inherit.aes = FALSE) +
+              fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
     { if (!is.null(peak_df))
       geom_point(data = peak_df, aes(x = px, y = py), inherit.aes = FALSE,
                  size = 3.8, shape = 21, fill = "red", color = "black", stroke = 0.5)
@@ -368,7 +393,7 @@ draw_heat_binned <- function(grid, bin_size = 0.4, pal_fun = heat_pal_red,
     scale_fill_gradientn(colors = grad_vals, limits = scale_limits, na.value = "#00000000") +
     geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = line_col, inherit.aes = FALSE) +
+              fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
     coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
     theme_void() + 
     theme(legend.position = "none",
@@ -5705,7 +5730,7 @@ draw_heat <- function(grid, bins = HEAT_BINS, pal_fun = heat_pal_red,
     scale_fill_manual(values = fill_vals, guide = "none") +
     geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
     geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              fill = NA, color = line_col, inherit.aes = FALSE) +
+              fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
     { if (!is.null(peak_df))
       geom_point(data = peak_df, aes(x = px, y = py), inherit.aes = FALSE,
                  size = 3.8, shape = 21, fill = "red", color = "black", stroke = 0.5)
@@ -8687,10 +8712,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       c(list(
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col),
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = line_col, linetype = "dashed"),
+                  fill = NA, color = line_col),
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = line_col)
-      ), zone_nine_square_layers(color = line_col))
+                  fill = NA, color = line_col, linewidth = 1.15)
+      ), comp_zone_connector_layers(color = line_col), zone_nine_square_layers(color = line_col))
     }
     
     # ---------- AB Report: date choices + default ----------
@@ -9110,7 +9135,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       p <- ggplot() +
         geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  inherit.aes = FALSE, fill = NA, color = line_col) +
+                  inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
         geom_rect(data = green_box,
                   aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   inherit.aes = FALSE,
@@ -9480,9 +9505,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       p <- ggplot() +
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = line_col, linetype = "dashed") +
-        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col) +
+        comp_zone_connector_layers(color = line_col) +
+        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                  fill = NA, color = line_col, linewidth = 1.15) +
         zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
@@ -10653,7 +10679,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       result_palette <- c(
         "Single" = "#f97316", "Double" = "#6366f1", "Triple" = "#eab308", "HomeRun" = "#db2777",
         "Out" = "#06b6d4", "Field Out" = "#8b5cf6", "Sacrifice" = "#d97706", "Foul Ball" = "#14b8a6",
-        "Error" = "#ef4444", "FieldersChoice" = "#84cc16", "Unknown" = if (dark_on) "#fbbf24" else "#a16207"
+        "Error" = "#22d3ee", "FieldersChoice" = "#84cc16", "Unknown" = if (dark_on) "#fbbf24" else "#a16207"
       )
       color_by <- input$evlaColorBy %||% "result"
       df <- evla_base()
@@ -10741,9 +10767,10 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       guide_df$ly <- 0.88 * guide_df$y
       guide_df$lab <- paste0(guide_df$ang, "°")
       mph_df <- data.frame(
-        x = c(0, 1.20, 0),
+        x = c(0.03, 1.20, 0.03),
         y = c(1.13, 0, -1.13),
         lab = rep("120 MPH", 3),
+        hjust = c(0, 0, 0),
         stringsAsFactors = FALSE
       )
       
@@ -10755,7 +10782,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                      linewidth = 0.9, color = guide_col, alpha = 0.45) +
         geom_text(data = guide_df, aes(x = lx, y = ly, label = lab),
                   color = text_col, size = 4, alpha = 0.85) +
-        geom_text(data = mph_df, aes(x = x, y = y, label = lab), color = text_col, size = 4.2, fontface = "bold") +
+        geom_text(data = mph_df, aes(x = x, y = y, label = lab, hjust = hjust), color = text_col, size = 4.2, fontface = "bold") +
         ggiraph::geom_point_interactive(
           data = df,
           aes(x, y, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
@@ -13324,7 +13351,8 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
         scale_alpha(range = c(0.25, 1), guide = "none") +
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, linewidth = 0.6) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = line_col, linetype = "dashed", linewidth = 0.6) +
+                  fill = NA, color = line_col, linewidth = 0.6) +
+        comp_zone_connector_layers(color = line_col, linewidth = 0.6) +
         geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col, linewidth = 0.8) +
         zone_nine_square_layers(color = line_col, linewidth = 0.45) +
@@ -13363,8 +13391,9 @@ mod_catch_server <- function(id, is_active = shiny::reactive(TRUE), global_date_
       
       p <- ggplot() +
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
-        geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col, linetype = "dashed") +
-        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col) +
+        geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col) +
+        comp_zone_connector_layers(color = line_col) +
+        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), fill = NA, color = line_col, linewidth = 1.15) +
         zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
@@ -13954,9 +13983,10 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         scale_color_manual(values = all_colors[types], limits = types, name = NULL) +
         scale_shape_manual(values = shape_map, name = NULL) +
         geom_rect(aes(xmin = ZONE_LEFT, xmax = ZONE_RIGHT, ymin = ZONE_BOTTOM, ymax = ZONE_TOP),
-                  fill = NA, color = line_col, linewidth = 1) +
+                  fill = NA, color = line_col, linewidth = 1.15) +
         geom_rect(aes(xmin = -1.5, xmax = 1.5, ymin = 2.65-1.5, ymax = 2.65+1.5),
-                  fill = NA, color = line_col, linetype = "dashed", linewidth = 0.8) +
+                  fill = NA, color = line_col, linewidth = 0.8) +
+        comp_zone_connector_layers(color = line_col, linewidth = 0.8) +
         coord_fixed(ratio = 1) +
         labs(x = "Plate Side (ft)", y = "Plate Height (ft)") +
         theme_minimal() + axis_theme + grid_theme(dark_on) +
@@ -14264,9 +14294,10 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
       p <- ggplot() +
         geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  fill = NA, color = line_col, linetype = "dashed") +
-        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   fill = NA, color = line_col) +
+        comp_zone_connector_layers(color = line_col) +
+        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                  fill = NA, color = line_col, linewidth = 1.15) +
         zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df,
@@ -16825,7 +16856,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           p <- ggplot() +
             geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
             geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                      inherit.aes = FALSE, fill = NA, color = line_col) +
+                      inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
             geom_rect(data = green_box,
                       aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                       inherit.aes = FALSE,
@@ -16887,9 +16918,10 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       p <- ggplot() +
         geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
         geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                  inherit.aes = FALSE, fill = NA, color = line_col, linetype = "dashed") +
-        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                   inherit.aes = FALSE, fill = NA, color = line_col) +
+        comp_zone_connector_layers(color = line_col) +
+        geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                  inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
         zone_nine_square_layers(color = line_col) +
         ggiraph::geom_point_interactive(
           data = df_other,
@@ -20662,7 +20694,7 @@ custom_reports_server <- function(id) {
             p <- ggplot() +
               geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
               geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                        inherit.aes = FALSE, fill = NA, color = line_col) +
+                        inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
               geom_rect(data = green_box,
                         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                         inherit.aes = FALSE,
@@ -20721,9 +20753,10 @@ custom_reports_server <- function(id) {
             p <- ggplot() +
               geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
               geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                        fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
-              geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                         fill = NA, color = line_col, inherit.aes = FALSE) +
+              comp_zone_connector_layers(color = line_col) +
+              geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                        fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
               zone_nine_square_layers(color = line_col) +
               ggiraph::geom_point_interactive(
                 data = df_other,
@@ -26844,9 +26877,10 @@ deg_to_clock <- function(x) {
     p <- ggplot() +
       geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
-      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 inherit.aes = FALSE, fill = NA, color = line_col) +
+      comp_zone_connector_layers(color = line_col) +
+      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
       zone_nine_square_layers(color = line_col) +
       coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(0, 4.5)) +
       theme_void() +
@@ -31691,9 +31725,10 @@ deg_to_clock <- function(x) {
     p <- ggplot() +
       geom_polygon(data = home, aes(x, y), inherit.aes = FALSE, fill = NA, color = line_col) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                inherit.aes = FALSE, fill = NA, linetype = "dashed", color = line_col) +
-      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 inherit.aes = FALSE, fill = NA, color = line_col) +
+      comp_zone_connector_layers(color = line_col) +
+      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 1.15) +
       zone_nine_square_layers(color = line_col) +
       
       # filled circles for "no result" rows
@@ -34760,10 +34795,10 @@ deg_to_clock <- function(x) {
     c(list(
       geom_polygon(data = home, aes(x, y), fill = NA, color = color),
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = color, linetype = "dashed"),
+                fill = NA, color = color),
       geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = color)
-    ), zone_nine_square_layers(color = color))
+                fill = NA, color = color, linewidth = 1.15)
+    ), comp_zone_connector_layers(color = color), zone_nine_square_layers(color = color))
   }
   
   # All game dates where the selected pitcher has ≥1 completed PA (across any batters)
@@ -36777,9 +36812,10 @@ deg_to_clock <- function(x) {
     p <- ggplot() +
       geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
-      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = line_col, inherit.aes = FALSE) +
+      comp_zone_connector_layers(color = line_col) +
+      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
       zone_nine_square_layers(color = line_col) +
       
       ggiraph::geom_point_interactive(
@@ -36962,9 +36998,10 @@ deg_to_clock <- function(x) {
     p <- ggplot() +
       geom_polygon(data = home, aes(x, y), fill = NA, color = line_col) +
       geom_rect(data = cz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
-                fill = NA, color = line_col, linetype = "dashed") +
-      geom_rect(data = sz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
                 fill = NA, color = line_col) +
+      comp_zone_connector_layers(color = line_col) +
+      geom_rect(data = sz, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax),
+                fill = NA, color = line_col, linewidth = 1.15) +
       zone_nine_square_layers(color = line_col) +
       
       # visible points (unknown result as solid circle)
@@ -39612,9 +39649,10 @@ deg_to_clock <- function(x) {
     p <- ggplot() +
       geom_polygon(data = home, aes(x, y), fill = NA, color = line_col, inherit.aes = FALSE) +
       geom_rect(data = cz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-                fill = NA, color = line_col, linetype = "dashed", inherit.aes = FALSE) +
-      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = NA, color = line_col, inherit.aes = FALSE) +
+      comp_zone_connector_layers(color = line_col) +
+      geom_rect(data = sz, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                fill = NA, color = line_col, linewidth = 1.15, inherit.aes = FALSE) +
       zone_nine_square_layers(color = line_col) +
       
       ggiraph::geom_point_interactive(
