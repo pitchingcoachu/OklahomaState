@@ -19877,7 +19877,7 @@ custom_reports_server <- function(id) {
                                              choices = if (identical(input$report_type, "Pitching")) {
                                                c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Velocity Chart", "Pitch Usage Pie Chart", "Pitch Usage Bar Chart", "Velocity Bar Chart", "Velocity Distribution", "Summary Table", "Spray Chart", "Note Section")
                                              } else {
-                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Swing Data", "Summary Table", "Spray Chart", "Note Section")
+                                               c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "2D Contact", "3D Contact", "Horizontal Attack", "Vertical Attack", "Bat Speed", "EV and LA", "Summary Table", "Spray Chart", "Note Section")
                                              },
                                              selected = info$sel$type),
                                  {
@@ -19954,90 +19954,77 @@ custom_reports_server <- function(id) {
                                    )
                                  ),
                                  conditionalPanel(
-                                   condition = sprintf("input['%s'] == 'Swing Data' && input['%s'] == 'Hitting'",
-                                                       ns(paste0("cell_type_", info$cell_id)), ns("report_type")),
+                                   condition = sprintf("(input['%s'] == '2D Contact' || input['%s'] == '3D Contact') && input['%s'] == 'Hitting'",
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns("report_type")),
                                    tagList(
                                      selectInput(
-                                       ns(paste0("cell_swing_chart_", info$cell_id)),
-                                       "Swing Data:",
-                                       choices = c("2D Contact", "3D Contact", "Attack Angles", "Bat Speed", "EV and LA"),
-                                       selected = info$sel$swing_chart %||% "2D Contact"
+                                       ns(paste0("cell_swing_contact_mode_", info$cell_id)),
+                                       "Display:",
+                                       choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
+                                       selected = info$sel$swing_contact_mode %||% "individual"
+                                     ),
+                                     selectInput(
+                                       ns(paste0("cell_swing_contact_color_by_", info$cell_id)),
+                                       "Color By:",
+                                       choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
+                                       selected = info$sel$swing_contact_color_by %||% "pitch_type"
+                                     )
+                                   )
+                                 ),
+                                 conditionalPanel(
+                                   condition = sprintf("(input['%s'] == 'Horizontal Attack' || input['%s'] == 'Vertical Attack') && input['%s'] == 'Hitting'",
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns("report_type")),
+                                   tagList(
+                                     selectInput(
+                                       ns(paste0("cell_swing_attack_scope_", info$cell_id)),
+                                       "Display:",
+                                       choices = c("Average" = "average", "Individual Pitch" = "pitch"),
+                                       selected = info$sel$swing_attack_scope %||% "average"
                                      ),
                                      conditionalPanel(
-                                       condition = sprintf("input['%s'] == '2D Contact' || input['%s'] == '3D Contact'",
-                                                           ns(paste0("cell_swing_chart_", info$cell_id)),
-                                                           ns(paste0("cell_swing_chart_", info$cell_id))),
-                                       tagList(
-                                         selectInput(
-                                           ns(paste0("cell_swing_contact_mode_", info$cell_id)),
-                                           "Display:",
-                                           choices = c("Individual Pitches" = "individual", "Average by Pitch Type" = "average_pitch_type"),
-                                           selected = info$sel$swing_contact_mode %||% "individual"
-                                         ),
-                                         selectInput(
-                                           ns(paste0("cell_swing_contact_color_by_", info$cell_id)),
-                                           "Color By:",
-                                           choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
-                                           selected = info$sel$swing_contact_color_by %||% "pitch_type"
-                                         )
-                                       )
-                                     ),
-                                     conditionalPanel(
-                                       condition = sprintf("input['%s'] == 'Attack Angles'",
-                                                           ns(paste0("cell_swing_chart_", info$cell_id))),
-                                       tagList(
-                                         selectInput(
-                                           ns(paste0("cell_swing_attack_view_", info$cell_id)),
-                                           "Angle View:",
-                                           choices = c("Horizontal Attack", "Vertical Attack"),
-                                           selected = info$sel$swing_attack_view %||% "Horizontal Attack"
-                                         ),
-                                         selectInput(
-                                           ns(paste0("cell_swing_attack_scope_", info$cell_id)),
-                                           "Display:",
-                                           choices = c("Average" = "average", "Individual Pitch" = "pitch"),
-                                           selected = info$sel$swing_attack_scope %||% "average"
-                                         ),
-                                         conditionalPanel(
-                                           condition = sprintf("input['%s'] == 'pitch'",
-                                                               ns(paste0("cell_swing_attack_scope_", info$cell_id))),
-                                           selectInput(
-                                             ns(paste0("cell_swing_attack_pitch_", info$cell_id)),
-                                             "Pitch:",
-                                             choices = c("No pitches available" = ""),
-                                             selected = ""
-                                           )
-                                         )
-                                       )
-                                     ),
-                                     conditionalPanel(
-                                       condition = sprintf("input['%s'] == 'Bat Speed'",
-                                                           ns(paste0("cell_swing_chart_", info$cell_id))),
-                                       tagList(
-                                         selectInput(
-                                           ns(paste0("cell_swing_batspeed_mode_", info$cell_id)),
-                                           "Display:",
-                                           choices = c("Average" = "average", "Individual Pitches" = "individual"),
-                                           selected = info$sel$swing_batspeed_mode %||% "average"
-                                         ),
-                                         selectInput(
-                                           ns(paste0("cell_swing_batspeed_color_by_", info$cell_id)),
-                                           "Color By:",
-                                           choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
-                                           selected = info$sel$swing_batspeed_color_by %||% "pitch_type"
-                                         )
-                                       )
-                                     ),
-                                     conditionalPanel(
-                                       condition = sprintf("input['%s'] == 'EV and LA'",
-                                                           ns(paste0("cell_swing_chart_", info$cell_id))),
+                                       condition = sprintf("input['%s'] == 'pitch'",
+                                                           ns(paste0("cell_swing_attack_scope_", info$cell_id))),
                                        selectInput(
-                                         ns(paste0("cell_swing_evla_color_by_", info$cell_id)),
-                                         "Color By:",
-                                         choices = c("Result" = "result", "Pitch Type" = "pitch_type"),
-                                         selected = info$sel$swing_evla_color_by %||% "result"
+                                         ns(paste0("cell_swing_attack_pitch_", info$cell_id)),
+                                         "Pitch:",
+                                         choices = c("No pitches available" = ""),
+                                         selected = ""
                                        )
                                      )
+                                   )
+                                 ),
+                                 conditionalPanel(
+                                   condition = sprintf("input['%s'] == 'Bat Speed' && input['%s'] == 'Hitting'",
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns("report_type")),
+                                   tagList(
+                                     selectInput(
+                                       ns(paste0("cell_swing_batspeed_mode_", info$cell_id)),
+                                       "Display:",
+                                       choices = c("Average" = "average", "Individual Pitches" = "individual"),
+                                       selected = info$sel$swing_batspeed_mode %||% "average"
+                                     ),
+                                     selectInput(
+                                       ns(paste0("cell_swing_batspeed_color_by_", info$cell_id)),
+                                       "Color By:",
+                                       choices = c("Pitch Type" = "pitch_type", "Exit Velocity" = "exit_velocity", "Result" = "result"),
+                                       selected = info$sel$swing_batspeed_color_by %||% "pitch_type"
+                                     )
+                                   )
+                                 ),
+                                 conditionalPanel(
+                                   condition = sprintf("input['%s'] == 'EV and LA' && input['%s'] == 'Hitting'",
+                                                       ns(paste0("cell_type_", info$cell_id)),
+                                                       ns("report_type")),
+                                   selectInput(
+                                     ns(paste0("cell_swing_evla_color_by_", info$cell_id)),
+                                     "Color By:",
+                                     choices = c("Result" = "result", "Pitch Type" = "pitch_type"),
+                                     selected = info$sel$swing_evla_color_by %||% "result"
                                    )
                                  ),
                                  conditionalPanel(
@@ -20583,8 +20570,16 @@ custom_reports_server <- function(id) {
         output[[out_id]] <- renderUI({ div("No data") })
         return(uiOutput(ns(out_id)))
       }
-      if (tsel == "Swing Data" && identical(input$report_type, "Hitting")) {
-        chart_sel <- input[[paste0("cell_swing_chart_", settings_cell_id)]] %||% "2D Contact"
+      if (tsel %in% c("Swing Data", "2D Contact", "3D Contact", "Horizontal Attack", "Vertical Attack", "Bat Speed", "EV and LA") &&
+          identical(input$report_type, "Hitting")) {
+        chart_sel <- if (tsel == "Swing Data") {
+          # Backward compatibility for previously saved reports.
+          input[[paste0("cell_swing_chart_", settings_cell_id)]] %||% "2D Contact"
+        } else if (tsel %in% c("Horizontal Attack", "Vertical Attack")) {
+          "Attack Angles"
+        } else {
+          tsel
+        }
         dark_on <- is_dark_mode_local()
         cols <- colors_for_mode(dark_on)
         text_col <- if (dark_on) "#e5e7eb" else "#111827"
@@ -20879,7 +20874,11 @@ custom_reports_server <- function(id) {
           })
           return(plotly::plotlyOutput(ns(out_id), height = "420px"))
         } else if (identical(chart_sel, "Attack Angles")) {
-          view_type <- input[[paste0("cell_swing_attack_view_", settings_cell_id)]] %||% "Horizontal Attack"
+          view_type <- if (tsel %in% c("Horizontal Attack", "Vertical Attack")) {
+            tsel
+          } else {
+            input[[paste0("cell_swing_attack_view_", settings_cell_id)]] %||% "Horizontal Attack"
+          }
           scope <- input[[paste0("cell_swing_attack_scope_", settings_cell_id)]] %||% "average"
           df_a <- df_sd %>%
             dplyr::filter(
