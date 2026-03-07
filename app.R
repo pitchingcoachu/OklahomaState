@@ -10741,18 +10741,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
       guide_df$ly <- 0.88 * guide_df$y
       guide_df$lab <- paste0(guide_df$ang, "°")
       mph_df <- data.frame(
-        x = c(0, 1.13, 0),
+        x = c(0, 1.20, 0),
         y = c(1.13, 0, -1.13),
         lab = rep("120 MPH", 3),
         stringsAsFactors = FALSE
       )
-      # Minimal hitter silhouette near the 0° / 0 EV origin.
-      sil_head <- data.frame(x = -0.23, y = 0.11)
-      sil_torso <- data.frame(x = c(-0.23, -0.23), y = c(0.03, 0.09))
-      sil_leg1 <- data.frame(x = c(-0.23, -0.18), y = c(0.03, -0.06))
-      sil_leg2 <- data.frame(x = c(-0.23, -0.28), y = c(0.03, -0.05))
-      sil_arm <- data.frame(x = c(-0.23, -0.14), y = c(0.07, 0.02))
-      sil_bat <- data.frame(x = c(-0.14, 0.02), y = c(0.02, 0.00))
       
       p <- ggplot() +
         geom_polygon(data = rbind(data.frame(x = 0, y = -1), semi[, c("x", "y")], data.frame(x = 0, y = 1)),
@@ -10763,12 +10756,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         geom_text(data = guide_df, aes(x = lx, y = ly, label = lab),
                   color = text_col, size = 4, alpha = 0.85) +
         geom_text(data = mph_df, aes(x = x, y = y, label = lab), color = text_col, size = 4.2, fontface = "bold") +
-        geom_segment(data = sil_torso, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]), linewidth = 2.3, color = guide_col, alpha = 0.75) +
-        geom_segment(data = sil_leg1, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]), linewidth = 2.0, color = guide_col, alpha = 0.75) +
-        geom_segment(data = sil_leg2, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]), linewidth = 2.0, color = guide_col, alpha = 0.75) +
-        geom_segment(data = sil_arm, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]), linewidth = 1.8, color = guide_col, alpha = 0.75) +
-        geom_segment(data = sil_bat, aes(x = x[1], y = y[1], xend = x[2], yend = y[2]), linewidth = 2.2, color = guide_col, alpha = 0.9) +
-        geom_point(data = sil_head, aes(x, y), size = 3.2, color = guide_col, alpha = 0.75) +
         ggiraph::geom_point_interactive(
           data = df,
           aes(x, y, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
@@ -10776,7 +10763,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         ) +
         scale_color_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
         scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
-        coord_fixed(xlim = c(-0.32, 1.24), ylim = c(-1.2, 1.2)) +
+        coord_fixed(xlim = c(-0.02, 1.28), ylim = c(-1.2, 1.2)) +
         theme_void() +
         theme(
           plot.background = element_rect(fill = "transparent", color = NA),
