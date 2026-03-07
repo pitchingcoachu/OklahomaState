@@ -9483,6 +9483,9 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     output$heatmapsPitchPlot <- ggiraph::renderGirafe({
       req(input$hmChartType == "Pitch")
       df <- filtered_hit(); if (!nrow(df)) return(NULL)
+      dark_on <- is_dark_mode()
+      cols <- colors_for_mode(dark_on)
+      line_col <- if (dark_on) "#ffffff" else "black"
       
       types <- intersect(names(all_colors), as.character(unique(df$TaggedPitchType)))
       types_chr <- as.character(types)
