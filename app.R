@@ -20894,7 +20894,7 @@ custom_reports_server <- function(id) {
               pitch_id = as.character(.attack_row_id),
               pitch_label = paste0(
                 "#", .attack_row_id, " | ",
-                format(Date, "%m/%d/%y"), " | ",
+                if ("Date" %in% names(.)) format(as.Date(Date), "%m/%d/%y") else "Date N/A", " | ",
                 dplyr::coalesce(TaggedPitchType, "—"),
                 " | VAA ", sprintf("%.1f", VerticalAttackAngle),
                 " | HAA ", sprintf("%.1f", HorizontalAttackAngle)
@@ -20903,7 +20903,9 @@ custom_reports_server <- function(id) {
           choices <- stats::setNames(df_a$pitch_id, df_a$pitch_label)
           cur <- input[[paste0("cell_swing_attack_pitch_", settings_cell_id)]] %||% ""
           sel_pitch <- if (!is.null(cur) && nzchar(cur) && cur %in% df_a$pitch_id) cur else df_a$pitch_id[[1]]
-          updateSelectInput(session, paste0("cell_swing_attack_pitch_", settings_cell_id), choices = choices, selected = sel_pitch)
+          if (is.null(cur) || !nzchar(cur) || !(cur %in% df_a$pitch_id)) {
+            updateSelectInput(session, paste0("cell_swing_attack_pitch_", settings_cell_id), choices = choices, selected = sel_pitch)
+          }
           row <- if (identical(scope, "pitch")) {
             one <- df_a[df_a$pitch_id == sel_pitch, , drop = FALSE]
             if (!nrow(one)) df_a[1, , drop = FALSE] else one[1, , drop = FALSE]
@@ -21112,8 +21114,8 @@ custom_reports_server <- function(id) {
           })
           return(plotOutput(ns(out_id), height = "420px"))
         } else if (identical(chart_sel, "Bat Speed")) {
-          mode_bs <- input[[paste0("cell_swing_batspeed_mode_", settings_cell_id)]] %||% "average"
-          color_by <- input[[paste0("cell_swing_batspeed_color_by_", settings_cell_id)]] %||% "pitch_type"
+          mode_bs <- "individual"
+          color_by <- "exit_velocity"
           dfb <- df_sd %>% dplyr::filter(is.finite(BatSpeed))
           if (!nrow(dfb)) {
             output[[out_id]] <- renderUI({ div("No bat-speed data for current filters") })
@@ -21138,6 +21140,14 @@ custom_reports_server <- function(id) {
               x = arc$x[-nrow(arc)], y = arc$y[-nrow(arc)],
               xend = arc$x[-1], yend = arc$y[-1], col = blend_cols
             )
+            ticks <- seq(speed_min, speed_max, by = 5)
+            tick_df <- data.frame(
+              s = ticks,
+              t = to_theta(ticks)
+            )
+            tick_df$x1 <- 0.88 * cos(tick_df$t); tick_df$y1 <- 0.88 * sin(tick_df$t)
+            tick_df$x2 <- 1.00 * cos(tick_df$t); tick_df$y2 <- 1.00 * sin(tick_df$t)
+            tick_df$xl <- 1.10 * cos(tick_df$t); tick_df$yl <- 1.10 * sin(tick_df$t)
             avg_bs <- mean(dfb$BatSpeed, na.rm = TRUE)
             avg_ev <- mean(dfb$ExitSpeed, na.rm = TRUE)
             avg_la <- mean(dfb$Angle, na.rm = TRUE)
@@ -21148,6 +21158,8 @@ custom_reports_server <- function(id) {
               annotate("segment", x = arc_seg$x, y = arc_seg$y, xend = arc_seg$xend, yend = arc_seg$yend,
                        color = arc_seg$col, linewidth = 15, lineend = "round") +
               geom_path(data = arc, aes(x, y), linewidth = 2.0, color = if (dark_on) "#475569" else "#9ca3af") +
+              geom_segment(data = tick_df, aes(x = x1, y = y1, xend = x2, yend = y2), linewidth = 0.8, color = text_col, alpha = 0.6) +
+              geom_text(data = tick_df, aes(x = xl, y = yl, label = s), color = text_col, size = 3.5, fontface = "bold") +
               geom_segment(aes(x = 0, y = 0, xend = 0.86 * cos(ref_t), yend = 0.86 * sin(ref_t)),
                            linewidth = 1.2, color = "#64748b", linetype = "dashed") +
               geom_segment(aes(x = 0, y = 0, xend = 0.86 * cos(avg_t), yend = 0.86 * sin(avg_t)),
@@ -21161,35 +21173,36 @@ custom_reports_server <- function(id) {
                        ),
                        color = text_col, fontface = "bold", size = 5.5) +
               theme_void()
-            if (!identical(mode_bs, "average")) {
-              dfb2 <- dfb %>%
-                dplyr::mutate(
-                  t = to_theta(BatSpeed),
-                  gx = 0.90 * cos(t),
-                  gy = 0.90 * sin(t),
-                  rid = dplyr::row_number(),
-                  tooltip = paste0(
-                    "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
-                    "Bat Speed: ", ifelse(is.finite(BatSpeed), sprintf("%.1f mph", BatSpeed), "—"), "<br>",
-                    "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f mph", ExitSpeed), "—"), "<br>",
-                    "LA: ", ifelse(is.finite(Angle), sprintf("%.1f°", Angle), "—"), "<br>",
-                    "Result: ", dplyr::coalesce(ResultLabel, "—")
-                  )
+            dfb2 <- dfb %>%
+              dplyr::mutate(
+                t = to_theta(BatSpeed),
+                gx = 0.90 * cos(t),
+                gy = 0.90 * sin(t),
+                rid = dplyr::row_number(),
+                tooltip = paste0(
+                  "<b>", dplyr::coalesce(TaggedPitchType, "—"), "</b><br>",
+                  "Bat Speed: ", ifelse(is.finite(BatSpeed), sprintf("%.1f mph", BatSpeed), "—"), "<br>",
+                  "EV: ", ifelse(is.finite(ExitSpeed), sprintf("%.1f mph", ExitSpeed), "—"), "<br>",
+                  "LA: ", ifelse(is.finite(Angle), sprintf("%.1f°", Angle), "—"), "<br>",
+                  "Result: ", dplyr::coalesce(ResultLabel, "—")
                 )
-              p <- p +
-                ggiraph::geom_point_interactive(
-                  data = dfb2,
-                  aes(gx, gy, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
-                  shape = 21, size = 3.0, stroke = 0.4, alpha = 0.95
-                ) +
-                scale_color_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
-                scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none")
-            }
+              )
+            p <- p +
+              ggiraph::geom_point_interactive(
+                data = dfb2,
+                aes(gx, gy, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
+                shape = 21, size = 3.0, stroke = 0.4, alpha = 0.95
+              ) +
+              scale_color_manual(values = pal, limits = names(pal), drop = FALSE, name = "Exit Velocity") +
+              scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, name = "Exit Velocity")
             p <- p +
               coord_fixed(xlim = c(-1.25, 1.25), ylim = c(-0.05, 1.55)) +
               theme(
                 plot.background = element_rect(fill = "transparent", color = NA),
-                panel.background = element_rect(fill = "transparent", color = NA)
+                panel.background = element_rect(fill = "transparent", color = NA),
+                legend.position = "right",
+                legend.title = element_text(color = text_col, face = "bold"),
+                legend.text = element_text(color = text_col)
               )
             girafe_transparent(
               ggobj = p,
