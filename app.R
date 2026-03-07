@@ -20903,7 +20903,7 @@ custom_reports_server <- function(id) {
           choices <- stats::setNames(df_a$pitch_id, df_a$pitch_label)
           cur <- input[[paste0("cell_swing_attack_pitch_", settings_cell_id)]] %||% ""
           sel_pitch <- if (!is.null(cur) && nzchar(cur) && cur %in% df_a$pitch_id) cur else df_a$pitch_id[[1]]
-          if (is.null(cur) || !nzchar(cur) || !(cur %in% df_a$pitch_id)) {
+          if (identical(scope, "pitch") && (is.null(cur) || !nzchar(cur) || !(cur %in% df_a$pitch_id))) {
             updateSelectInput(session, paste0("cell_swing_attack_pitch_", settings_cell_id), choices = choices, selected = sel_pitch)
           }
           row <- if (identical(scope, "pitch")) {
