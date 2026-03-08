@@ -3098,7 +3098,18 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
         dom           = "Bfrtip",
         buttons       = list(
           "pageLength",
-          list(extend = "colvis", text = "Columns", columns = colvis_idx, postfixButtons = list("colvisRestore"))
+          list(extend = "colvis", text = "Columns", columns = colvis_idx, postfixButtons = list("colvisRestore")),
+          list(
+            text = "Scatter Chart",
+            action = DT::JS(
+              "function(e, dt, node, config) {",
+              "  if (window.PCUScatter && typeof window.PCUScatter.start === 'function') {",
+              "    var tableId = $(dt.table().node()).attr('id') || '';",
+              "    window.PCUScatter.start(dt, tableId);",
+              "  }",
+              "}"
+            )
+          )
         ),
         ordering      = TRUE,
         orderMulti    = TRUE,
@@ -21087,6 +21098,12 @@ custom_reports_server <- function(id) {
                 x = c(0.0, tip_dir, 0.0, -tip_dir, 0.0),
                 y = c(0.28, 0.35, 0.42, 0.35, 0.28)
               )
+              x_pad <- 0.7
+              y_pad <- 0.45
+              x_lo <- min(-1.8, x0, x_dash, x_arr) - x_pad
+              x_hi <- max(3.2, x0, x_dash, x_arr) + x_pad
+              y_lo <- 0
+              y_hi <- max(4.0, y0, y_dash, y_arr) + y_pad
               ggplot() +
                 geom_polygon(data = lower_box, aes(x, y), fill = NA, color = line_col, linewidth = 0.8) +
                 geom_polygon(data = upper_box, aes(x, y), fill = NA, color = line_col, linewidth = 0.8) +
@@ -21096,8 +21113,8 @@ custom_reports_server <- function(id) {
                 geom_segment(aes(x = x0, y = y0, xend = x_dash, yend = y_dash), linewidth = 1.2, color = "#64748b", linetype = "dashed") +
                 geom_segment(aes(x = x0, y = y0, xend = x_arr, yend = y_arr), linewidth = 1.8, color = "#ef4444",
                              arrow = grid::arrow(length = grid::unit(0.13, "inches"), type = "closed")) +
-                scale_x_continuous(limits = c(-1.8, 3.2), breaks = seq(-1, 3, 1)) +
-                scale_y_continuous(limits = c(0, 4.0), breaks = seq(0, 4, 1)) +
+                scale_x_continuous(limits = c(x_lo, x_hi), breaks = pretty(c(x_lo, x_hi), n = 6)) +
+                scale_y_continuous(limits = c(y_lo, y_hi), breaks = pretty(c(y_lo, y_hi), n = 6)) +
                 coord_fixed() +
                 labs(
                   x = "Forward (ft)", y = "Height (ft)",
@@ -26435,6 +26452,190 @@ ui <- tagList(
       color: #0a58ca !important;
     }
   ", accent_color, accent_secondary_color, background_color, background_secondary_color))),
+  tags$script(HTML("
+    (function() {
+      function ensureModal() {
+        if (document.getElementById('pcu-scatter-modal')) return;
+        var html = '' +
+          '<div id=\"pcu-scatter-modal\" style=\"display:none; position:fixed; inset:0; z-index:30000; background:rgba(0,0,0,.55);\">' +
+            '<div style=\"position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(96vw,1100px); height:min(92vh,820px); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.35); display:flex; flex-direction:column; overflow:hidden;\">' +
+              '<div style=\"display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #e5e7eb;\">' +
+                '<div style=\"font-weight:700; font-size:18px;\">Scatter Chart Builder</div>' +
+                '<button id=\"pcu-scatter-close\" type=\"button\" style=\"border:none; background:transparent; font-size:20px; line-height:1; cursor:pointer;\">&times;</button>' +
+              '</div>' +
+              '<div style=\"padding:10px 14px; border-bottom:1px solid #e5e7eb; font-size:14px;\" id=\"pcu-scatter-status\">Click one column header for X, then one for Y.</div>' +
+              '<div style=\"padding:8px 14px; display:flex; gap:8px; align-items:center; border-bottom:1px solid #e5e7eb;\">' +
+                '<button id=\"pcu-scatter-reset\" type=\"button\" class=\"btn btn-default btn-sm\">Reset</button>' +
+                '<span id=\"pcu-scatter-picked\" style=\"font-size:13px; color:#475569;\"></span>' +
+              '</div>' +
+              '<div id=\"pcu-scatter-plot\" style=\"flex:1 1 auto;\"></div>' +
+            '</div>' +
+          '</div>';
+        document.body.insertAdjacentHTML('beforeend', html);
+        document.getElementById('pcu-scatter-close').addEventListener('click', function(){ window.PCUScatter.close(); });
+        document.getElementById('pcu-scatter-reset').addEventListener('click', function(){ window.PCUScatter.reset(); });
+      }
+
+      function parseNum(v) {
+        if (v === null || v === undefined) return NaN;
+        if (typeof v === 'number') return isFinite(v) ? v : NaN;
+        var s = String(v).trim();
+        if (!s) return NaN;
+        var isPct = s.indexOf('%') >= 0;
+        s = s.replace(/,/g, '').replace(/[^0-9eE+\\-\\.]/g, '');
+        if (!s) return NaN;
+        var n = Number(s);
+        if (!isFinite(n)) return NaN;
+        if (isPct) n = n / 100;
+        return n;
+      }
+
+      function linReg(xs, ys) {
+        var n = xs.length;
+        if (n < 2) return null;
+        var sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+        for (var i = 0; i < n; i++) {
+          sumX += xs[i]; sumY += ys[i];
+          sumXX += xs[i] * xs[i];
+          sumXY += xs[i] * ys[i];
+        }
+        var den = (n * sumXX - sumX * sumX);
+        if (den === 0) return null;
+        var slope = (n * sumXY - sumX * sumY) / den;
+        var intercept = (sumY - slope * sumX) / n;
+        var yMean = sumY / n;
+        var ssTot = 0, ssRes = 0;
+        for (var j = 0; j < n; j++) {
+          var fit = slope * xs[j] + intercept;
+          ssTot += Math.pow(ys[j] - yMean, 2);
+          ssRes += Math.pow(ys[j] - fit, 2);
+        }
+        var r2 = ssTot > 0 ? (1 - ssRes / ssTot) : NaN;
+        return { slope: slope, intercept: intercept, r2: r2 };
+      }
+
+      window.PCUScatter = {
+        active: null,
+        selected: [],
+        start: function(dtApi, tableId) {
+          ensureModal();
+          this.active = { dt: dtApi, id: tableId };
+          this.selected = [];
+          this.bindHeaders();
+          document.getElementById('pcu-scatter-modal').style.display = 'block';
+          document.getElementById('pcu-scatter-status').textContent = 'Click one column header for X, then one for Y.';
+          document.getElementById('pcu-scatter-picked').textContent = '';
+          if (window.Plotly) {
+            Plotly.purge('pcu-scatter-plot');
+            Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+          }
+        },
+        bindHeaders: function() {
+          if (!this.active || !this.active.dt) return;
+          var self = this;
+          var $th = $(this.active.dt.table().header()).find('th');
+          $th.css('cursor', 'crosshair');
+          $th.off('click.pcuScatter').on('click.pcuScatter', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var idx = $(this).index();
+            var name = $(this).text().trim();
+            if (!name) return;
+            self.pick(idx, name);
+            return false;
+          });
+        },
+        clearHeaderBindings: function() {
+          if (!this.active || !this.active.dt) return;
+          var $th = $(this.active.dt.table().header()).find('th');
+          $th.off('click.pcuScatter');
+          $th.css('cursor', '');
+        },
+        pick: function(idx, name) {
+          if (this.selected.length === 0) {
+            this.selected = [{ idx: idx, name: name }];
+            document.getElementById('pcu-scatter-status').textContent = 'Now click a second column header for Y.';
+            document.getElementById('pcu-scatter-picked').textContent = 'X: ' + name;
+            return;
+          }
+          if (this.selected.length === 1) {
+            this.selected.push({ idx: idx, name: name });
+            this.render();
+            return;
+          }
+          this.selected = [{ idx: idx, name: name }];
+          document.getElementById('pcu-scatter-status').textContent = 'Now click a second column header for Y.';
+          document.getElementById('pcu-scatter-picked').textContent = 'X: ' + name;
+        },
+        render: function() {
+          if (!this.active || !this.active.dt || this.selected.length < 2 || !window.Plotly) return;
+          var xMeta = this.selected[0], yMeta = this.selected[1];
+          var rows = this.active.dt.rows({ search: 'applied' }).data().toArray();
+          var xs = [], ys = [];
+          for (var i = 0; i < rows.length; i++) {
+            var xv = parseNum(rows[i][xMeta.idx]);
+            var yv = parseNum(rows[i][yMeta.idx]);
+            if (isFinite(xv) && isFinite(yv)) {
+              xs.push(xv); ys.push(yv);
+            }
+          }
+          document.getElementById('pcu-scatter-picked').textContent = 'X: ' + xMeta.name + '   Y: ' + yMeta.name;
+          if (xs.length < 2) {
+            Plotly.newPlot('pcu-scatter-plot', [], {
+              paper_bgcolor:'#fff', plot_bgcolor:'#fff',
+              xaxis:{title:xMeta.name}, yaxis:{title:yMeta.name},
+              annotations:[{text:'Not enough numeric data points for selected columns', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]
+            }, {displayModeBar:true, responsive:true});
+            return;
+          }
+          var fit = linReg(xs, ys);
+          var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
+          var y1 = fit ? fit.slope * xMin + fit.intercept : null;
+          var y2 = fit ? fit.slope * xMax + fit.intercept : null;
+          var traces = [{
+            x: xs, y: ys, mode: 'markers', type: 'scatter',
+            marker: {size: 8, color: '#1f77b4', opacity: 0.82},
+            name: 'Data'
+          }];
+          if (fit) {
+            traces.push({
+              x: [xMin, xMax], y: [y1, y2], mode: 'lines', type: 'scatter',
+              line: {color: '#ef4444', width: 2},
+              name: 'Trendline'
+            });
+          }
+          Plotly.newPlot('pcu-scatter-plot', traces, {
+            paper_bgcolor:'#fff',
+            plot_bgcolor:'#fff',
+            margin:{l:60,r:20,t:20,b:60},
+            xaxis:{title:xMeta.name},
+            yaxis:{title:yMeta.name},
+            annotations: fit ? [{
+              x: 0.99, y: 0.02, xref: 'paper', yref: 'paper',
+              text: 'R² = ' + (isFinite(fit.r2) ? fit.r2.toFixed(3) : 'NA'),
+              showarrow: false, xanchor:'right', yanchor:'bottom',
+              font: {size: 13, color: '#111827'}
+            }] : []
+          }, {displayModeBar:true, responsive:true});
+        },
+        reset: function() {
+          this.selected = [];
+          document.getElementById('pcu-scatter-status').textContent = 'Click one column header for X, then one for Y.';
+          document.getElementById('pcu-scatter-picked').textContent = '';
+          if (window.Plotly) {
+            Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+          }
+        },
+        close: function() {
+          this.clearHeaderBindings();
+          this.active = null;
+          this.selected = [];
+          var m = document.getElementById('pcu-scatter-modal');
+          if (m) m.style.display = 'none';
+        }
+      };
+    })();
+  ")),
   # --- Floating "Add Note" button (top-right, all pages) ---
   absolutePanel(
     style = "background:transparent; border:none; box-shadow:none; z-index:2000;",
@@ -34976,9 +35177,9 @@ deg_to_clock <- function(x) {
         )
       
       # Calculate xWOBA, xISO, and Barrel% per split
-      splits <- unique(term$SplitColumn)
+      splits <- unique(df$SplitColumn)
       xstats_list <- lapply(splits, function(spl) {
-        split_df <- term[term$SplitColumn == spl, , drop = FALSE]
+        split_df <- df[df$SplitColumn == spl, , drop = FALSE]
         
         # Get BIP with EV/LA
         bip_evla <- split_df %>%
@@ -35074,7 +35275,7 @@ deg_to_clock <- function(x) {
       TB_all <- 1*H1_all + 2*H2_all + 3*H3_all + 4*HR_all
       
       # Calculate xWOBA, xISO, Barrel% for All row
-      bip_evla_all <- term %>%
+      bip_evla_all <- df %>%
         dplyr::filter(SessionType == "Live", PitchCall == "InPlay",
                       is.finite(ExitSpeed), is.finite(Angle)) %>%
         dplyr::mutate(
@@ -35102,16 +35303,16 @@ deg_to_clock <- function(x) {
         xSLG_all <- safe_div(xTB_all, AB_all)
         xISO_all <- xSLG_all - xAVG_all
         
-        PA_live_all <- sum(term$SessionType == "Live" & term$Balls == 0 & term$Strikes == 0, na.rm = TRUE)
+        PA_live_all <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
         if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
           xWOBA_all <- safe_div(W_BB*BB_all + W_1B*x1B_all + W_2B*x2B_all + W_3B*x3B_all + W_HR*xHR_all, PA_live_all)
         }
       }
       
-      barrels_all <- sum(term$SessionType == "Live" & term$PitchCall == "InPlay" &
-                           is.finite(term$ExitSpeed) & is.finite(term$Angle) &
-                           term$ExitSpeed >= 95 & term$Angle >= 10 & term$Angle <= 35, na.rm = TRUE)
-      inplay_live_all <- sum(term$SessionType == "Live" & term$PitchCall == "InPlay", na.rm = TRUE)
+      barrels_all <- sum(df$SessionType == "Live" & df$PitchCall == "InPlay" &
+                           is.finite(df$ExitSpeed) & is.finite(df$Angle) &
+                           df$ExitSpeed >= 95 & df$Angle >= 10 & df$Angle <= 35, na.rm = TRUE)
+      inplay_live_all <- sum(df$SessionType == "Live" & df$PitchCall == "InPlay", na.rm = TRUE)
       BarrelPct_all <- safe_div(barrels_all, inplay_live_all)
       
       # Create All row with dynamic column name
