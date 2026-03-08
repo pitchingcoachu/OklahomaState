@@ -20710,7 +20710,18 @@ custom_reports_server <- function(id) {
           )
           box_left <- data.frame(xmin = -1.90, xmax = -0.90, ymin = -0.45, ymax = 0.90)
           box_right <- data.frame(xmin = 0.90, xmax = 1.90, ymin = -0.45, ymax = 0.90)
+          show_leg <- color_by %in% c("exit_velocity", "result")
           output[[out_id]] <- ggiraph::renderGirafe({
+            x_min <- max(-2.2, min(df2$ContactPositionZ, na.rm = TRUE) - 0.9)
+            x_max <- min(2.2, max(df2$ContactPositionZ, na.rm = TRUE) + 0.9)
+            y_min_zoom <- max(y_min, min(df2$ContactPositionX, na.rm = TRUE) - 0.9)
+            y_max_zoom <- min(y_max, max(df2$ContactPositionX, na.rm = TRUE) + 1.0)
+            if (!is.finite(x_min) || !is.finite(x_max) || x_max <= x_min) {
+              x_min <- -1.9; x_max <- 1.9
+            }
+            if (!is.finite(y_min_zoom) || !is.finite(y_max_zoom) || y_max_zoom <= y_min_zoom) {
+              y_min_zoom <- y_min; y_max_zoom <- y_max
+            }
             p <- ggplot() +
               geom_rect(data = box_left, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                         inherit.aes = FALSE, fill = NA, color = line_col, linewidth = 0.7, alpha = 0.7) +
@@ -20722,16 +20733,18 @@ custom_reports_server <- function(id) {
                 aes(ContactPositionZ, ContactPositionX, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
                 size = 2.2, alpha = 0.92, shape = 21, stroke = 0.4
               ) +
-              scale_color_manual(values = pal, limits = names(pal), drop = FALSE, name = NULL) +
-              scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, name = NULL) +
+              scale_color_manual(values = pal, limits = names(pal), drop = FALSE, name = if (color_by == "result") "Result" else if (color_by == "exit_velocity") "Exit Velocity" else NULL, guide = if (show_leg) guide_legend(override.aes = list(size = 4)) else "none") +
+              scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, name = if (color_by == "result") "Result" else if (color_by == "exit_velocity") "Exit Velocity" else NULL, guide = if (show_leg) guide_legend(override.aes = list(size = 4)) else "none") +
               scale_y_continuous(breaks = y_breaks, limits = c(y_min, y_max), minor_breaks = NULL) +
-              coord_fixed(ratio = 1, xlim = c(-2.5, 2.5), ylim = c(y_min, y_max)) +
-              labs(x = "Side (ft)", y = "Forward (ft)") +
+              coord_fixed(ratio = 1, xlim = c(x_min, x_max), ylim = c(y_min_zoom, y_max_zoom)) +
+              labs(x = NULL, y = NULL) +
               theme_minimal(base_size = 12) +
               theme(
-                legend.position = "none",
-                axis.title = element_text(color = text_col, face = "bold"),
-                axis.text = element_text(color = text_col),
+                legend.position = if (show_leg) "right" else "none",
+                legend.title = element_text(color = text_col, face = "bold"),
+                legend.text = element_text(color = text_col),
+                axis.title = element_blank(),
+                axis.text = element_blank(),
                 axis.ticks = element_blank(),
                 panel.grid.major = element_blank(),
                 panel.grid.minor = element_blank(),
@@ -20748,7 +20761,7 @@ custom_reports_server <- function(id) {
               )
             )
           })
-          return(ggiraph::girafeOutput(ns(out_id), height = "380px"))
+          return(ggiraph::girafeOutput(ns(out_id), height = "460px"))
         } else if (identical(chart_sel, "3D Contact")) {
           mode_3d <- input[[paste0("cell_swing_contact_mode_", settings_cell_id)]] %||% "individual"
           color_by <- input[[paste0("cell_swing_contact_color_by_", settings_cell_id)]] %||% "pitch_type"
@@ -20805,6 +20818,7 @@ custom_reports_server <- function(id) {
             zone_h2 <- data.frame(x = zone_x, y = c(zone_left, zone_right), z = zone_bottom + 2 * zone_dy)
             
             p3 <- plotly::plot_ly()
+            show_leg_3d <- color_by %in% c("exit_velocity", "result")
             for (grp in names(pal)) {
               dpt <- df3[df3$ColorGroup == grp, , drop = FALSE]
               p3 <- p3 %>%
@@ -20815,7 +20829,8 @@ custom_reports_server <- function(id) {
                   name = grp,
                   marker = list(size = 4.5, color = unname(pal[[grp]]), opacity = 0.88),
                   text = ~hover_txt,
-                  hoverinfo = "text"
+                  hoverinfo = "text",
+                  showlegend = show_leg_3d
                 )
             }
             p3 %>%
@@ -21066,11 +21081,11 @@ custom_reports_server <- function(id) {
               x_arr <- x0 + sgn * a_len * cos(t)
               y_arr <- y0 + a_len * sin(t)
               lower_box <- data.frame(x = c(-1.2, 1.2, 0.95, -0.95, -1.2), y = c(0.0, 0.0, 0.20, 0.20, 0.0))
-              upper_box <- data.frame(x = c(-0.95, 0.95, 1.15, -1.15, -0.95), y = c(0.30, 0.30, 0.55, 0.55, 0.30))
+              upper_box <- data.frame(x = c(-1.05, 1.05, 1.25, -1.25, -1.05), y = c(0.48, 0.48, 0.66, 0.66, 0.48))
               tip_dir <- ifelse(bs == "left", 0.36, -0.36)
               plate <- data.frame(
                 x = c(0.0, tip_dir, 0.0, -tip_dir, 0.0),
-                y = c(0.22, 0.30, 0.38, 0.30, 0.22)
+                y = c(0.28, 0.35, 0.42, 0.35, 0.28)
               )
               ggplot() +
                 geom_polygon(data = lower_box, aes(x, y), fill = NA, color = line_col, linewidth = 0.8) +
@@ -21081,13 +21096,8 @@ custom_reports_server <- function(id) {
                 geom_segment(aes(x = x0, y = y0, xend = x_dash, yend = y_dash), linewidth = 1.2, color = "#64748b", linetype = "dashed") +
                 geom_segment(aes(x = x0, y = y0, xend = x_arr, yend = y_arr), linewidth = 1.8, color = "#ef4444",
                              arrow = grid::arrow(length = grid::unit(0.13, "inches"), type = "closed")) +
-                annotate("text", x = 0, y = 4.15,
-                         label = paste0(sprintf("%.1f", vaa), "°  |  EV ", ifelse(is.finite(row$ExitSpeed[[1]]), sprintf("%.1f", row$ExitSpeed[[1]]), "—"),
-                                        "  |  LA ", ifelse(is.finite(row$Angle[[1]]), sprintf("%.1f", row$Angle[[1]]), "—"),
-                                        if (!identical(scope, "average")) paste0("  |  ", row$ResultLabel[[1]]) else ""),
-                         color = text_col, fontface = "bold", size = 5) +
-                scale_x_continuous(limits = c(-2.2, 4.2), breaks = seq(-2, 4, 1)) +
-                scale_y_continuous(limits = c(-0.1, 4.4), breaks = seq(0, 4, 1)) +
+                scale_x_continuous(limits = c(-1.8, 3.2), breaks = seq(-1, 3, 1)) +
+                scale_y_continuous(limits = c(0, 4.0), breaks = seq(0, 4, 1)) +
                 coord_fixed() +
                 labs(
                   x = "Forward (ft)", y = "Height (ft)",
@@ -21274,11 +21284,14 @@ custom_reports_server <- function(id) {
                 aes(x, y, color = ColorGroup, fill = ColorGroup, tooltip = tooltip, data_id = rid),
                 shape = 21, size = 4.0, stroke = 0.55, alpha = 0.92
               ) +
-              scale_color_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
-              scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, guide = "none") +
+              scale_color_manual(values = pal, limits = names(pal), drop = FALSE, name = if (identical(color_by, "result")) "Result" else "Pitch Type") +
+              scale_fill_manual(values = pal, limits = names(pal), drop = FALSE, name = if (identical(color_by, "result")) "Result" else "Pitch Type") +
               coord_fixed(xlim = c(-0.02, 1.42), ylim = c(-1.2, 1.2)) +
               theme_void() +
               theme(
+                legend.position = "right",
+                legend.title = element_text(color = text_col, face = "bold"),
+                legend.text = element_text(color = text_col),
                 plot.background = element_rect(fill = "transparent", color = NA),
                 panel.background = element_rect(fill = "transparent", color = NA)
               )
