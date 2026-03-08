@@ -3122,6 +3122,7 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
       if (ncol(data) >= 2) {
         dt_buttons <- c(dt_buttons, list(
           list(
+            extend = "",
             text = "Scatter Chart",
             action = DT::JS("function(e, dt, node, config){ if(window.PCUScatter && typeof window.PCUScatter.start==='function'){ var tableId=$(dt.table().node()).attr('id')||''; window.PCUScatter.start(dt, tableId);} }")
           )
