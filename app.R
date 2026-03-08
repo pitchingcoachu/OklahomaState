@@ -6842,6 +6842,19 @@ safe_pct <- function(num, den) {
   fmt_pct_ratio(num, den, digits = 1)
 }
 
+# Format numeric vectors as percent strings.
+# Values in [0, ~1.5] are treated as rates and scaled by 100.
+pctify <- function(x, digits = 1) {
+  v <- suppressWarnings(as.numeric(x))
+  if (!length(v)) return(character(0))
+  if (!any(is.finite(v))) return(rep("", length(v)))
+  scale100 <- if (all(is.na(v) | v <= 1.5, na.rm = TRUE)) 100 else 1
+  out <- rep("", length(v))
+  ok <- is.finite(v)
+  out[ok] <- paste0(format(round_half_up(v[ok] * scale100, digits), nsmall = digits, trim = TRUE), "%")
+  out
+}
+
 count_state_mask <- function(balls, strikes, states) {
   valid <- !is.na(balls) & !is.na(strikes)
   if (!any(valid)) return(rep(FALSE, length(balls)))
@@ -35783,7 +35796,13 @@ deg_to_clock <- function(x) {
       }
     ) %>%
       dplyr::left_join(one_one_summary, by = "PitchType") %>%
-      dplyr::mutate(`1-1W%` = dplyr::coalesce(`1-1W%`, one_one_w_pct)) %>%
+      {
+        if ("1-1W%" %in% names(.)) {
+          dplyr::mutate(., `1-1W%` = dplyr::coalesce(`1-1W%`, one_one_w_pct))
+        } else {
+          dplyr::mutate(., `1-1W%` = one_one_w_pct)
+        }
+      } %>%
       dplyr::select(-one_one_w_pct) %>%
       dplyr::rename(
         !!split_col_name := PitchType,
