@@ -26533,7 +26533,7 @@ ui <- tagList(
       function parseNum(v) {
         if (v === null || v === undefined) return NaN;
         if (typeof v === 'number') return isFinite(v) ? v : NaN;
-        var s = String(v).trim();
+        var s = String(v).replace(/<[^>]*>/g, '').trim();
         if (!s) return NaN;
         var isPct = s.indexOf('%') >= 0;
         s = s.replace(/,/g, '').replace(/[^0-9eE+\\-\\.]/g, '');
@@ -26542,6 +26542,20 @@ ui <- tagList(
         if (!isFinite(n)) return NaN;
         if (isPct) n = n / 100;
         return n;
+      }
+
+      function plainText(v) {
+        if (v === null || v === undefined) return '';
+        return String(v).replace(/<[^>]*>/g, '').trim();
+      }
+
+      function isAllRow(row) {
+        if (!row || !row.length) return false;
+        for (var i = 0; i < row.length; i++) {
+          var t = plainText(row[i]).toLowerCase();
+          if (t === 'all') return true;
+        }
+        return false;
       }
 
       function linReg(xs, ys) {
@@ -26566,6 +26580,37 @@ ui <- tagList(
         }
         var r2 = ssTot > 0 ? (1 - ssRes / ssTot) : NaN;
         return { slope: slope, intercept: intercept, r2: r2 };
+      }
+
+      function toDataIndex(dtApi, visibleIdx) {
+        try {
+          var dataIdx = dtApi.column(visibleIdx + ':visible').index('toData');
+          if (dataIdx === null || dataIdx === undefined || !isFinite(dataIdx)) return visibleIdx;
+          return dataIdx;
+        } catch (e) {
+          return visibleIdx;
+        }
+      }
+
+      var pcuPlotlyLoading = false;
+      function loadPlotly(cb) {
+        if (window.Plotly) { cb(true); return; }
+        if (pcuPlotlyLoading) {
+          var tries = 0;
+          var tm = setInterval(function() {
+            tries++;
+            if (window.Plotly) { clearInterval(tm); cb(true); return; }
+            if (tries > 80) { clearInterval(tm); cb(false); }
+          }, 100);
+          return;
+        }
+        pcuPlotlyLoading = true;
+        var s = document.createElement('script');
+        s.src = 'https://cdn.plot.ly/plotly-2.35.2.min.js';
+        s.async = true;
+        s.onload = function() { pcuPlotlyLoading = false; cb(!!window.Plotly); };
+        s.onerror = function() { pcuPlotlyLoading = false; cb(false); };
+        document.head.appendChild(s);
       }
 
       window.PCUScatter = {
@@ -26630,7 +26675,8 @@ ui <- tagList(
           $th.off('click.pcuScatter').on('click.pcuScatter', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            var idx = $(this).index();
+            var visIdx = $(this).index();
+            var idx = toDataIndex(self.active.dt, visIdx);
             var name = $(this).text().trim();
             if (!name) return;
             self.pick(idx, name);
@@ -26658,20 +26704,28 @@ ui <- tagList(
           this.updatePicker();
         },
         openModal: function() {
+          var self = this;
           if (!this.active || !this.active.dt || this.selected.length < 2) {
             this.showPicker();
             this.updatePicker();
             return;
           }
           document.getElementById('pcu-scatter-modal').style.display = 'block';
-          this.render();
+          loadPlotly(function(ok){
+            if (!ok) {
+              document.getElementById('pcu-scatter-status').textContent = 'Unable to load chart library. Please refresh and try again.';
+              return;
+            }
+            self.render();
+          });
         },
         render: function() {
-          if (!this.active || !this.active.dt || this.selected.length < 2 || !window.Plotly) return;
+          if (!this.active || !this.active.dt || this.selected.length < 2) return;
           var xMeta = this.selected[0], yMeta = this.selected[1];
           var rows = this.active.dt.rows({ search: 'applied' }).data().toArray();
           var xs = [], ys = [];
           for (var i = 0; i < rows.length; i++) {
+            if (isAllRow(rows[i])) continue;
             var xv = parseNum(rows[i][xMeta.idx]);
             var yv = parseNum(rows[i][yMeta.idx]);
             if (isFinite(xv) && isFinite(yv)) {
@@ -26719,14 +26773,17 @@ ui <- tagList(
           }, {displayModeBar:true, responsive:true});
         },
         reset: function() {
+          var self = this;
           this.selected = [];
           this.showPicker();
           this.updatePicker();
           var m = document.getElementById('pcu-scatter-modal');
           if (m) m.style.display = 'none';
-          if (window.Plotly) {
-            Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
-          }
+          loadPlotly(function(ok){
+            if (ok && window.Plotly) {
+              Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+            }
+          });
         },
         cancel: function() {
           this.clearHeaderBindings();
