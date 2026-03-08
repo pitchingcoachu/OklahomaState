@@ -26489,6 +26489,25 @@ ui <- tagList(
   ", accent_color, accent_secondary_color, background_color, background_secondary_color))),
   tags$script(HTML("
     (function() {
+      function ensurePicker() {
+        if (document.getElementById('pcu-scatter-picker')) return;
+        var html = '' +
+          '<div id=\"pcu-scatter-picker\" style=\"display:none; position:fixed; right:16px; bottom:16px; z-index:29999; background:#ffffff; border:1px solid #d1d5db; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); padding:10px 12px; width:min(92vw,360px);\">' +
+            '<div style=\"font-weight:700; font-size:14px; margin-bottom:6px;\">Scatter Chart: Select Columns</div>' +
+            '<div id=\"pcu-scatter-pick-status\" style=\"font-size:13px; color:#334155; margin-bottom:8px;\">Click one column header for X, then one for Y.</div>' +
+            '<div id=\"pcu-scatter-pick-picked\" style=\"font-size:12px; color:#475569; margin-bottom:8px;\"></div>' +
+            '<div style=\"display:flex; gap:6px; justify-content:flex-end;\">' +
+              '<button id=\"pcu-scatter-open\" type=\"button\" class=\"btn btn-primary btn-sm\" disabled>Open Chart</button>' +
+              '<button id=\"pcu-scatter-pick-reset\" type=\"button\" class=\"btn btn-default btn-sm\">Reset</button>' +
+              '<button id=\"pcu-scatter-cancel\" type=\"button\" class=\"btn btn-default btn-sm\">Cancel</button>' +
+            '</div>' +
+          '</div>';
+        document.body.insertAdjacentHTML('beforeend', html);
+        document.getElementById('pcu-scatter-open').addEventListener('click', function(){ window.PCUScatter.openModal(); });
+        document.getElementById('pcu-scatter-pick-reset').addEventListener('click', function(){ window.PCUScatter.reset(); });
+        document.getElementById('pcu-scatter-cancel').addEventListener('click', function(){ window.PCUScatter.cancel(); });
+      }
+
       function ensureModal() {
         if (document.getElementById('pcu-scatter-modal')) return;
         var html = '' +
@@ -26498,9 +26517,9 @@ ui <- tagList(
                 '<div style=\"font-weight:700; font-size:18px;\">Scatter Chart Builder</div>' +
                 '<button id=\"pcu-scatter-close\" type=\"button\" style=\"border:none; background:transparent; font-size:20px; line-height:1; cursor:pointer;\">&times;</button>' +
               '</div>' +
-              '<div style=\"padding:10px 14px; border-bottom:1px solid #e5e7eb; font-size:14px;\" id=\"pcu-scatter-status\">Click one column header for X, then one for Y.</div>' +
+              '<div style=\"padding:10px 14px; border-bottom:1px solid #e5e7eb; font-size:14px;\" id=\"pcu-scatter-status\">Scatter chart from selected columns.</div>' +
               '<div style=\"padding:8px 14px; display:flex; gap:8px; align-items:center; border-bottom:1px solid #e5e7eb;\">' +
-                '<button id=\"pcu-scatter-reset\" type=\"button\" class=\"btn btn-default btn-sm\">Reset</button>' +
+                '<button id=\"pcu-scatter-reset\" type=\"button\" class=\"btn btn-default btn-sm\">Pick New Columns</button>' +
                 '<span id=\"pcu-scatter-picked\" style=\"font-size:13px; color:#475569;\"></span>' +
               '</div>' +
               '<div id=\"pcu-scatter-plot\" style=\"flex:1 1 auto;\"></div>' +
@@ -26552,17 +26571,55 @@ ui <- tagList(
       window.PCUScatter = {
         active: null,
         selected: [],
+        selecting: false,
         start: function(dtApi, tableId) {
+          ensurePicker();
           ensureModal();
+          var sameTable = this.active && this.active.id === tableId;
+          if (!sameTable) {
+            this.clearHeaderBindings();
+            this.active = { dt: dtApi, id: tableId };
+            this.selected = [];
+            this.bindHeaders();
+            this.selecting = true;
+            this.showPicker();
+            this.updatePicker();
+            return;
+          }
           this.active = { dt: dtApi, id: tableId };
-          this.selected = [];
-          this.bindHeaders();
-          document.getElementById('pcu-scatter-modal').style.display = 'block';
-          document.getElementById('pcu-scatter-status').textContent = 'Click one column header for X, then one for Y.';
-          document.getElementById('pcu-scatter-picked').textContent = '';
-          if (window.Plotly) {
-            Plotly.purge('pcu-scatter-plot');
-            Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+          if (this.selected.length >= 2) {
+            this.openModal();
+          } else {
+            this.selecting = true;
+            this.showPicker();
+            this.updatePicker();
+          }
+        },
+        showPicker: function() {
+          var el = document.getElementById('pcu-scatter-picker');
+          if (el) el.style.display = 'block';
+        },
+        hidePicker: function() {
+          var el = document.getElementById('pcu-scatter-picker');
+          if (el) el.style.display = 'none';
+        },
+        updatePicker: function() {
+          var status = document.getElementById('pcu-scatter-pick-status');
+          var picked = document.getElementById('pcu-scatter-pick-picked');
+          var openBtn = document.getElementById('pcu-scatter-open');
+          if (!status || !picked || !openBtn) return;
+          if (this.selected.length === 0) {
+            status.textContent = 'Click one column header for X, then one for Y.';
+            picked.textContent = '';
+            openBtn.disabled = true;
+          } else if (this.selected.length === 1) {
+            status.textContent = 'Now click a second column header for Y.';
+            picked.textContent = 'X: ' + this.selected[0].name;
+            openBtn.disabled = true;
+          } else {
+            status.textContent = 'Columns selected. Click Open Chart (or Scatter Chart again).';
+            picked.textContent = 'X: ' + this.selected[0].name + '   Y: ' + this.selected[1].name;
+            openBtn.disabled = false;
           }
         },
         bindHeaders: function() {
@@ -26589,18 +26646,25 @@ ui <- tagList(
         pick: function(idx, name) {
           if (this.selected.length === 0) {
             this.selected = [{ idx: idx, name: name }];
-            document.getElementById('pcu-scatter-status').textContent = 'Now click a second column header for Y.';
-            document.getElementById('pcu-scatter-picked').textContent = 'X: ' + name;
+            this.updatePicker();
             return;
           }
           if (this.selected.length === 1) {
             this.selected.push({ idx: idx, name: name });
-            this.render();
+            this.updatePicker();
             return;
           }
           this.selected = [{ idx: idx, name: name }];
-          document.getElementById('pcu-scatter-status').textContent = 'Now click a second column header for Y.';
-          document.getElementById('pcu-scatter-picked').textContent = 'X: ' + name;
+          this.updatePicker();
+        },
+        openModal: function() {
+          if (!this.active || !this.active.dt || this.selected.length < 2) {
+            this.showPicker();
+            this.updatePicker();
+            return;
+          }
+          document.getElementById('pcu-scatter-modal').style.display = 'block';
+          this.render();
         },
         render: function() {
           if (!this.active || !this.active.dt || this.selected.length < 2 || !window.Plotly) return;
@@ -26615,6 +26679,7 @@ ui <- tagList(
             }
           }
           document.getElementById('pcu-scatter-picked').textContent = 'X: ' + xMeta.name + '   Y: ' + yMeta.name;
+          document.getElementById('pcu-scatter-status').textContent = 'Scatter chart from selected columns.';
           if (xs.length < 2) {
             Plotly.newPlot('pcu-scatter-plot', [], {
               paper_bgcolor:'#fff', plot_bgcolor:'#fff',
@@ -26655,16 +26720,24 @@ ui <- tagList(
         },
         reset: function() {
           this.selected = [];
-          document.getElementById('pcu-scatter-status').textContent = 'Click one column header for X, then one for Y.';
-          document.getElementById('pcu-scatter-picked').textContent = '';
+          this.showPicker();
+          this.updatePicker();
+          var m = document.getElementById('pcu-scatter-modal');
+          if (m) m.style.display = 'none';
           if (window.Plotly) {
             Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
           }
         },
-        close: function() {
+        cancel: function() {
           this.clearHeaderBindings();
           this.active = null;
           this.selected = [];
+          this.selecting = false;
+          this.hidePicker();
+          var m = document.getElementById('pcu-scatter-modal');
+          if (m) m.style.display = 'none';
+        },
+        close: function() {
           var m = document.getElementById('pcu-scatter-modal');
           if (m) m.style.display = 'none';
         }
