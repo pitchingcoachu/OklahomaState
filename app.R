@@ -3049,8 +3049,13 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     scalar_chr1 <- function(x) {
       is.character(x) && length(x) >= 1 && !is.na(x[[1]]) && nzchar(x[[1]])
     }
+    scalar_flag <- function(x, default = FALSE) {
+      out <- tryCatch(length(x) == 1 && !is.na(x) && isTRUE(as.logical(x)), error = function(e) default)
+      if (isTRUE(out)) TRUE else FALSE
+    }
     pin_col1 <- if (scalar_chr1(pin_col)) as.character(pin_col[[1]]) else "Player"
     has_pin_col <- pin_col1 %in% names(df)
+    remember_flag <- scalar_flag(remember, default = FALSE)
 
     # Validate input before processing
     if (!is.data.frame(df) || nrow(df) == 0 || ncol(df) == 0) {
@@ -3130,7 +3135,7 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
         orderClasses  = TRUE,
         colReorder    = TRUE,
         fixedHeader   = TRUE,
-        stateSave     = remember,
+        stateSave     = remember_flag,
         stateDuration = -1,
         pageLength    = 10,
         autoWidth     = FALSE,    # Changed from TRUE - lets DataTables calculate proper widths
@@ -3141,13 +3146,30 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
       if (length(pin_idx)) {
         opts$orderFixed <- list(pre = list(list(pin_idx[[1]], "asc")))
       }
-      DT::datatable(
-        data,
-        rownames   = FALSE,
-        extensions = c("Buttons","ColReorder","FixedHeader"),
-        escape     = FALSE,
-        options = opts
-      )
+      tryCatch({
+        DT::datatable(
+          data,
+          rownames   = FALSE,
+          extensions = c("Buttons","ColReorder","FixedHeader"),
+          escape     = FALSE,
+          options = opts
+        )
+      }, error = function(e) {
+        message("datatable_with_colvis full-options build failed: ", conditionMessage(e))
+        # Fallback: keep table rendering even if advanced DT options fail.
+        DT::datatable(
+          data,
+          rownames = FALSE,
+          escape = FALSE,
+          options = list(
+            dom = "frtip",
+            ordering = TRUE,
+            pageLength = 10,
+            autoWidth = FALSE,
+            scrollX = TRUE
+          )
+        )
+      })
     }
     
     dt <- build_dt(df)
