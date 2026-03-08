@@ -6854,6 +6854,11 @@ count_state_mask <- function(balls, strikes, states) {
 
 calc_state_pct <- function(df, states, calls) {
   if (!is.data.frame(df) || !nrow(df)) return("")
+  # These process rates are intended for game-like/live plate appearances.
+  if ("SessionType" %in% names(df)) {
+    df <- df %>% dplyr::filter(SessionType == "Live")
+    if (!nrow(df)) return("0.0%")
+  }
   bf <- calculate_bf(df)
   if (!is.finite(bf) || bf <= 0) return("0.0%")
   balls <- suppressWarnings(as.numeric(df$Balls))
@@ -26606,6 +26611,49 @@ ui <- tagList(
         }
         return undefined;
       }
+      
+      function isLikelyNumericColumn(dtApi, idx) {
+        try {
+          var rows = dtApi.rows({ search: 'applied' }).data().toArray();
+          var checked = 0, numeric = 0;
+          for (var i = 0; i < rows.length && checked < 30; i++) {
+            if (isAllRow(rows[i])) continue;
+            var v = rowVal(rows[i], { idx: idx, src: dtApi.column(idx).dataSrc() });
+            var t = plainText(v);
+            if (!t) continue;
+            checked++;
+            if (isFinite(parseNum(v))) numeric++;
+          }
+          if (checked === 0) return false;
+          return (numeric / checked) >= 0.8;
+        } catch (e) {
+          return false;
+        }
+      }
+      
+      function pickLabelMeta(dtApi, xIdx, yIdx) {
+        try {
+          var idxs = dtApi.columns().indexes().toArray();
+          var preferred = /^(player|name|pitcher|batter|hitter|catcher)$/i;
+          var fallback = null;
+          for (var i = 0; i < idxs.length; i++) {
+            var idx = idxs[i];
+            if (idx === xIdx || idx === yIdx) continue;
+            var name = '';
+            var src = '';
+            try { name = $(dtApi.column(idx).header()).text().trim(); } catch (e1) { name = ''; }
+            try { src = dtApi.column(idx).dataSrc(); } catch (e2) { src = ''; }
+            if (!fallback) fallback = { idx: idx, name: name || 'Label', src: src };
+            if (!isLikelyNumericColumn(dtApi, idx) && preferred.test(name || '')) {
+              return { idx: idx, name: name || 'Label', src: src };
+            }
+          }
+          if (fallback && !isLikelyNumericColumn(dtApi, fallback.idx)) return fallback;
+          return fallback;
+        } catch (e) {
+          return null;
+        }
+      }
 
       var pcuPlotlyLoading = false;
       function loadPlotly(cb) {
@@ -26775,24 +26823,50 @@ ui <- tagList(
         render: function() {
           if (!this.active || !this.active.dt || this.selected.length < 2) return;
           var xMeta = this.selected[0], yMeta = this.selected[1];
-          var rows = this.active.dt.rows({ search: 'applied' }).data().toArray();
-          var xs = [], ys = [];
-          for (var i = 0; i < rows.length; i++) {
-            if (isAllRow(rows[i])) continue;
-            var xv = parseNum(rowVal(rows[i], xMeta));
-            var yv = parseNum(rowVal(rows[i], yMeta));
+          var labelMeta = pickLabelMeta(this.active.dt, xMeta.idx, yMeta.idx);
+          var rowIdxs = this.active.dt.rows({ search: 'applied' }).indexes().toArray();
+          var xs = [], ys = [], labels = [], xDisp = [], yDisp = [];
+          for (var i = 0; i < rowIdxs.length; i++) {
+            var rIdx = rowIdxs[i];
+            var rowData = this.active.dt.row(rIdx).data();
+            if (isAllRow(rowData)) continue;
+            var xText = '';
+            var yText = '';
+            try { xText = plainText(this.active.dt.cell(rIdx, xMeta.idx).render('display')); } catch (e1) { xText = plainText(rowVal(rowData, xMeta)); }
+            try { yText = plainText(this.active.dt.cell(rIdx, yMeta.idx).render('display')); } catch (e2) { yText = plainText(rowVal(rowData, yMeta)); }
+            var xv = parseNum(xText);
+            var yv = parseNum(yText);
             if (isFinite(xv) && isFinite(yv)) {
               xs.push(xv); ys.push(yv);
+              xDisp.push(xText);
+              yDisp.push(yText);
+              var lbl = '';
+              if (labelMeta) {
+                try { lbl = plainText(this.active.dt.cell(rIdx, labelMeta.idx).render('display')); } catch (e3) { lbl = plainText(rowVal(rowData, labelMeta)); }
+              }
+              labels.push(lbl || ('Point ' + (labels.length + 1)));
             }
           }
           document.getElementById('pcu-scatter-picked').textContent = 'X: ' + xMeta.name + '   Y: ' + yMeta.name;
           document.getElementById('pcu-scatter-status').textContent = 'Scatter chart from selected columns.';
+          var layoutBase = {
+            paper_bgcolor:'#fff',
+            plot_bgcolor:'#fff',
+            margin:{l:60,r:20,t:76,b:60},
+            images:[{
+              source:'/PCUlogo.png',
+              xref:'paper', yref:'paper',
+              x:0, y:1.14,
+              sizex:0.17, sizey:0.17,
+              xanchor:'left', yanchor:'top',
+              sizing:'contain', opacity:0.96, layer:'above'
+            }]
+          };
           if (xs.length < 2) {
-            Plotly.newPlot('pcu-scatter-plot', [], {
-              paper_bgcolor:'#fff', plot_bgcolor:'#fff',
+            Plotly.newPlot('pcu-scatter-plot', [], Object.assign({}, layoutBase, {
               xaxis:{title:xMeta.name}, yaxis:{title:yMeta.name},
               annotations:[{text:'Not enough numeric data points for selected columns', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]
-            }, {displayModeBar:true, responsive:true});
+            }), {displayModeBar:true, responsive:true});
             return;
           }
           var fit = linReg(xs, ys);
@@ -26802,6 +26876,8 @@ ui <- tagList(
           var traces = [{
             x: xs, y: ys, mode: 'markers', type: 'scatter',
             marker: {size: 8, color: '#1f77b4', opacity: 0.82},
+            customdata: labels.map(function(lbl, i){ return [lbl, xDisp[i], yDisp[i]]; }),
+            hovertemplate: '%{customdata[0]}<br>' + xMeta.name + ': %{customdata[1]}<br>' + yMeta.name + ': %{customdata[2]}<extra></extra>',
             name: 'Data'
           }];
           if (fit) {
@@ -26811,10 +26887,7 @@ ui <- tagList(
               name: 'Trendline'
             });
           }
-          Plotly.newPlot('pcu-scatter-plot', traces, {
-            paper_bgcolor:'#fff',
-            plot_bgcolor:'#fff',
-            margin:{l:60,r:20,t:20,b:60},
+          Plotly.newPlot('pcu-scatter-plot', traces, Object.assign({}, layoutBase, {
             xaxis:{title:xMeta.name},
             yaxis:{title:yMeta.name},
             annotations: fit ? [{
@@ -26823,7 +26896,7 @@ ui <- tagList(
               showarrow: false, xanchor:'right', yanchor:'bottom',
               font: {size: 13, color: '#111827'}
             }] : []
-          }, {displayModeBar:true, responsive:true});
+          }), {displayModeBar:true, responsive:true});
         },
         reset: function() {
           this.selected = [];
@@ -26876,7 +26949,6 @@ ui <- tagList(
     tabPanel("Catching",   value = "Catching",   mod_catch_ui("catch")),
     tabPanel("Leaderboard", value = "Leaderboard", mod_leader_ui("leader")),
     tabPanel("Comparison Tool", value = "Comparison Suite", mod_comp_ui("comp")),
-    tabPanel("Correlations", value = "Correlations", correlations_ui()),
     tabPanel("Custom Reports", value = "Custom Reports", custom_reports_ui("creports")),
     tabPanel("Player Plans", value = "Player Plans", player_plans_ui()),
     tabPanel("Biomechanics", value = "Biomechanics", biomech_ui()),
@@ -38860,6 +38932,7 @@ deg_to_clock <- function(x) {
   })
   
   # ============== CORRELATIONS SERVER LOGIC ==============
+  if (FALSE) {
   
   # Update player choices based on domain and team selection
   observe({
@@ -39804,6 +39877,7 @@ deg_to_clock <- function(x) {
       }
   })
   
+  } # correlations suite disabled
   # ============== END CORRELATIONS SERVER LOGIC ==============
   
   # ============== PLAYER PLANS SERVER LOGIC ==============
