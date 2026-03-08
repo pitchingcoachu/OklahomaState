@@ -3094,23 +3094,28 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     build_dt <- function(data) {
       data <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
-      opts <- list(
-        dom           = "Bfrtip",
-        buttons       = list(
-          "pageLength",
-          list(extend = "colvis", text = "Columns", columns = colvis_idx, postfixButtons = list("colvisRestore")),
+      dt_buttons <- list("pageLength")
+      if (length(colvis_idx) > 0) {
+        dt_buttons <- c(dt_buttons, list(
+          list(
+            extend = "colvis",
+            text = "Columns",
+            columns = colvis_idx,
+            postfixButtons = list("colvisRestore")
+          )
+        ))
+      }
+      if (ncol(data) >= 2) {
+        dt_buttons <- c(dt_buttons, list(
           list(
             text = "Scatter Chart",
-            action = DT::JS(
-              "function(e, dt, node, config) {",
-              "  if (window.PCUScatter && typeof window.PCUScatter.start === 'function') {",
-              "    var tableId = $(dt.table().node()).attr('id') || '';",
-              "    window.PCUScatter.start(dt, tableId);",
-              "  }",
-              "}"
-            )
+            action = DT::JS("function(e, dt, node, config){ if(window.PCUScatter && typeof window.PCUScatter.start==='function'){ var tableId=$(dt.table().node()).attr('id')||''; window.PCUScatter.start(dt, tableId);} }")
           )
-        ),
+        ))
+      }
+      opts <- list(
+        dom           = "Bfrtip",
+        buttons       = dt_buttons,
         ordering      = TRUE,
         orderMulti    = TRUE,
         orderClasses  = TRUE,
