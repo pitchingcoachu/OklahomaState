@@ -26596,7 +26596,11 @@ ui <- tagList(
         if (!row || !meta) return undefined;
         if (Array.isArray(row)) return row[meta.idx];
         if (typeof row === 'object') {
-          if (meta.src !== undefined && meta.src !== null && meta.src !== '') return row[meta.src];
+          if (meta.src !== undefined && meta.src !== null && meta.src !== '') {
+            if (Object.prototype.hasOwnProperty.call(row, meta.src) && row[meta.src] !== undefined) {
+              return row[meta.src];
+            }
+          }
           var keys = Object.keys(row);
           if (meta.idx >= 0 && meta.idx < keys.length) return row[keys[meta.idx]];
         }
@@ -26628,6 +26632,7 @@ ui <- tagList(
         active: null,
         selected: [],
         selecting: false,
+        _headerHandlers: [],
         start: function(dtApi, tableId) {
           ensurePicker();
           ensureModal();
@@ -26643,6 +26648,7 @@ ui <- tagList(
             return;
           }
           this.active = { dt: dtApi, id: tableId };
+          this.bindHeaders();
           if (this.selected.length >= 2) {
             this.openModal();
           } else {
@@ -26681,34 +26687,59 @@ ui <- tagList(
         bindHeaders: function() {
           if (!this.active || !this.active.dt) return;
           var self = this;
-          var $th = $(this.active.dt.table().header()).find('th');
-          $th.css('cursor', 'crosshair');
-          $th.off('mousedown.pcuScatter').on('mousedown.pcuScatter', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-            return false;
+          this.clearHeaderBindings();
+          var heads = [];
+          var baseHead = this.active.dt.table().header();
+          if (baseHead) heads.push(baseHead);
+          $('.fixedHeader-floating thead').each(function(){ heads.push(this); });
+
+          heads.forEach(function(head) {
+            var ths = head.querySelectorAll('th');
+            Array.prototype.forEach.call(ths, function(th) {
+              th.style.cursor = 'crosshair';
+              var onDown = function(e) {
+                if (!self.selecting) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+              };
+              var onClick = function(e) {
+                if (!self.selecting) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                var visIdx = $(th).index();
+                var idx = toDataIndex(self.active.dt, visIdx);
+                var name = $(th).text().trim();
+                if (!name) return;
+                var src = '';
+                try { src = self.active.dt.column(idx).dataSrc(); } catch (err) { src = ''; }
+                self.pick(idx, name, src);
+              };
+              th.addEventListener('mousedown', onDown, true);
+              th.addEventListener('click', onClick, true);
+              self._headerHandlers.push({ th: th, onDown: onDown, onClick: onClick });
+            });
           });
-          $th.off('click.pcuScatter').on('click.pcuScatter', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-            var visIdx = $(this).index();
-            var idx = toDataIndex(self.active.dt, visIdx);
-            var name = $(this).text().trim();
-            if (!name) return;
-            var src = '';
-            try { src = self.active.dt.column(idx).dataSrc(); } catch (err) { src = ''; }
-            self.pick(idx, name, src);
-            return false;
+
+          this.active.dt.off('.pcuScatter');
+          this.active.dt.on('draw.pcuScatter column-reorder.pcuScatter', function() {
+            if (self.selecting) self.bindHeaders();
           });
         },
         clearHeaderBindings: function() {
-          if (!this.active || !this.active.dt) return;
-          var $th = $(this.active.dt.table().header()).find('th');
-          $th.off('mousedown.pcuScatter');
-          $th.off('click.pcuScatter');
-          $th.css('cursor', '');
+          var handlers = this._headerHandlers || [];
+          for (var i = 0; i < handlers.length; i++) {
+            var h = handlers[i];
+            if (!h || !h.th) continue;
+            h.th.removeEventListener('mousedown', h.onDown, true);
+            h.th.removeEventListener('click', h.onClick, true);
+            h.th.style.cursor = '';
+          }
+          this._headerHandlers = [];
+          if (this.active && this.active.dt) {
+            this.active.dt.off('.pcuScatter');
+          }
         },
         pick: function(idx, name, src) {
           if (this.selected.length === 0) {
@@ -26731,6 +26762,7 @@ ui <- tagList(
             this.updatePicker();
             return;
           }
+          this.selecting = false;
           document.getElementById('pcu-scatter-modal').style.display = 'block';
           loadPlotly(function(ok){
             if (!ok) {
@@ -26794,8 +26826,9 @@ ui <- tagList(
           }, {displayModeBar:true, responsive:true});
         },
         reset: function() {
-          var self = this;
           this.selected = [];
+          this.selecting = true;
+          this.bindHeaders();
           this.showPicker();
           this.updatePicker();
           var m = document.getElementById('pcu-scatter-modal');
