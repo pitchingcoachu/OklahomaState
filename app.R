@@ -26872,26 +26872,20 @@ ui <- tagList(
           if (!this.active || !this.active.dt || this.selected.length < 2) return;
           var xMeta = this.selected[0], yMeta = this.selected[1];
           var labelMeta = pickLabelMeta(this.active.dt, xMeta.idx, yMeta.idx);
-          var rowIdxs = this.active.dt.rows({ search: 'applied' }).indexes().toArray();
+          var rows = this.active.dt.rows({ search: 'applied' }).data().toArray();
           var xs = [], ys = [], labels = [], xDisp = [], yDisp = [];
-          for (var i = 0; i < rowIdxs.length; i++) {
-            var rIdx = rowIdxs[i];
-            var rowData = this.active.dt.row(rIdx).data();
-            if (isAllRow(rowData)) continue;
-            var xText = '';
-            var yText = '';
-            try { xText = plainText(this.active.dt.cell(rIdx, xMeta.idx).render('display')); } catch (e1) { xText = plainText(rowVal(rowData, xMeta)); }
-            try { yText = plainText(this.active.dt.cell(rIdx, yMeta.idx).render('display')); } catch (e2) { yText = plainText(rowVal(rowData, yMeta)); }
-            var xv = parseNum(xText);
-            var yv = parseNum(yText);
+          for (var i = 0; i < rows.length; i++) {
+            if (isAllRow(rows[i])) continue;
+            var xRaw = rowVal(rows[i], xMeta);
+            var yRaw = rowVal(rows[i], yMeta);
+            var xv = parseNum(xRaw);
+            var yv = parseNum(yRaw);
             if (isFinite(xv) && isFinite(yv)) {
               xs.push(xv); ys.push(yv);
-              xDisp.push(xText);
-              yDisp.push(yText);
+              xDisp.push(plainText(xRaw));
+              yDisp.push(plainText(yRaw));
               var lbl = '';
-              if (labelMeta) {
-                try { lbl = plainText(this.active.dt.cell(rIdx, labelMeta.idx).render('display')); } catch (e3) { lbl = plainText(rowVal(rowData, labelMeta)); }
-              }
+              if (labelMeta) lbl = plainText(rowVal(rows[i], labelMeta));
               labels.push(lbl || ('Point ' + (labels.length + 1)));
             }
           }
