@@ -3043,6 +3043,15 @@ safe_make_summary <- function(df, group_col = "TaggedPitchType") {
 datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, default_visible = names(df), mode = NULL, enable_colors = TRUE, pin_all_row = FALSE, pin_col = "Player") {
   # Enhanced error handling wrapper with validation
   tryCatch({
+    scalar_true <- function(x) {
+      isTRUE(tryCatch(length(x) == 1 && !is.na(x) && isTRUE(x), error = function(e) FALSE))
+    }
+    scalar_chr1 <- function(x) {
+      is.character(x) && length(x) >= 1 && !is.na(x[[1]]) && nzchar(x[[1]])
+    }
+    pin_col1 <- if (scalar_chr1(pin_col)) as.character(pin_col[[1]]) else "Player"
+    has_pin_col <- pin_col1 %in% names(df)
+
     # Validate input before processing
     if (!is.data.frame(df) || nrow(df) == 0 || ncol(df) == 0) {
       return(DT::datatable(data.frame(Message = "No data available"), options = list(dom = 't'), rownames = FALSE))
@@ -3051,8 +3060,8 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     df <- sanitize_for_dt(df)
     df <- format_decimal_columns(df)
     
-    if (isTRUE(pin_all_row) && pin_col %in% names(df)) {
-      pin_vals <- toupper(trimws(as.character(df[[pin_col]])))
+    if (scalar_true(pin_all_row) && has_pin_col) {
+      pin_vals <- toupper(trimws(as.character(df[[pin_col1]])))
       df[["..pin_all"]] <- ifelse(pin_vals == "ALL", 0L, 1L)
     }
     
@@ -3142,10 +3151,10 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     }
     
     dt <- build_dt(df)
-    if (isTRUE(pin_all_row) && pin_col %in% names(df)) {
+    if (scalar_true(pin_all_row) && has_pin_col) {
       dt <- dt %>%
         DT::formatStyle(
-          pin_col,
+          pin_col1,
           target = "row",
           fontWeight = DT::styleEqual("All", "700")
         )
@@ -3164,12 +3173,10 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     
     color_mode <- if (identical(mode, "Custom")) "Process" else mode
     enable_color_mode <- tryCatch({
-      !is.null(enable_colors) && 
-        !is.na(enable_colors) && 
-        isTRUE(enable_colors) &&
-        !is.null(color_mode) &&
-        !is.na(color_mode) &&
-        color_mode %in% color_modes && 
+      enable_colors_flag <- isTRUE(tryCatch(length(enable_colors) == 1 && !is.na(enable_colors) && as.logical(enable_colors), error = function(e) FALSE))
+      color_mode_flag <- is.character(color_mode) && length(color_mode) == 1 && !is.na(color_mode[[1]]) && (color_mode[[1]] %in% color_modes)
+      enable_colors_flag &&
+        color_mode_flag &&
         ("Pitch" %in% names(df) || "Player" %in% names(df) || has_split_column)
     }, error = function(e) FALSE)
     
