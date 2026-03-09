@@ -3623,8 +3623,12 @@ calculate_bf <- function(df) {
   sum(tapply(last_vec, pa_vec, function(x) any(x, na.rm = TRUE)), na.rm = TRUE)
 }
 
-# BF helper used elsewhere; now just calls the unified calculation
-calculate_completed_bf <- function(df) calculate_bf(df)
+calculate_bf_live <- function(df) {
+  if (!is.data.frame(df) || !nrow(df)) return(0L)
+  if (!"SessionType" %in% names(df)) return(calculate_bf(df))
+  d_live <- df %>% dplyr::filter(SessionType == "Live")
+  calculate_bf(d_live)
+}
 
 # BF that only counts completed PAs (Live only) — helps avoid partial/empty PAs
 calculate_completed_bf <- function(df) {
@@ -6310,9 +6314,9 @@ live_bp_mask <- function(df) {
 
 season_mask <- function(df) {
   if (!nrow(df)) return(logical(0))
-  # "Season" should represent the full in-season dataset, not just Live BP.
-  # Keep "Live BP" as the strict Live-only subset.
-  rep(TRUE, nrow(df))
+  st <- tolower(trimws(as.character(df$SessionType)))
+  # Season view should exclude bullpen/practice sessions.
+  grepl("live|game|ab", st) & !grepl("bull|prac", st)
 }
 
 normalize_session_filter_value <- function(session_value) {
@@ -6958,7 +6962,7 @@ nz_mean <- function(x) {
     dplyr::group_by(TaggedPitchType) %>%
     dplyr::summarise(
       PitchCount     = dplyr::n(),
-      BF_live        = sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE),
+      BF_live        = calculate_bf_live(dplyr::cur_data_all()),
       
       Velo_Avg       = nz_mean(RelSpeed),
       Velo_Max       = suppressWarnings(max(RelSpeed, na.rm = TRUE)),
@@ -11969,7 +11973,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
                 state_xSLG <- safe_div(state_xTB, state_AB)
                 state_xISO <- state_xSLG - state_xAVG
                 # xWOBA calculation (using weights if they exist)
-                state_BF_live <- sum(state_df$SessionType == "Live" & state_df$Balls == 0 & state_df$Strikes == 0, na.rm = TRUE)
+                state_BF_live <- calculate_bf_live(state_df)
                 if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
                   state_xWOBA <- safe_div(W_BB*state_BBct + W_1B*state_x1B + W_2B*state_x2B + W_3B*state_x3B + W_HR*state_xHR, state_BF_live)
                 } else {
@@ -14437,7 +14441,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
         den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
         
-        bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+        bf_live <- calculate_bf_live(df)
         fps_opp <- bf_live
         k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
         bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
@@ -18287,7 +18291,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
       den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
       csw_all <- sum(df$PitchCall %in% c("StrikeSwinging","StrikeCalled"), na.rm = TRUE)
-      bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+      bf_live <- calculate_bf_live(df)
       fps_opp <- bf_live
       k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
       bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
@@ -33756,7 +33760,7 @@ deg_to_clock <- function(x) {
                 state_xSLG <- safe_div(state_xTB, state_AB)
                 state_xISO <- state_xSLG - state_xAVG
                 # xWOBA calculation (using weights if they exist)
-                state_BF_live <- sum(state_df$SessionType == "Live" & state_df$Balls == 0 & state_df$Strikes == 0, na.rm = TRUE)
+                state_BF_live <- calculate_bf_live(state_df)
                 if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
                   state_xWOBA <- safe_div(W_BB*state_BBct + W_1B*state_x1B + W_2B*state_x2B + W_3B*state_x3B + W_HR*state_xHR, state_BF_live)
                 } else {
@@ -34087,7 +34091,7 @@ deg_to_clock <- function(x) {
             
             # xWOBA calculation
             split_BB <- per_type$BB[per_type$SplitColumn == spl]
-            BF_live <- sum(split_df$SessionType == "Live" & split_df$Balls == 0 & split_df$Strikes == 0, na.rm = TRUE)
+            BF_live <- calculate_bf_live(split_df)
             if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
               xWOBA <- safe_div(W_BB*split_BB + W_1B*x1B + W_2B*x2B + W_3B*x3B + W_HR*xHR, BF_live)
             }
@@ -34404,7 +34408,7 @@ deg_to_clock <- function(x) {
           strikes <- sum(df$PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBallNotFieldable","InPlay","FoulBallFieldable"), na.rm = TRUE)
           sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
           den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
-          bf_live <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+          bf_live <- calculate_bf_live(df)
           fps_opp <- bf_live
           k_live  <- sum(df$SessionType == "Live" & df$KorBB == "Strikeout",        na.rm = TRUE)
           bb_live <- sum(df$SessionType == "Live" & df$KorBB == "Walk",             na.rm = TRUE)
@@ -35238,7 +35242,7 @@ deg_to_clock <- function(x) {
               state_xSLG <- safe_div(state_xTB, state_AB)
               state_xISO <- state_xSLG - state_xAVG
               # xWOBA calculation (using weights if they exist)
-              state_BF_live <- sum(state_df$SessionType == "Live" & state_df$Balls == 0 & state_df$Strikes == 0, na.rm = TRUE)
+              state_BF_live <- calculate_bf_live(state_df)
               if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
                 state_xWOBA <- safe_div(W_BB*state_BBct + W_1B*state_x1B + W_2B*state_x2B + W_3B*state_x3B + W_HR*state_xHR, state_BF_live)
               } else {
@@ -35565,7 +35569,7 @@ deg_to_clock <- function(x) {
           
           # xWOBA calculation
           split_BB <- per_type$BB[per_type$SplitColumn == spl]
-          BF_live <- sum(split_df$SessionType == "Live" & split_df$Balls == 0 & split_df$Strikes == 0, na.rm = TRUE)
+          BF_live <- calculate_bf_live(split_df)
           if (exists("W_BB") && exists("W_1B") && exists("W_2B") && exists("W_3B") && exists("W_HR")) {
             xWOBA <- safe_div(W_BB*split_BB + W_1B*x1B + W_2B*x2B + W_3B*x3B + W_HR*xHR, BF_live)
           }
@@ -38789,7 +38793,7 @@ deg_to_clock <- function(x) {
         group_by(Date, SessionType) %>%
         summarise(
           total_pitches = dplyr::n(),
-          BF  = sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE),
+          BF  = calculate_bf_live(dplyr::cur_data_all()),
           FPS = sum(SessionType == "Live" & Balls == 0 & Strikes == 0 &
                       PitchCall %in% c("InPlay","StrikeSwinging","StrikeCalled","FoulBallNotFieldable","FoulBallFieldable"),
                     na.rm = TRUE),
@@ -38802,7 +38806,7 @@ deg_to_clock <- function(x) {
         group_by(Date) %>%
         summarise(
           total_pitches = dplyr::n(),
-          BF  = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
+          BF  = calculate_bf(dplyr::cur_data_all()),
           FPS = sum(Balls == 0 & Strikes == 0 &
                       PitchCall %in% c("InPlay","StrikeSwinging","StrikeCalled","FoulBallNotFieldable","FoulBallFieldable"),
                     na.rm = TRUE),
@@ -39550,7 +39554,7 @@ deg_to_clock <- function(x) {
             if (first_pitches > 0) (first_pitch_strikes / first_pitches) * 100 else NA_real_
           },
           `E+A%` = {
-            bf_live <- sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE)
+            bf_live <- calculate_bf_live(dplyr::cur_data_all())
             ea_count <- sum(SessionType == "Live" & (
               (Balls == 0 & Strikes == 0 & PitchCall == "InPlay") |
                 (Balls == 0 & Strikes == 1 & PitchCall %in% c("InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable")) |
@@ -39594,12 +39598,12 @@ deg_to_clock <- function(x) {
             if (total_pitches > 0) (csw / total_pitches) * 100 else NA_real_
           },
           `K%` = {
-            bf_live <- sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE)
+            bf_live <- calculate_bf_live(dplyr::cur_data_all())
             k_live <- sum(SessionType == "Live" & KorBB == "Strikeout", na.rm = TRUE)
             if (bf_live > 0) (k_live / bf_live) * 100 else NA_real_
           },
           `BB%` = {
-            bf_live <- sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE)
+            bf_live <- calculate_bf_live(dplyr::cur_data_all())
             bb_live <- sum(SessionType == "Live" & KorBB == "Walk", na.rm = TRUE)
             if (bf_live > 0) (bb_live / bf_live) * 100 else NA_real_
           },
@@ -39638,7 +39642,7 @@ deg_to_clock <- function(x) {
             if (at_bats > 0) round(total_bases / at_bats, 3) else NA_real_
           },
           `xWOBA` = {
-            bf_live <- sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE)
+            bf_live <- calculate_bf_live(dplyr::cur_data_all())
             walks <- sum(SessionType == "Live" & KorBB == "Walk", na.rm = TRUE)
             singles <- sum(SessionType == "Live" & PlayResult == "Single", na.rm = TRUE)
             doubles <- sum(SessionType == "Live" & PlayResult == "Double", na.rm = TRUE)
@@ -39657,7 +39661,7 @@ deg_to_clock <- function(x) {
           },
           `FIP` = {
             # Simplified FIP calculation for correlations
-            bf_live <- sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE)
+            bf_live <- calculate_bf_live(dplyr::cur_data_all())
             strikeouts <- sum(SessionType == "Live" & KorBB == "Strikeout", na.rm = TRUE)
             walks <- sum(SessionType == "Live" & KorBB == "Walk", na.rm = TRUE)
             homers <- sum(SessionType == "Live" & PlayResult == "HomeRun", na.rm = TRUE)
@@ -41355,7 +41359,7 @@ deg_to_clock <- function(x) {
                  dplyr::filter(SessionType == "Live") %>%
                  dplyr::group_by(Date) %>%
                  dplyr::summarise(
-                   bf_live = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
+                   bf_live = calculate_bf(dplyr::cur_data_all()),
                    fps_live = sum(Balls == 0 & Strikes == 0 &
                                     PitchCall %in% c("InPlay", "StrikeSwinging", "StrikeCalled", "FoulBallNotFieldable", "FoulBallFieldable"), 
                                   na.rm = TRUE),
@@ -41444,7 +41448,7 @@ deg_to_clock <- function(x) {
                  dplyr::filter(SessionType == "Live") %>%
                  dplyr::group_by(Date) %>%
                  dplyr::summarise(
-                   bf_live = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
+                   bf_live = calculate_bf(dplyr::cur_data_all()),
                    ea_live = sum((Balls == 0 & Strikes == 0 & PitchCall == "InPlay") |
                                    (Balls == 0 & Strikes == 1 & PitchCall %in% c("InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable")) |
                                    (Balls == 1 & Strikes == 0 & PitchCall == "InPlay") |
@@ -41462,7 +41466,7 @@ deg_to_clock <- function(x) {
                  dplyr::filter(SessionType == "Live") %>%
                  dplyr::group_by(Date) %>%
                  dplyr::summarise(
-                   bf_live = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
+                   bf_live = calculate_bf(dplyr::cur_data_all()),
                    k_live = sum(KorBB == "Strikeout", na.rm = TRUE),
                    value = ifelse(bf_live > 0, round(100 * k_live / bf_live, 1), 0),
                    .groups = 'drop'
@@ -41476,7 +41480,7 @@ deg_to_clock <- function(x) {
                  dplyr::filter(SessionType == "Live") %>%
                  dplyr::group_by(Date) %>%
                  dplyr::summarise(
-                   bf_live = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
+                   bf_live = calculate_bf(dplyr::cur_data_all()),
                    bb_live = sum(KorBB == "Walk", na.rm = TRUE),
                    value = ifelse(bf_live > 0, round(100 * bb_live / bf_live, 1), 0),
                    .groups = 'drop'
