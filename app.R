@@ -26575,7 +26575,7 @@ ui <- tagList(
                 '<button id=\"pcu-scatter-reset\" type=\"button\" class=\"btn btn-default btn-sm\">Pick New Columns</button>' +
                 '<span id=\"pcu-scatter-picked\" style=\"font-size:13px; color:#475569;\"></span>' +
               '</div>' +
-              '<div id=\"pcu-scatter-plot\" style=\"flex:1 1 auto;\"></div>' +
+              '<div id=\"pcu-scatter-plot\" style=\"flex:1 1 auto; min-height:420px;\"></div>' +
             '</div>' +
           '</div>';
         document.body.insertAdjacentHTML('beforeend', html);
@@ -26724,6 +26724,20 @@ ui <- tagList(
         document.head.appendChild(s);
       }
 
+      function getScatterPlotEl() {
+        return document.getElementById('pcu-scatter-plot');
+      }
+
+      function ensureScatterPlotHeight() {
+        var el = getScatterPlotEl();
+        if (!el) return null;
+        if (!el.style.height) el.style.height = '100%';
+        if ((el.clientHeight || 0) < 260) {
+          el.style.height = '520px';
+        }
+        return el;
+      }
+
       window.PCUScatter = {
         active: null,
         selected: [],
@@ -26865,11 +26879,16 @@ ui <- tagList(
               document.getElementById('pcu-scatter-status').textContent = 'Unable to load chart library. Please refresh and try again.';
               return;
             }
-            self.render();
+            setTimeout(function() { self.render(); }, 0);
           });
         },
         render: function() {
           if (!this.active || !this.active.dt || this.selected.length < 2) return;
+          var plotEl = ensureScatterPlotHeight();
+          if (!plotEl) {
+            document.getElementById('pcu-scatter-status').textContent = 'Unable to initialize chart container.';
+            return;
+          }
           var xMeta = this.selected[0], yMeta = this.selected[1];
           var labelMeta = pickLabelMeta(this.active.dt, xMeta.idx, yMeta.idx);
           var rows = this.active.dt.rows({ search: 'applied' }).data().toArray();
@@ -26905,10 +26924,15 @@ ui <- tagList(
             }]
           };
           if (xs.length < 2) {
-            Plotly.newPlot('pcu-scatter-plot', [], Object.assign({}, layoutBase, {
-              xaxis:{title:xMeta.name}, yaxis:{title:yMeta.name},
-              annotations:[{text:'Not enough numeric data points for selected columns', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]
-            }), {displayModeBar:true, responsive:true});
+            try {
+              Plotly.newPlot(plotEl, [], Object.assign({}, layoutBase, {
+                xaxis:{title:xMeta.name}, yaxis:{title:yMeta.name},
+                annotations:[{text:'Not enough numeric data points for selected columns', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]
+              }), {displayModeBar:true, responsive:true});
+              setTimeout(function() { try { Plotly.Plots.resize(plotEl); } catch (e) {} }, 40);
+            } catch (e1) {
+              document.getElementById('pcu-scatter-status').textContent = 'Chart render failed: ' + (e1 && e1.message ? e1.message : 'Unknown error');
+            }
             return;
           }
           var fit = linReg(xs, ys);
@@ -26929,16 +26953,21 @@ ui <- tagList(
               name: 'Trendline'
             });
           }
-          Plotly.newPlot('pcu-scatter-plot', traces, Object.assign({}, layoutBase, {
-            xaxis:{title:xMeta.name},
-            yaxis:{title:yMeta.name},
-            annotations: fit ? [{
-              x: 0.99, y: 0.02, xref: 'paper', yref: 'paper',
-              text: 'R² = ' + (isFinite(fit.r2) ? fit.r2.toFixed(3) : 'NA'),
-              showarrow: false, xanchor:'right', yanchor:'bottom',
-              font: {size: 13, color: '#111827'}
-            }] : []
-          }), {displayModeBar:true, responsive:true});
+          try {
+            Plotly.newPlot(plotEl, traces, Object.assign({}, layoutBase, {
+              xaxis:{title:xMeta.name},
+              yaxis:{title:yMeta.name},
+              annotations: fit ? [{
+                x: 0.99, y: 0.02, xref: 'paper', yref: 'paper',
+                text: 'R² = ' + (isFinite(fit.r2) ? fit.r2.toFixed(3) : 'NA'),
+                showarrow: false, xanchor:'right', yanchor:'bottom',
+                font: {size: 13, color: '#111827'}
+              }] : []
+            }), {displayModeBar:true, responsive:true});
+            setTimeout(function() { try { Plotly.Plots.resize(plotEl); } catch (e) {} }, 40);
+          } catch (e2) {
+            document.getElementById('pcu-scatter-status').textContent = 'Chart render failed: ' + (e2 && e2.message ? e2.message : 'Unknown error');
+          }
         },
         reset: function() {
           this.selected = [];
@@ -26950,7 +26979,10 @@ ui <- tagList(
           if (m) m.style.display = 'none';
           loadPlotly(function(ok){
             if (ok && window.Plotly) {
-              Plotly.newPlot('pcu-scatter-plot', [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+              var plotEl = ensureScatterPlotHeight();
+              if (plotEl) {
+                Plotly.newPlot(plotEl, [], {paper_bgcolor:'#fff', plot_bgcolor:'#fff', xaxis:{visible:false}, yaxis:{visible:false}, annotations:[{text:'Select 2 columns to plot', x:0.5, y:0.5, xref:'paper', yref:'paper', showarrow:false}]}, {displayModeBar:true, responsive:true});
+              }
             }
           });
         },
