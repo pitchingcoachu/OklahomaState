@@ -6869,11 +6869,33 @@ calc_state_pct <- function(df, states, calls) {
   if (!is.data.frame(df) || !nrow(df)) return("")
   balls <- suppressWarnings(as.numeric(df$Balls))
   strikes <- suppressWarnings(as.numeric(df$Strikes))
+  valid <- is.finite(balls) & is.finite(strikes)
+  if (!any(valid)) return("0.0%")
+  
+  prev_valid <- c(FALSE, head(valid, -1))
+  new_pa <- valid & ((balls == 0 & strikes == 0) | !prev_valid)
+  pa_id <- cumsum(ifelse(valid, new_pa, FALSE))
+  if (any(valid) && pa_id[valid][1] == 0) pa_id[valid] <- pa_id[valid] + 1L
+  if (all(pa_id[valid] == 0)) pa_id[valid] <- 1L
+  pa_id[!valid] <- NA_integer_
+  
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
-  mask <- count_state_mask(balls, strikes, states)
-  den <- calculate_bf(df)
+  playres <- if ("PlayResult" %in% names(df)) as.character(df$PlayResult) else rep(NA_character_, nrow(df))
+  korbb <- if ("KorBB" %in% names(df)) as.character(df$KorBB) else rep(NA_character_, nrow(df))
+  
+  last_idx <- ave(seq_len(nrow(df)), pa_id, FUN = function(idx) rep(max(idx), length(idx)))
+  is_last <- seq_len(nrow(df)) == last_idx
+  terminal_ok <- (!is.na(playres) & playres != "Undefined") |
+    (!is.na(korbb) & korbb %in% c("Strikeout","Walk"))
+  completed_pa_mask <- is_last & terminal_ok & !is.na(pa_id)
+  completed_pa_ids <- unique(pa_id[completed_pa_mask])
+  
+  den <- length(completed_pa_ids)
   if (!is.finite(den) || den <= 0) return("0.0%")
-  num <- sum(mask & pitch_call %in% calls, na.rm = TRUE)
+  
+  mask <- count_state_mask(balls, strikes, states)
+  event_pa_ids <- unique(pa_id[mask & pitch_call %in% calls & !is.na(pa_id)])
+  num <- length(intersect(completed_pa_ids, event_pa_ids))
   safe_pct(num, den)
 }
 
@@ -7174,21 +7196,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       
       FPSPercent = safe_pct(FPS_all, fps_opp),
       EAPercent  = safe_pct(EA_all,  fps_opp),
-      EarlyPercent = {
-        balls <- suppressWarnings(as.numeric(Balls))
-        strikes <- suppressWarnings(as.numeric(Strikes))
-        pc <- as.character(PitchCall)
-        early_states <- count_state_mask(balls, strikes, list(c(0, 0), c(0, 1), c(1, 0), c(1, 1)))
-        safe_pct(sum(early_states & pc %in% c("InPlay"), na.rm = TRUE), BF_all)
-      },
-      AheadPercent = {
-        balls <- suppressWarnings(as.numeric(Balls))
-        strikes <- suppressWarnings(as.numeric(Strikes))
-        pc <- as.character(PitchCall)
-        strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallFieldable","FoulBallNotFieldable")
-        ahead_states <- count_state_mask(balls, strikes, list(c(0, 1), c(1, 1)))
-        safe_pct(sum(ahead_states & pc %in% strike_calls, na.rm = TRUE), BF_all)
-      },
+      EarlyPercent = calc_early_pct(dplyr::cur_data_all()),
+      AheadPercent = calc_ahead_pct(dplyr::cur_data_all()),
       one_one_w_pct = {
         balls <- suppressWarnings(as.numeric(Balls))
         strikes <- suppressWarnings(as.numeric(Strikes))
