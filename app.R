@@ -2784,7 +2784,7 @@ parse_date_flex <- function(x, pivot = 1970L) {
 
 blank_ea_except_all <- function(df) {
   if (!is.data.frame(df)) return(df)
-  target_cols <- intersect(c("E+A%","Early%","Ahead%"), names(df))
+  target_cols <- intersect(c("E+A%"), names(df))
   if (!length(target_cols)) return(df)
   
   pitch_cols <- intersect(c("Pitch","PitchType","TaggedPitchType","SplitColumn",
@@ -6867,12 +6867,6 @@ count_state_mask <- function(balls, strikes, states) {
 
 calc_state_pct <- function(df, states, calls) {
   if (!is.data.frame(df) || !nrow(df)) return("")
-  # These process rates are intended for game-like/live plate appearances.
-  if ("SessionType" %in% names(df)) {
-    keep_live <- !is.na(df$SessionType) & as.character(df$SessionType) == "Live"
-    df <- df[keep_live, , drop = FALSE]
-    if (!nrow(df)) return("0.0%")
-  }
   balls <- suppressWarnings(as.numeric(df$Balls))
   strikes <- suppressWarnings(as.numeric(df$Strikes))
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
@@ -7121,6 +7115,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
   if (length(qp_pts) != nrow(df)) qp_pts <- rep(NA_real_, nrow(df))
   df$QP_pts <- suppressWarnings(as.numeric(qp_pts))
+  bf_total <- calculate_bf(df)
   
   df %>%
     dplyr::group_by(.data[[group_col]]) %>%
@@ -7152,8 +7147,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       },
       
       # Use shared BF calculation
-      BF_live = calculate_bf(dplyr::cur_data_all()),
-      BF_all  = calculate_bf(dplyr::cur_data_all()),
+      BF_live = bf_total,
+      BF_all  = bf_total,
       K_all   = sum(!is.na(Strikes) & Strikes == 2 & !is.na(PitchCall) & PitchCall %in% c("StrikeSwinging","StrikeCalled"), na.rm = TRUE),
       BB_all  = sum(!is.na(Balls) & Balls == 3 & !is.na(PitchCall) & PitchCall == "BallCalled", na.rm = TRUE),
       
@@ -7179,8 +7174,21 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       
       FPSPercent = safe_pct(FPS_all, fps_opp),
       EAPercent  = safe_pct(EA_all,  fps_opp),
-      EarlyPercent = calc_early_pct(dplyr::cur_data_all()),
-      AheadPercent = calc_ahead_pct(dplyr::cur_data_all()),
+      EarlyPercent = {
+        balls <- suppressWarnings(as.numeric(Balls))
+        strikes <- suppressWarnings(as.numeric(Strikes))
+        pc <- as.character(PitchCall)
+        early_states <- count_state_mask(balls, strikes, list(c(0, 0), c(0, 1), c(1, 0), c(1, 1)))
+        safe_pct(sum(early_states & pc %in% c("InPlay"), na.rm = TRUE), BF_all)
+      },
+      AheadPercent = {
+        balls <- suppressWarnings(as.numeric(Balls))
+        strikes <- suppressWarnings(as.numeric(Strikes))
+        pc <- as.character(PitchCall)
+        strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallFieldable","FoulBallNotFieldable")
+        ahead_states <- count_state_mask(balls, strikes, list(c(0, 1), c(1, 1)))
+        safe_pct(sum(ahead_states & pc %in% strike_calls, na.rm = TRUE), BF_all)
+      },
       one_one_w_pct = {
         balls <- suppressWarnings(as.numeric(Balls))
         strikes <- suppressWarnings(as.numeric(Strikes))
