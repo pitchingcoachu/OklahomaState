@@ -6877,7 +6877,7 @@ calc_state_pct <- function(df, states, calls) {
   strikes <- suppressWarnings(as.numeric(df$Strikes))
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
   mask <- count_state_mask(balls, strikes, states)
-  opp <- sum(mask, na.rm = TRUE)
+  opp <- sum(mask & pitch_call %in% calls, na.rm = TRUE)
   if (!is.finite(opp) || opp <= 0) return("0.0%")
   safe_pct(sum(mask & pitch_call %in% calls, na.rm = TRUE), opp)
 }
@@ -7184,7 +7184,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         pc <- as.character(PitchCall)
         live <- !is.na(SessionType) & as.character(SessionType) == "Live"
         early_states <- count_state_mask(balls, strikes, list(c(0, 0), c(0, 1), c(1, 0), c(1, 1)))
-        early_opp <- sum(live & early_states, na.rm = TRUE)
+        early_opp <- sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE)
         safe_pct(sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE), early_opp)
       },
       AheadPercent = {
@@ -7194,7 +7194,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         live <- !is.na(SessionType) & as.character(SessionType) == "Live"
         strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallFieldable","FoulBallNotFieldable")
         ahead_states <- count_state_mask(balls, strikes, list(c(0, 1), c(1, 1)))
-        ahead_opp <- sum(live & ahead_states, na.rm = TRUE)
+        ahead_opp <- sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE)
         safe_pct(sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE), ahead_opp)
       },
       one_one_w_pct = {
