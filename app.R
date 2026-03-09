@@ -14443,7 +14443,7 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         
         df_live <- df %>% dplyr::filter(SessionType == "Live")
         bf_live <- calculate_bf(df_live)
-        fps_opp <- bf_live
+        fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
         pf_live <- compute_pa_flags(df_live)
         k_live  <- sum(pf_live$is_strikeout, na.rm = TRUE)
         bb_live <- sum(pf_live$is_walk,      na.rm = TRUE)
@@ -18295,7 +18295,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       csw_all <- sum(df$PitchCall %in% c("StrikeSwinging","StrikeCalled"), na.rm = TRUE)
       df_live <- df %>% dplyr::filter(SessionType == "Live")
       bf_live <- calculate_bf(df_live)
-      fps_opp <- bf_live
+      fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
       pf_live <- compute_pa_flags(df_live)
       k_live  <- sum(pf_live$is_strikeout, na.rm = TRUE)
       bb_live <- sum(pf_live$is_walk,      na.rm = TRUE)
@@ -34414,7 +34414,7 @@ deg_to_clock <- function(x) {
           den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
           df_live <- df %>% dplyr::filter(SessionType == "Live")
           bf_live <- calculate_bf(df_live)
-          fps_opp <- bf_live
+          fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
           pf_live <- compute_pa_flags(df_live)
           k_live  <- sum(pf_live$is_strikeout, na.rm = TRUE)
           bb_live <- sum(pf_live$is_walk,      na.rm = TRUE)
