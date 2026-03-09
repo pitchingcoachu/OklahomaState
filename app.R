@@ -6869,33 +6869,16 @@ calc_state_pct <- function(df, states, calls) {
   if (!is.data.frame(df) || !nrow(df)) return("")
   balls <- suppressWarnings(as.numeric(df$Balls))
   strikes <- suppressWarnings(as.numeric(df$Strikes))
-  valid <- is.finite(balls) & is.finite(strikes)
-  if (!any(valid)) return("0.0%")
-  
-  prev_valid <- c(FALSE, head(valid, -1))
-  new_pa <- valid & ((balls == 0 & strikes == 0) | !prev_valid)
-  pa_id <- cumsum(ifelse(valid, new_pa, FALSE))
-  if (any(valid) && pa_id[valid][1] == 0) pa_id[valid] <- pa_id[valid] + 1L
-  if (all(pa_id[valid] == 0)) pa_id[valid] <- 1L
-  pa_id[!valid] <- NA_integer_
-  
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
-  playres <- if ("PlayResult" %in% names(df)) as.character(df$PlayResult) else rep(NA_character_, nrow(df))
-  korbb <- if ("KorBB" %in% names(df)) as.character(df$KorBB) else rep(NA_character_, nrow(df))
-  
-  last_idx <- ave(seq_len(nrow(df)), pa_id, FUN = function(idx) rep(max(idx), length(idx)))
-  is_last <- seq_len(nrow(df)) == last_idx
-  terminal_ok <- (!is.na(playres) & playres != "Undefined") |
-    (!is.na(korbb) & korbb %in% c("Strikeout","Walk"))
-  completed_pa_mask <- is_last & terminal_ok & !is.na(pa_id)
-  completed_pa_ids <- unique(pa_id[completed_pa_mask])
-  
-  den <- length(completed_pa_ids)
+  live <- if ("SessionType" %in% names(df)) {
+    !is.na(df$SessionType) & as.character(df$SessionType) == "Live"
+  } else {
+    rep(TRUE, nrow(df))
+  }
+  den <- sum(live & balls == 0 & strikes == 0, na.rm = TRUE)
   if (!is.finite(den) || den <= 0) return("0.0%")
-  
   mask <- count_state_mask(balls, strikes, states)
-  event_pa_ids <- unique(pa_id[mask & pitch_call %in% calls & !is.na(pa_id)])
-  num <- length(intersect(completed_pa_ids, event_pa_ids))
+  num <- sum(live & mask & pitch_call %in% calls, na.rm = TRUE)
   safe_pct(num, den)
 }
 
