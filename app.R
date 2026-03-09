@@ -7156,13 +7156,23 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       },
       
       # Use shared BF calculation
-      BF_live = bf_total,
+      BF_live = calculate_bf_live(dplyr::cur_data_all()),
       BF_all  = bf_total,
-      K_all   = sum(.is_strikeout, na.rm = TRUE),
-      BB_all  = sum(.is_walk, na.rm = TRUE),
+      K_live  = {
+        d <- dplyr::cur_data_all()
+        d_live <- d[d$SessionType == "Live", , drop = FALSE]
+        pf_live <- compute_pa_flags(d_live)
+        sum(pf_live$is_strikeout, na.rm = TRUE)
+      },
+      BB_live = {
+        d <- dplyr::cur_data_all()
+        d_live <- d[d$SessionType == "Live", , drop = FALSE]
+        pf_live <- compute_pa_flags(d_live)
+        sum(pf_live$is_walk, na.rm = TRUE)
+      },
       
-      KPercent  = safe_pct(K_all,  BF_all),
-      BBPercent = safe_pct(BB_all, BF_all),
+      KPercent  = safe_pct(K_live,  BF_live),
+      BBPercent = safe_pct(BB_live, BF_live),
       QPCount   = sum((QP_pts * 200) >= 100, na.rm = TRUE),
       fps_opp  = sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE),
       
@@ -14501,6 +14511,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
           `QP%`          = qp_pct,
           `K%`           = safe_pct(k_live,   bf_live),
           `BB%`          = safe_pct(bb_live,  bf_live),
+          `Early%`       = calc_early_pct(df),
+          `Ahead%`       = calc_ahead_pct(df),
           `Whiff%`       = safe_pct(sw, den),
           EV = round(ev_all, 1),
           LA = round(la_all, 1),
@@ -35848,6 +35860,8 @@ deg_to_clock <- function(x) {
           KPercent      = safe_pct(k_live, bf_live),
           BBPercent     = safe_pct(bb_live, bf_live),
           FPSPercent    = safe_pct(fps_live, fps_opp),
+          `Early%`      = calc_early_pct(df),
+          `Ahead%`      = calc_ahead_pct(df),
           EAPercent     = safe_pct(ea_live, fps_opp),
           StrikePercent = if (has_pc) safe_pct(strikes, nrow(df)) else "",
           SwingPercent  = safe_pct(sum(!is.na(df$PitchCall) & df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","FoulBall","InPlay"), na.rm = TRUE), nrow(df)),
