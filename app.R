@@ -6873,13 +6873,13 @@ calc_state_pct <- function(df, states, calls) {
     df <- df[keep_live, , drop = FALSE]
     if (!nrow(df)) return("0.0%")
   }
-  bf <- calculate_bf(df)
-  if (!is.finite(bf) || bf <= 0) return("0.0%")
   balls <- suppressWarnings(as.numeric(df$Balls))
   strikes <- suppressWarnings(as.numeric(df$Strikes))
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
   mask <- count_state_mask(balls, strikes, states)
-  safe_pct(sum(mask & pitch_call %in% calls, na.rm = TRUE), bf)
+  opp <- sum(mask, na.rm = TRUE)
+  if (!is.finite(opp) || opp <= 0) return("0.0%")
+  safe_pct(sum(mask & pitch_call %in% calls, na.rm = TRUE), opp)
 }
 
 calc_early_pct <- function(df) {
@@ -7184,7 +7184,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         pc <- as.character(PitchCall)
         live <- !is.na(SessionType) & as.character(SessionType) == "Live"
         early_states <- count_state_mask(balls, strikes, list(c(0, 0), c(0, 1), c(1, 0), c(1, 1)))
-        safe_pct(sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE), BF_all)
+        early_opp <- sum(live & early_states, na.rm = TRUE)
+        safe_pct(sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE), early_opp)
       },
       AheadPercent = {
         balls <- suppressWarnings(as.numeric(Balls))
@@ -7193,7 +7194,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         live <- !is.na(SessionType) & as.character(SessionType) == "Live"
         strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallFieldable","FoulBallNotFieldable")
         ahead_states <- count_state_mask(balls, strikes, list(c(0, 1), c(1, 1)))
-        safe_pct(sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE), BF_all)
+        ahead_opp <- sum(live & ahead_states, na.rm = TRUE)
+        safe_pct(sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE), ahead_opp)
       },
       one_one_w_pct = {
         balls <- suppressWarnings(as.numeric(Balls))
