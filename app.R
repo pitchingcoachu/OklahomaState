@@ -6877,9 +6877,10 @@ calc_state_pct <- function(df, states, calls) {
   strikes <- suppressWarnings(as.numeric(df$Strikes))
   pitch_call <- if ("PitchCall" %in% names(df)) as.character(df$PitchCall) else rep(NA_character_, nrow(df))
   mask <- count_state_mask(balls, strikes, states)
-  opp <- sum(mask & pitch_call %in% calls, na.rm = TRUE)
-  if (!is.finite(opp) || opp <= 0) return("0.0%")
-  safe_pct(sum(mask & pitch_call %in% calls, na.rm = TRUE), opp)
+  den <- calculate_bf(df)
+  if (!is.finite(den) || den <= 0) return("0.0%")
+  num <- sum(mask & pitch_call %in% calls, na.rm = TRUE)
+  safe_pct(num, den)
 }
 
 calc_early_pct <- function(df) {
@@ -7178,25 +7179,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       
       FPSPercent = safe_pct(FPS_all, fps_opp),
       EAPercent  = safe_pct(EA_all,  fps_opp),
-      EarlyPercent = {
-        balls <- suppressWarnings(as.numeric(Balls))
-        strikes <- suppressWarnings(as.numeric(Strikes))
-        pc <- as.character(PitchCall)
-        live <- !is.na(SessionType) & as.character(SessionType) == "Live"
-        early_states <- count_state_mask(balls, strikes, list(c(0, 0), c(0, 1), c(1, 0), c(1, 1)))
-        early_opp <- sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE)
-        safe_pct(sum(live & early_states & pc %in% c("InPlay"), na.rm = TRUE), early_opp)
-      },
-      AheadPercent = {
-        balls <- suppressWarnings(as.numeric(Balls))
-        strikes <- suppressWarnings(as.numeric(Strikes))
-        pc <- as.character(PitchCall)
-        live <- !is.na(SessionType) & as.character(SessionType) == "Live"
-        strike_calls <- c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallFieldable","FoulBallNotFieldable")
-        ahead_states <- count_state_mask(balls, strikes, list(c(0, 1), c(1, 1)))
-        ahead_opp <- sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE)
-        safe_pct(sum(live & ahead_states & pc %in% strike_calls, na.rm = TRUE), ahead_opp)
-      },
+      EarlyPercent = calc_early_pct(dplyr::cur_data_all()),
+      AheadPercent = calc_ahead_pct(dplyr::cur_data_all()),
       one_one_w_pct = {
         balls <- suppressWarnings(as.numeric(Balls))
         strikes <- suppressWarnings(as.numeric(Strikes))
