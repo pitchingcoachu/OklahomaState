@@ -3630,6 +3630,14 @@ calculate_bf_live <- function(df) {
   calculate_bf(d_live)
 }
 
+# BF display count used by Summary/DP tables: count PA starts (0-0).
+calculate_bf_starts <- function(df) {
+  if (!is.data.frame(df) || !nrow(df)) return(0L)
+  if (!all(c("Balls", "Strikes") %in% names(df))) return(0L)
+  # Match Raw Data table logic exactly to avoid factor/character coercion mismatches.
+  as.integer(sum(df$Balls == 0 & df$Strikes == 0, na.rm = TRUE))
+}
+
 # BF that only counts completed PAs (Live only) — helps avoid partial/empty PAs
 calculate_completed_bf <- function(df) {
   d <- df %>% dplyr::filter(SessionType == "Live")
@@ -7181,7 +7189,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
   if (length(qp_pts) != nrow(df)) qp_pts <- rep(NA_real_, nrow(df))
   df$QP_pts <- suppressWarnings(as.numeric(qp_pts))
-  bf_total <- calculate_bf(df)
+  bf_total <- calculate_bf_starts(df)
   
   df %>%
     dplyr::group_by(.data[[group_col]]) %>%
@@ -17955,7 +17963,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           )
         pitch_totals <- ensure_split_column(pitch_totals)
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        all_bf_total <- calculate_bf(df)
+        all_bf_total <- calculate_bf_starts(df)
         
         scores <- ifelse(
           df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
@@ -18074,7 +18082,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           Pitch = "All",
           `#`   = nrow(df),
           Usage = "100%",
-          BF = calculate_bf(df),
+          BF = calculate_bf_starts(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33484,7 +33492,7 @@ deg_to_clock <- function(x) {
             .groups = "drop"
           )
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        all_bf_total <- calculate_bf(df)
+        all_bf_total <- calculate_bf_starts(df)
         
         # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
         scores <- ifelse(
@@ -33710,7 +33718,7 @@ deg_to_clock <- function(x) {
         all_row_data <- list(
           `#`   = nrow(df),
           Usage = "100%",
-          BF = calculate_bf(df),
+          BF = calculate_bf_starts(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33866,7 +33874,7 @@ deg_to_clock <- function(x) {
               state_row_data <- list(
                 `#` = state_pitches,
                 Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-                BF = calculate_bf(state_df),
+                BF = calculate_bf_starts(state_df),
                 IP = ip_fmt(state_IP),
                 FIP = state_FIP,
                 WHIP = state_WHIP,
@@ -33994,7 +34002,7 @@ deg_to_clock <- function(x) {
           dplyr::summarise(
             IP = ip_calculation(dplyr::cur_data_all()),
             P = dplyr::n(),
-            BF = calculate_bf(dplyr::cur_data_all()),
+            BF = calculate_bf_starts(dplyr::cur_data_all()),
             H = sum(PlayResult %in% c("Single", "Double", "Triple", "HomeRun"), na.rm = TRUE),
             XBH = sum(PlayResult %in% c("Double", "Triple", "HomeRun"), na.rm = TRUE),
             Barrels = sum(ExitSpeed >= 95 & Angle >= 10 & Angle <= 35, na.rm = TRUE),
@@ -34020,7 +34028,7 @@ deg_to_clock <- function(x) {
         # All row calculations
         all_ip <- ip_calculation(df)
         all_p <- nrow(df)
-        all_bf <- sum(df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
+        all_bf <- calculate_bf_starts(df)
         all_h <- sum(df$PlayResult %in% c("Single", "Double", "Triple", "HomeRun"), na.rm = TRUE)
         all_xbh <- sum(df$PlayResult %in% c("Double", "Triple", "HomeRun"), na.rm = TRUE)
         all_barrels <- sum(df$ExitSpeed >= 95 & df$Angle >= 10 & df$Angle <= 35, na.rm = TRUE)
@@ -34514,7 +34522,7 @@ deg_to_clock <- function(x) {
             PitchCount    = nrow(df),
             Usage         = "100%",
             Overall       = "100%",
-            BF            = calculate_bf(df),
+            BF            = calculate_bf_starts(df),
             Velo_Avg      = round(nz_mean(df$RelSpeed), 1),
             Velo_Max      = vmax,
             IVB           = round(nz_mean(df$InducedVertBreak), 1),
@@ -34949,7 +34957,7 @@ deg_to_clock <- function(x) {
           .groups = "drop"
         )
       total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-      all_bf_total <- calculate_bf(df)
+      all_bf_total <- calculate_bf_starts(df)
       
       # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
       scores <- ifelse(
@@ -35161,7 +35169,7 @@ deg_to_clock <- function(x) {
       all_row_data <- list(
         `#`   = nrow(df),
         Usage = "100%",
-        BF = calculate_bf(df),
+        BF = calculate_bf_starts(df),
         `RV/100` = "",
         IP = ip_fmt(IP_all),
         FIP = FIP_all,
@@ -35356,7 +35364,7 @@ deg_to_clock <- function(x) {
             state_row_data <- list(
               `#` = state_pitches,
               Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-              BF = calculate_bf(state_df),
+              BF = calculate_bf_starts(state_df),
               `RV/100` = ifelse(is.finite(state_rv100), state_rv100, NA_real_),
               IP = ip_fmt(state_IP),
               FIP = state_FIP,
@@ -35479,7 +35487,7 @@ deg_to_clock <- function(x) {
         dplyr::summarise(
           IP = ip_calculation(dplyr::cur_data_all()),
           P = dplyr::n(),
-          BF = calculate_bf(dplyr::cur_data_all()),
+          BF = calculate_bf_starts(dplyr::cur_data_all()),
           H = sum(PlayResult %in% c("Single", "Double", "Triple", "HomeRun"), na.rm = TRUE),
           XBH = sum(PlayResult %in% c("Double", "Triple", "HomeRun"), na.rm = TRUE),
           Barrels = sum(ExitSpeed >= 95 & Angle >= 10 & Angle <= 35, na.rm = TRUE),
@@ -35505,7 +35513,7 @@ deg_to_clock <- function(x) {
       # All row calculations
       all_ip <- ip_calculation(df)
       all_p <- nrow(df)
-      all_bf <- calculate_bf(df)
+      all_bf <- calculate_bf_starts(df)
       all_h <- sum(df$PlayResult %in% c("Single", "Double", "Triple", "HomeRun"), na.rm = TRUE)
       all_xbh <- sum(df$PlayResult %in% c("Double", "Triple", "HomeRun"), na.rm = TRUE)
       all_barrels <- sum(df$ExitSpeed >= 95 & df$Angle >= 10 & df$Angle <= 35, na.rm = TRUE)
@@ -35892,7 +35900,7 @@ deg_to_clock <- function(x) {
           PitchCount    = nrow(df),
           Usage         = "100%",
           Overall       = "100%",
-          BF            = calculate_bf(df),
+          BF            = calculate_bf_starts(df),
           Velo_Avg      = round(nz_mean(df$RelSpeed), 1),
           Velo_Max      = vmax,
           IVB           = round(nz_mean(df$InducedVertBreak), 1),
