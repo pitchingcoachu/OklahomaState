@@ -7191,7 +7191,9 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
     dplyr::mutate(
       .is_strikeout = pf$is_strikeout,
       .is_walk      = pf$is_walk,
-      .is_swing     = ifelse(!is.na(PitchCall) & PitchCall %in% swing_levels, 1, 0)
+      .is_swing     = ifelse(!is.na(PitchCall) & PitchCall %in% swing_levels, 1, 0),
+      Balls_num     = suppressWarnings(as.numeric(as.character(Balls))),
+      Strikes_num   = suppressWarnings(as.numeric(as.character(Strikes)))
     )
   
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
@@ -7235,18 +7237,18 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       KPercent  = safe_pct(K_live,  BF_live),
       BBPercent = safe_pct(BB_live, BF_live),
       QPCount   = sum((QP_pts * 200) >= 100, na.rm = TRUE),
-      fps_opp  = sum(SessionType == "Live" & Balls == 0 & Strikes == 0, na.rm = TRUE),
+      fps_opp  = sum(SessionType == "Live" & Balls_num == 0 & Strikes_num == 0, na.rm = TRUE),
       
-      FPS_all = sum(SessionType == "Live" & !is.na(Balls) & !is.na(Strikes) & Balls == 0 & Strikes == 0 &
+      FPS_all = sum(SessionType == "Live" & !is.na(Balls_num) & !is.na(Strikes_num) & Balls_num == 0 & Strikes_num == 0 &
                       !is.na(PitchCall) & PitchCall %in% c("InPlay","StrikeSwinging","StrikeCalled","FoulBallNotFieldable","FoulBall","FoulBallFieldable"), na.rm = TRUE),
       EA_all  = sum(
-        SessionType == "Live" & (!is.na(Balls) & !is.na(Strikes) & !is.na(PitchCall)) & (
-          (Balls == 0 & Strikes == 0 & PitchCall == "InPlay") |
-            (Balls == 0 & Strikes == 1 & PitchCall %in% c(
+        SessionType == "Live" & (!is.na(Balls_num) & !is.na(Strikes_num) & !is.na(PitchCall)) & (
+          (Balls_num == 0 & Strikes_num == 0 & PitchCall == "InPlay") |
+            (Balls_num == 0 & Strikes_num == 1 & PitchCall %in% c(
               "InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable","FoulBall"
             )) |
-            (Balls == 1 & Strikes == 0 & PitchCall == "InPlay") |
-            (Balls == 1 & Strikes == 1 & PitchCall %in% c(
+            (Balls_num == 1 & Strikes_num == 0 & PitchCall == "InPlay") |
+            (Balls_num == 1 & Strikes_num == 1 & PitchCall %in% c(
               "InPlay", "StrikeCalled", "StrikeSwinging", "FoulBallNotFieldable", "FoulBallFieldable","FoulBall"
             ))
         ), na.rm = TRUE
@@ -7257,8 +7259,8 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       EarlyPercent = calc_early_pct(dplyr::pick(dplyr::everything())),
       AheadPercent = calc_ahead_pct(dplyr::pick(dplyr::everything())),
       one_one_w_pct = {
-        balls <- suppressWarnings(as.numeric(Balls))
-        strikes <- suppressWarnings(as.numeric(Strikes))
+        balls <- Balls_num
+        strikes <- Strikes_num
         is_one_one <- !is.na(balls) & !is.na(strikes) & balls == 1 & strikes == 1
         pc <- as.character(PitchCall)
         safe_pct(sum(is_one_one & pc %in% one_one_strike_calls, na.rm = TRUE), sum(is_one_one, na.rm = TRUE))
