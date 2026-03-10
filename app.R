@@ -17955,10 +17955,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           )
         pitch_totals <- ensure_split_column(pitch_totals)
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        bf_by_split <- df %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
-        bf_by_split <- ensure_split_column(bf_by_split)
+        all_bf_total <- calculate_bf(df)
         
         scores <- ifelse(
           df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
@@ -18007,7 +18004,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         
         res_pt <- pitch_totals %>%
           dplyr::left_join(per_type, by = "SplitColumn") %>%
-          dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
           dplyr::mutate(
@@ -18019,7 +18015,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = dplyr::coalesce(BF, 0),
+            BF       = all_bf_total,
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -18393,7 +18389,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           PitchCount    = nrow(df),
           Usage         = "100%",
           Overall       = "100%",
-          BF            = bf_live,
+          BF            = calculate_bf(df),
           Velo_Avg      = round(nz_mean(df$RelSpeed), 1),
           Velo_Max      = vmax,
           IVB           = round(nz_mean(df$InducedVertBreak), 1),
@@ -33488,9 +33484,7 @@ deg_to_clock <- function(x) {
             .groups = "drop"
           )
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        bf_by_split <- df %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
+        all_bf_total <- calculate_bf(df)
         
         # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
         scores <- ifelse(
@@ -33552,7 +33546,6 @@ deg_to_clock <- function(x) {
         # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
         res_pt <- pitch_totals %>%
           dplyr::left_join(per_type, by = "SplitColumn") %>%
-          dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
           dplyr::mutate(
@@ -33564,7 +33557,7 @@ deg_to_clock <- function(x) {
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = dplyr::coalesce(BF, 0),
+            BF       = all_bf_total,
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -34521,7 +34514,7 @@ deg_to_clock <- function(x) {
             PitchCount    = nrow(df),
             Usage         = "100%",
             Overall       = "100%",
-            BF            = bf_live,
+            BF            = calculate_bf(df),
             Velo_Avg      = round(nz_mean(df$RelSpeed), 1),
             Velo_Max      = vmax,
             IVB           = round(nz_mean(df$InducedVertBreak), 1),
@@ -34956,9 +34949,7 @@ deg_to_clock <- function(x) {
           .groups = "drop"
         )
       total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-      bf_by_split <- df %>%
-        dplyr::group_by(SplitColumn) %>%
-        dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
+      all_bf_total <- calculate_bf(df)
       
       # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
       scores <- ifelse(
@@ -35018,7 +35009,6 @@ deg_to_clock <- function(x) {
       # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
       res_pt <- pitch_totals %>%
         dplyr::left_join(per_type, by = "SplitColumn") %>%
-        dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
         dplyr::left_join(evla,         by = "SplitColumn") %>%
         dplyr::left_join(gb,           by = "SplitColumn") %>%
         dplyr::mutate(
@@ -35030,7 +35020,7 @@ deg_to_clock <- function(x) {
           `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
           Outs     = (AB - H) + Sac,
           IP_raw   = safe_div(Outs, 3),
-          BF       = dplyr::coalesce(BF, 0),
+          BF       = all_bf_total,
           `#`      = Pitches,
           Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
           FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -35902,7 +35892,7 @@ deg_to_clock <- function(x) {
           PitchCount    = nrow(df),
           Usage         = "100%",
           Overall       = "100%",
-          BF            = bf_live,
+          BF            = calculate_bf(df),
           Velo_Avg      = round(nz_mean(df$RelSpeed), 1),
           Velo_Max      = vmax,
           IVB           = round(nz_mean(df$InducedVertBreak), 1),
