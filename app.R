@@ -3681,8 +3681,29 @@ calculate_live_pa_outcomes <- function(df) {
   bb_extra <- (!is.na(play_res) & play_res == "Walk") |
     (!is.na(korbb) & korbb == "Walk")
 
-  k <- sum(is_last & (flags$is_strikeout | k_extra), na.rm = TRUE)
-  bb <- sum(is_last & (flags$is_walk | bb_extra), na.rm = TRUE)
+  balls <- suppressWarnings(as.numeric(d$Balls))
+  strikes <- suppressWarnings(as.numeric(d$Strikes))
+  valid <- is.finite(balls) & is.finite(strikes)
+  prev_valid <- c(FALSE, head(valid, -1))
+  new_pa <- valid & ((balls == 0 & strikes == 0) | !prev_valid)
+  pa_id <- cumsum(ifelse(valid, new_pa, FALSE))
+  if (any(valid) && pa_id[valid][1] == 0) pa_id[valid] <- pa_id[valid] + 1L
+  if (any(valid) && all(pa_id[valid] == 0)) pa_id[valid] <- 1L
+  pa_id[!valid] <- NA_integer_
+
+  k_rows <- is_last & (flags$is_strikeout | k_extra)
+  bb_rows <- is_last & (flags$is_walk | bb_extra)
+  # Fallback when KorBB/PlayResult are on non-last rows for a PA.
+  k_rows <- k_rows | k_extra
+  bb_rows <- bb_rows | bb_extra
+
+  if (any(!is.na(pa_id))) {
+    k <- length(unique(pa_id[k_rows & !is.na(pa_id)]))
+    bb <- length(unique(pa_id[bb_rows & !is.na(pa_id)]))
+  } else {
+    k <- sum(k_rows, na.rm = TRUE)
+    bb <- sum(bb_rows, na.rm = TRUE)
+  }
   bf <- calculate_bf(d)
 
   list(
@@ -17980,17 +18001,20 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           dplyr::select(Pitch, xWOBA, xISO, BABIP, `Barrel%`, `RV/100`)
         extras <- ensure_split_column(extras)
         
-        res_pt <- per_type %>%
-          dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
+        res_pt <- pitch_totals %>%
+          dplyr::left_join(per_type, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
+          dplyr::mutate(
+            dplyr::across(c(PA, HBP, Sac, `1B`, `2B`, `3B`, HR, Kct, BBct, AB, H, TB), ~ dplyr::coalesce(., 0))
+          ) %>%
           dplyr::mutate(
             `Swing%` = safe_div(Swings, Pitches),
             `Whiff%` = safe_div(Whiffs, Swings),
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = PA,
+            BF       = dplyr::coalesce(PA, 0),
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -33518,17 +33542,20 @@ deg_to_clock <- function(x) {
         }
         
         # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
-        res_pt <- per_type %>%
-          dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
+        res_pt <- pitch_totals %>%
+          dplyr::left_join(per_type, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
+          dplyr::mutate(
+            dplyr::across(c(PA, HBP, Sac, `1B`, `2B`, `3B`, HR, Kct, BBct, AB, H, TB), ~ dplyr::coalesce(., 0))
+          ) %>%
           dplyr::mutate(
             `Swing%` = safe_div(Swings, Pitches),
             `Whiff%` = safe_div(Whiffs, Swings),
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = PA,
+            BF       = dplyr::coalesce(PA, 0),
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -34977,17 +35004,20 @@ deg_to_clock <- function(x) {
       }
       
       # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
-      res_pt <- per_type %>%
-        dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
+      res_pt <- pitch_totals %>%
+        dplyr::left_join(per_type, by = "SplitColumn") %>%
         dplyr::left_join(evla,         by = "SplitColumn") %>%
         dplyr::left_join(gb,           by = "SplitColumn") %>%
+        dplyr::mutate(
+          dplyr::across(c(PA, HBP, Sac, `1B`, `2B`, `3B`, HR, Kct, BBct, AB, H, TB), ~ dplyr::coalesce(., 0))
+        ) %>%
         dplyr::mutate(
           `Swing%` = safe_div(Swings, Pitches),
           `Whiff%` = safe_div(Whiffs, Swings),
           `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
           Outs     = (AB - H) + Sac,
           IP_raw   = safe_div(Outs, 3),
-          BF       = PA,
+          BF       = dplyr::coalesce(PA, 0),
           `#`      = Pitches,
           Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
           FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
