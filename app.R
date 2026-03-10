@@ -3886,7 +3886,7 @@ make_session_logs_table <- function(df) {
         Date     = as.Date(d$Date[1]),
         `#`      = nrow(d),
         Usage    = "",
-        BF       = PAt,
+        BF       = calculate_bf_live(d),
         IP       = .s_ip_fmt(IP_all),
         FIP      = FIP_all,
         WHIP     = WHIP_all,
@@ -7181,7 +7181,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
   if (length(qp_pts) != nrow(df)) qp_pts <- rep(NA_real_, nrow(df))
   df$QP_pts <- suppressWarnings(as.numeric(qp_pts))
-  bf_total <- calculate_bf(df)
+  bf_total <- calculate_bf_live(df)
   
   df %>%
     dplyr::group_by(.data[[group_col]]) %>%
@@ -17955,6 +17955,10 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           )
         pitch_totals <- ensure_split_column(pitch_totals)
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
+        bf_by_split <- df %>%
+          dplyr::group_by(SplitColumn) %>%
+          dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
+        bf_by_split <- ensure_split_column(bf_by_split)
         
         scores <- ifelse(
           df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
@@ -18003,6 +18007,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         
         res_pt <- pitch_totals %>%
           dplyr::left_join(per_type, by = "SplitColumn") %>%
+          dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
           dplyr::mutate(
@@ -18014,7 +18019,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = dplyr::coalesce(PA, 0),
+            BF       = dplyr::coalesce(BF, 0),
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -18073,7 +18078,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           Pitch = "All",
           `#`   = nrow(df),
           Usage = "100%",
-          BF = PAt,
+          BF = calculate_bf_live(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33483,6 +33488,9 @@ deg_to_clock <- function(x) {
             .groups = "drop"
           )
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
+        bf_by_split <- df %>%
+          dplyr::group_by(SplitColumn) %>%
+          dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
         
         # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
         scores <- ifelse(
@@ -33544,6 +33552,7 @@ deg_to_clock <- function(x) {
         # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
         res_pt <- pitch_totals %>%
           dplyr::left_join(per_type, by = "SplitColumn") %>%
+          dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
           dplyr::left_join(evla,         by = "SplitColumn") %>%
           dplyr::left_join(gb,           by = "SplitColumn") %>%
           dplyr::mutate(
@@ -33555,7 +33564,7 @@ deg_to_clock <- function(x) {
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = dplyr::coalesce(PA, 0),
+            BF       = dplyr::coalesce(BF, 0),
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -33708,7 +33717,7 @@ deg_to_clock <- function(x) {
         all_row_data <- list(
           `#`   = nrow(df),
           Usage = "100%",
-          BF = PAt,
+          BF = calculate_bf_live(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33864,7 +33873,7 @@ deg_to_clock <- function(x) {
               state_row_data <- list(
                 `#` = state_pitches,
                 Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-                BF = state_PA,
+                BF = calculate_bf_live(state_df),
                 IP = ip_fmt(state_IP),
                 FIP = state_FIP,
                 WHIP = state_WHIP,
@@ -34947,6 +34956,9 @@ deg_to_clock <- function(x) {
           .groups = "drop"
         )
       total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
+      bf_by_split <- df %>%
+        dplyr::group_by(SplitColumn) %>%
+        dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
       
       # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
       scores <- ifelse(
@@ -35006,6 +35018,7 @@ deg_to_clock <- function(x) {
       # Build per-type rows (+ #, Usage, BF, IP, FIP, WHIP, Pitching+)
       res_pt <- pitch_totals %>%
         dplyr::left_join(per_type, by = "SplitColumn") %>%
+        dplyr::left_join(bf_by_split, by = "SplitColumn") %>%
         dplyr::left_join(evla,         by = "SplitColumn") %>%
         dplyr::left_join(gb,           by = "SplitColumn") %>%
         dplyr::mutate(
@@ -35017,7 +35030,7 @@ deg_to_clock <- function(x) {
           `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
           Outs     = (AB - H) + Sac,
           IP_raw   = safe_div(Outs, 3),
-          BF       = dplyr::coalesce(PA, 0),
+          BF       = dplyr::coalesce(BF, 0),
           `#`      = Pitches,
           Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
           FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -35158,7 +35171,7 @@ deg_to_clock <- function(x) {
       all_row_data <- list(
         `#`   = nrow(df),
         Usage = "100%",
-        BF = PAt,
+        BF = calculate_bf_live(df),
         `RV/100` = "",
         IP = ip_fmt(IP_all),
         FIP = FIP_all,
@@ -35353,7 +35366,7 @@ deg_to_clock <- function(x) {
             state_row_data <- list(
               `#` = state_pitches,
               Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-              BF = state_PA,
+              BF = calculate_bf_live(state_df),
               `RV/100` = ifelse(is.finite(state_rv100), state_rv100, NA_real_),
               IP = ip_fmt(state_IP),
               FIP = state_FIP,
