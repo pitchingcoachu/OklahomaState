@@ -6709,6 +6709,7 @@ compute_process_results <- function(df, mode = "All") {
       
       pitch_n   <- nrow(dfi)
       dfi_live  <- dfi %>% dplyr::filter(SessionType == "Live")
+      dfi_use_for_rv <- if (nrow(dfi_live)) dfi_live else dfi
       # Use PA-ending outcomes so K%/BB% numerators align with BF denominator.
       kbb_from_terminal_pa <- function(d) {
         if (!nrow(d)) return(list(BF = 0L, K = 0L, BB = 0L))
@@ -6767,7 +6768,14 @@ compute_process_results <- function(df, mode = "All") {
       barrel_n <- sum(dfi$SessionType == "Live" & dfi$PitchCall == "InPlay" &
                         is.finite(dfi$ExitSpeed) & is.finite(dfi$Angle) &
                         dfi$ExitSpeed >= 95 & dfi$Angle >= 10 & dfi$Angle <= 35, na.rm = TRUE)
-      Barrel_pct <- if (inplay_live > 0) paste0(round(100 * barrel_n / inplay_live, 1), "%") else ""
+      barrel_n_all <- sum(dfi$PitchCall == "InPlay" &
+                            is.finite(dfi$ExitSpeed) & is.finite(dfi$Angle) &
+                            dfi$ExitSpeed >= 95 & dfi$Angle >= 10 & dfi$Angle <= 35, na.rm = TRUE)
+      Barrel_pct <- if (inplay_live > 0) {
+        paste0(round(100 * barrel_n / inplay_live, 1), "%")
+      } else if (inplay_all > 0) {
+        paste0(round(100 * barrel_n_all / inplay_all, 1), "%")
+      } else ""
       
       # AVG / SLG over AB (exclude Undefined, Sacrifice)
       is_ab   <- !is.na(dfi$PlayResult) & !(dfi$PlayResult %in% c("Undefined","Sacrifice"))
@@ -6830,13 +6838,13 @@ compute_process_results <- function(df, mode = "All") {
       # RV/100 (Live only; leave blank for bullpens/other sessions)
       rv_vals <- mapply(
         calc_run_value,
-        dfi_live$PitchCall,
-        dfi_live$PlayResult,
-        if ("KorBB" %in% names(dfi_live)) dfi_live$KorBB else NA
+        dfi_use_for_rv$PitchCall,
+        dfi_use_for_rv$PlayResult,
+        if ("KorBB" %in% names(dfi_use_for_rv)) dfi_use_for_rv$KorBB else NA
       )
       rv_sum <- sum(rv_vals, na.rm = TRUE)
-      pitch_n_live <- nrow(dfi_live)
-      rv100  <- if (pitch_n_live > 0) ((rv_sum / pitch_n_live) * 100) - 0.43 else NA_real_
+      pitch_n_rv <- nrow(dfi_use_for_rv)
+      rv100  <- if (pitch_n_rv > 0) ((rv_sum / pitch_n_rv) * 100) - 0.43 else NA_real_
       rv100_fmt <- ifelse(is.finite(rv100), sprintf("%.1f", rv100), "")
       
       # Baseball-style IP text (e.g., 2.1, 3.2)
@@ -7189,12 +7197,11 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
   if (length(qp_pts) != nrow(df)) qp_pts <- rep(NA_real_, nrow(df))
   df$QP_pts <- suppressWarnings(as.numeric(qp_pts))
-  bf_total <- calculate_bf_starts(df)
-  
   df %>%
     dplyr::group_by(.data[[group_col]]) %>%
     dplyr::summarise(
       PitchCount    = dplyr::n(),
+      BF_group      = calculate_bf_starts(dplyr::pick(dplyr::everything())),
       Velo_Avg      = round(nz_mean(RelSpeed), 1),
       Velo_Max      = round(suppressWarnings(max(as.numeric(RelSpeed), na.rm = TRUE)), 1),
       IVB           = round(nz_mean(InducedVertBreak), 1),
@@ -7222,7 +7229,6 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       
       # Use shared Live PA outcome calculation
       BF_live = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$bf,
-      BF_all  = bf_total,
       K_live  = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$k,
       BB_live = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$bb,
       
@@ -7310,7 +7316,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
       Overall  = Usage
     ) %>%
     dplyr::select(
-      PitchType, PitchCount, Usage, Overall, BF = BF_all,
+      PitchType, PitchCount, Usage, Overall, BF = BF_group,
       Velo_Avg, Velo_Max, IVB, HB,
       ReleaseTilt, BreakTilt, SpinEff, SpinRate,
       RelHeight, RelSide, VertApprAngle, HorzApprAngle, Extension,
@@ -17956,6 +17962,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           dplyr::group_by(SplitColumn) %>%
           dplyr::summarise(
             Pitches       = dplyr::n(),
+            BF            = calculate_bf_starts(dplyr::cur_data_all()),
             Swings        = sum(!is.na(PitchCall) & PitchCall %in% swing_levels, na.rm = TRUE),
             Whiffs        = sum(PitchCall == "StrikeSwinging", na.rm = TRUE),
             CalledStrikes = sum(PitchCall == "StrikeCalled",    na.rm = TRUE),
@@ -17963,7 +17970,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           )
         pitch_totals <- ensure_split_column(pitch_totals)
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        all_bf_total <- calculate_bf_starts(df)
         
         scores <- ifelse(
           df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
@@ -18023,7 +18029,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = all_bf_total,
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -33486,13 +33491,13 @@ deg_to_clock <- function(x) {
           dplyr::group_by(SplitColumn) %>%
           dplyr::summarise(
             Pitches       = dplyr::n(),
+            BF            = calculate_bf_starts(dplyr::cur_data_all()),
             Swings        = sum(!is.na(PitchCall) & PitchCall %in% swing_levels, na.rm = TRUE),
             Whiffs        = sum(PitchCall == "StrikeSwinging", na.rm = TRUE),
             CalledStrikes = sum(PitchCall == "StrikeCalled",    na.rm = TRUE),
             .groups = "drop"
           )
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-        all_bf_total <- calculate_bf_starts(df)
         
         # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
         scores <- ifelse(
@@ -33565,7 +33570,6 @@ deg_to_clock <- function(x) {
             `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
             Outs     = (AB - H) + Sac,
             IP_raw   = safe_div(Outs, 3),
-            BF       = all_bf_total,
             `#`      = Pitches,
             Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
             FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
@@ -34951,13 +34955,13 @@ deg_to_clock <- function(x) {
         dplyr::group_by(SplitColumn) %>%
         dplyr::summarise(
           Pitches       = dplyr::n(),
+          BF            = calculate_bf_starts(dplyr::cur_data_all()),
           Swings        = sum(!is.na(PitchCall) & PitchCall %in% swing_levels, na.rm = TRUE),
           Whiffs        = sum(PitchCall == "StrikeSwinging", na.rm = TRUE),
           CalledStrikes = sum(PitchCall == "StrikeCalled",    na.rm = TRUE),
           .groups = "drop"
         )
       total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
-      all_bf_total <- calculate_bf_starts(df)
       
       # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
       scores <- ifelse(
@@ -35028,7 +35032,6 @@ deg_to_clock <- function(x) {
           `CSW%`   = safe_div(Whiffs + CalledStrikes, Pitches),
           Outs     = (AB - H) + Sac,
           IP_raw   = safe_div(Outs, 3),
-          BF       = all_bf_total,
           `#`      = Pitches,
           Usage    = ifelse(total_pitches > 0, paste0(round(100*Pitches/total_pitches,1), "%"), ""),
           FIP_tmp  = safe_div(13*HR + 3*(BBct + HBP) - 2*Kct, IP_raw),
