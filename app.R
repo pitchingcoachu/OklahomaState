@@ -3886,7 +3886,7 @@ make_session_logs_table <- function(df) {
         Date     = as.Date(d$Date[1]),
         `#`      = nrow(d),
         Usage    = "",
-        BF       = calculate_bf_live(d),
+        BF       = calculate_bf(d),
         IP       = .s_ip_fmt(IP_all),
         FIP      = FIP_all,
         WHIP     = WHIP_all,
@@ -7181,7 +7181,7 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
   qp_pts <- tryCatch(compute_qp_points(df), error = function(e) rep(NA_real_, nrow(df)))
   if (length(qp_pts) != nrow(df)) qp_pts <- rep(NA_real_, nrow(df))
   df$QP_pts <- suppressWarnings(as.numeric(qp_pts))
-  bf_total <- calculate_bf_live(df)
+  bf_total <- calculate_bf(df)
   
   df %>%
     dplyr::group_by(.data[[group_col]]) %>%
@@ -17957,7 +17957,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
         bf_by_split <- df %>%
           dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
+          dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
         bf_by_split <- ensure_split_column(bf_by_split)
         
         scores <- ifelse(
@@ -18078,7 +18078,7 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           Pitch = "All",
           `#`   = nrow(df),
           Usage = "100%",
-          BF = calculate_bf_live(df),
+          BF = calculate_bf(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33490,7 +33490,7 @@ deg_to_clock <- function(x) {
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
         bf_by_split <- df %>%
           dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
+          dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
         
         # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
         scores <- ifelse(
@@ -33717,7 +33717,7 @@ deg_to_clock <- function(x) {
         all_row_data <- list(
           `#`   = nrow(df),
           Usage = "100%",
-          BF = calculate_bf_live(df),
+          BF = calculate_bf(df),
           IP = ip_fmt(IP_all),
           FIP = FIP_all,
           WHIP = WHIP_all,
@@ -33873,7 +33873,7 @@ deg_to_clock <- function(x) {
               state_row_data <- list(
                 `#` = state_pitches,
                 Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-                BF = calculate_bf_live(state_df),
+                BF = calculate_bf(state_df),
                 IP = ip_fmt(state_IP),
                 FIP = state_FIP,
                 WHIP = state_WHIP,
@@ -34958,7 +34958,7 @@ deg_to_clock <- function(x) {
       total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
       bf_by_split <- df %>%
         dplyr::group_by(SplitColumn) %>%
-        dplyr::summarise(BF = calculate_bf_live(dplyr::pick(dplyr::everything())), .groups = "drop")
+        dplyr::summarise(BF = calculate_bf(dplyr::pick(dplyr::everything())), .groups = "drop")
       
       # Command scoring vector and per-type Command+ / Stuff+ / Pitching+
       scores <- ifelse(
@@ -35171,7 +35171,7 @@ deg_to_clock <- function(x) {
       all_row_data <- list(
         `#`   = nrow(df),
         Usage = "100%",
-        BF = calculate_bf_live(df),
+        BF = calculate_bf(df),
         `RV/100` = "",
         IP = ip_fmt(IP_all),
         FIP = FIP_all,
@@ -35366,7 +35366,7 @@ deg_to_clock <- function(x) {
             state_row_data <- list(
               `#` = state_pitches,
               Usage = ifelse(total_pitches > 0, paste0(round(100*state_pitches/total_pitches, 1), "%"), ""),
-              BF = calculate_bf_live(state_df),
+              BF = calculate_bf(state_df),
               `RV/100` = ifelse(is.finite(state_rv100), state_rv100, NA_real_),
               IP = ip_fmt(state_IP),
               FIP = state_FIP,
