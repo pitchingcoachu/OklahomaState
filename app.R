@@ -3695,14 +3695,11 @@ calculate_live_pa_outcomes <- function(df) {
   )
 }
 
-# Live outcomes aligned to Results table logic:
+# Outcomes aligned to Results table logic:
 # denominator = completed terminal PAs, numerators = terminal K/BB outcomes.
 calculate_live_results_outcomes <- function(df) {
   if (!is.data.frame(df) || !nrow(df)) return(list(pa = 0L, k = 0L, bb = 0L))
   d <- df
-  if ("SessionType" %in% names(d)) {
-    d <- d %>% dplyr::filter(!is.na(SessionType) & SessionType == "Live")
-  }
   if (!nrow(d)) return(list(pa = 0L, k = 0L, bb = 0L))
   if (!"PlayResult" %in% names(d)) d$PlayResult <- NA_character_
   if (!"KorBB" %in% names(d)) d$KorBB <- NA_character_
