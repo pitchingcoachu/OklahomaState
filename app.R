@@ -3695,6 +3695,35 @@ calculate_live_pa_outcomes <- function(df) {
   )
 }
 
+# Live outcomes aligned to Results table logic:
+# denominator = completed terminal PAs, numerators = terminal K/BB outcomes.
+calculate_live_results_outcomes <- function(df) {
+  if (!is.data.frame(df) || !nrow(df)) return(list(pa = 0L, k = 0L, bb = 0L))
+  d <- df
+  if ("SessionType" %in% names(d)) {
+    d <- d %>% dplyr::filter(!is.na(SessionType) & SessionType == "Live")
+  }
+  if (!nrow(d)) return(list(pa = 0L, k = 0L, bb = 0L))
+  if (!"PlayResult" %in% names(d)) d$PlayResult <- NA_character_
+  if (!"KorBB" %in% names(d)) d$KorBB <- NA_character_
+
+  play_res <- as.character(d$PlayResult)
+  korbb <- as.character(d$KorBB)
+  strikeout_results <- c("Strikeout", "StrikeoutSwinging", "StrikeoutLooking")
+  term <- (!is.na(play_res) & play_res != "Undefined") |
+    (!is.na(korbb) & korbb %in% c("Strikeout", "Walk"))
+
+  pa <- sum(term, na.rm = TRUE)
+  if (pa <= 0) return(list(pa = 0L, k = 0L, bb = 0L))
+
+  k <- sum(term & (((!is.na(korbb) & korbb == "Strikeout") |
+                     (!is.na(play_res) & play_res %in% strikeout_results))), na.rm = TRUE)
+  bb <- sum(term & (((!is.na(korbb) & korbb == "Walk") |
+                      (!is.na(play_res) & play_res == "Walk"))), na.rm = TRUE)
+
+  list(pa = as.integer(pa), k = as.integer(k), bb = as.integer(bb))
+}
+
 # --- Keep Process tables in canonical order: "#, BF, Usage, ..."
 enforce_process_order <- function(df) {
   if (all(c("#","BF") %in% names(df)))   df <- dplyr::relocate(df, `BF`, .after = `#`)
@@ -7203,10 +7232,10 @@ make_summary <- function(df, group_col = "TaggedPitchType") {
         safe_pct(sum(comp, na.rm = TRUE), sum(!is.na(comp)))
       },
       
-      # Use shared Live PA outcome calculation
-      BF_live = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$bf,
-      K_live  = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$k,
-      BB_live = calculate_live_pa_outcomes(dplyr::pick(dplyr::everything()))$bb,
+      # Live K/BB aligned to Results table terminal-PA logic.
+      BF_live = calculate_live_results_outcomes(dplyr::pick(dplyr::everything()))$pa,
+      K_live  = calculate_live_results_outcomes(dplyr::pick(dplyr::everything()))$k,
+      BB_live = calculate_live_results_outcomes(dplyr::pick(dplyr::everything()))$bb,
       
       KPercent  = safe_pct(K_live,  BF_live),
       BBPercent = safe_pct(BB_live, BF_live),
@@ -14488,8 +14517,8 @@ mod_camps_server <- function(id, is_active = shiny::reactive(TRUE)) {
         sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
         den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
         
-        live_pa <- calculate_live_pa_outcomes(df)
-        bf_live <- live_pa$bf
+        live_pa <- calculate_live_results_outcomes(df)
+        bf_live <- live_pa$pa
         fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
         k_live  <- live_pa$k
         bb_live <- live_pa$bb
@@ -18344,8 +18373,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
       sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
       den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
       csw_all <- sum(df$PitchCall %in% c("StrikeSwinging","StrikeCalled"), na.rm = TRUE)
-      live_pa <- calculate_live_pa_outcomes(df)
-      bf_live <- live_pa$bf
+      live_pa <- calculate_live_results_outcomes(df)
+      bf_live <- live_pa$pa
       fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
       k_live  <- live_pa$k
       bb_live <- live_pa$bb
@@ -34465,8 +34494,8 @@ deg_to_clock <- function(x) {
           strikes <- sum(df$PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBallNotFieldable","InPlay","FoulBallFieldable"), na.rm = TRUE)
           sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
           den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
-          live_pa <- calculate_live_pa_outcomes(df)
-          bf_live <- live_pa$bf
+          live_pa <- calculate_live_results_outcomes(df)
+          bf_live <- live_pa$pa
           fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
           k_live  <- live_pa$k
           bb_live <- live_pa$bb
@@ -35847,8 +35876,8 @@ deg_to_clock <- function(x) {
         sw      <- sum(df$PitchCall == "StrikeSwinging", na.rm = TRUE)
         den     <- sum(df$PitchCall %in% c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay"), na.rm = TRUE)
         # Use shared BF calculation function (Live subset for K/BB context)
-        live_pa <- calculate_live_pa_outcomes(df)
-        bf_live <- live_pa$bf
+        live_pa <- calculate_live_results_outcomes(df)
+        bf_live <- live_pa$pa
         fps_opp <- sum(df$SessionType == "Live" & df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
         k_live  <- live_pa$k
         bb_live <- live_pa$bb
