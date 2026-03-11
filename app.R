@@ -2783,34 +2783,8 @@ parse_date_flex <- function(x, pivot = 1970L) {
 }
 
 blank_ea_except_all <- function(df) {
+  # Deprecated: keep E+A% values for all rows/splits.
   if (!is.data.frame(df)) return(df)
-  target_cols <- intersect(c("E+A%"), names(df))
-  if (!length(target_cols)) return(df)
-  
-  pitch_cols <- intersect(c("Pitch","PitchType","TaggedPitchType","SplitColumn",
-                            "Batter Hand","Count","After Count","Velocity","IVB","HB",
-                            "Batter","Pitcher Hand","Date","Player"), names(df))
-  
-  if ("Player" %in% pitch_cols) return(df)
-  if (!length(pitch_cols)) return(df)
-  
-  pitch_vals <- tryCatch({
-    col_name <- pitch_cols[1]
-    if (!col_name %in% names(df)) return(character(0))
-    tolower(as.character(df[[col_name]]))
-  }, error = function(e) {
-    return(character(nrow(df)))
-  })
-  
-  if (!length(pitch_vals) || length(pitch_vals) != nrow(df)) return(df)
-  
-  keep_all <- is.na(pitch_vals) | pitch_vals == "all"
-  keep_all[is.na(keep_all)] <- FALSE
-  
-  for (col in target_cols) {
-    df[[col]] <- as.character(df[[col]])
-    df[[col]][!keep_all] <- ""
-  }
   df
 }
 
