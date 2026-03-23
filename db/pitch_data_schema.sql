@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS public.pitch_events (
   OutsOnPlay text,
   Batter text,
   Catcher text,
+  PitcherTeam text,
+  BatterTeam text,
+  HomeTeam text,
+  AwayTeam text,
   VideoClip text,
   VideoClip2 text,
   VideoClip3 text,
@@ -125,3 +129,8 @@ ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS BasePositionX text;
 ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS BasePositionY text;
 ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS BasePositionZ text;
 ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS TargetBase text;
+
+ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS PitcherTeam text;
+ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS BatterTeam text;
+ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS HomeTeam text;
+ALTER TABLE public.pitch_events ADD COLUMN IF NOT EXISTS AwayTeam text;
