@@ -392,45 +392,57 @@ load_team_filters <- function() {
     if (!is.null(cfg$team_code) && nzchar(trimws(cfg$team_code))) {
       filters$team_code <- toupper(trimws(cfg$team_code))
     }
-    if (!is.null(cfg$team_code_markers)) {
-      filters$team_code_markers <- normalize_name_list(cfg$team_code_markers)
-    }
+    markers <- c(cfg$team_code_markers, cfg$team_code)
+    filters$team_code_markers <- normalize_name_list(markers)
     players <- c(cfg$allowed_pitchers, cfg$allowed_hitters)
     filters$allowed_players <- normalize_name_list(players)
   }, error = function(e) {
-    cat("Unable to load school_config.R for filtering:", e$message, "\n")
+    cat("Unable to load school_config.R for filtering:", e$message, "
+")
   })
   filters
 }
 
 cleanup_non_team_rows_in_neon <- function(filters = list()) {
-  if (!exists("pitch_data_backend_config", mode = "function")) return(0L)
-  backend_type <- tryCatch(pitch_data_backend_config()$type, error = function(e) "csv")
-  if (!identical(backend_type, "postgres")) return(0L)
   if (!exists("pitch_data_db_connect", mode = "function")) return(0L)
-  if (is.null(filters$team_code) || !nzchar(filters$team_code)) return(0L)
+  school_code <- ""
+  if (!is.null(filters$team_code) && nzchar(trimws(as.character(filters$team_code)))) {
+    school_code <- as.character(filters$team_code)
+  } else {
+    school_code <- Sys.getenv("TEAM_CODE", "")
+  }
+  school_code <- toupper(trimws(school_code))
+  if (!nzchar(school_code)) return(0L)
 
-  marker_values <- unique(c(filters$team_code, filters$team_code_markers))
-  marker_values <- marker_values[nzchar(marker_values)]
-  if (!length(marker_values)) return(0L)
+  markers <- c(filters$team_code_markers, school_code)
+  markers <- unique(toupper(trimws(markers)))
+  markers <- markers[nzchar(markers)]
+  if (!length(markers)) return(0L)
 
-  con <- tryCatch(pitch_data_db_connect(), error = function(e) NULL)
-  if (is.null(con)) return(0L)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  quote_lit <- function(x) paste0("'", gsub("'", "''", x, fixed = TRUE), "'")
+  marker_sql <- paste(vapply(markers, quote_lit, character(1)), collapse = ", ")
 
-  markers_sql <- paste(as.character(DBI::dbQuoteString(con, marker_values)), collapse = ",")
-  school_sql <- as.character(DBI::dbQuoteString(con, filters$team_code))
-  sql <- paste0(
-    "DELETE FROM pitch_events ",
-    "WHERE school_code = ", school_sql, " ",
-    "AND UPPER(BTRIM(COALESCE(pitcherteam, ''))) NOT IN (", markers_sql, ") ",
-    "AND UPPER(BTRIM(COALESCE(batterteam, ''))) NOT IN (", markers_sql, ")"
+  delete_sql <- paste0(
+    "DELETE FROM public.pitch_events ",
+    "WHERE school_code = ", quote_lit(school_code), " ",
+    "  AND (COALESCE(NULLIF(TRIM(pitcherteam), ''), '') <> '' OR COALESCE(NULLIF(TRIM(batterteam), ''), '') <> '') ",
+    "  AND regexp_replace(UPPER(COALESCE(NULLIF(TRIM(pitcherteam), ''), '')), '[^A-Z0-9_]', '', 'g') NOT IN (", marker_sql, ") ",
+    "  AND regexp_replace(UPPER(COALESCE(NULLIF(TRIM(batterteam), ''), '')), '[^A-Z0-9_]', '', 'g') NOT IN (", marker_sql, ")"
   )
-  deleted <- tryCatch(DBI::dbExecute(con, sql), error = function(e) {
-    cat("Neon non-team row cleanup failed:", e$message, "\n")
-    0L
+
+  con <- NULL
+  removed <- 0L
+  tryCatch({
+    con <- pitch_data_db_connect()
+    removed <- as.integer(DBI::dbExecute(con, delete_sql))
+    if (is.na(removed)) removed <- 0L
+  }, error = function(e) {
+    cat("Skipping Neon non-team row cleanup:", e$message, "
+")
+  }, finally = {
+    if (!is.null(con)) try(DBI::dbDisconnect(con), silent = TRUE)
   })
-  as.integer(deleted)
+  removed
 }
 
 file_contains_patterns <- function(path, patterns) {
